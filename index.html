@@ -124,20 +124,14 @@
       <div class="logo-badge sm"><svg viewBox="0 0 64 64" width="22" height="22"><path fill="#fff" d="M14 32 50 14 42 50 32 36 14 32z"/></svg></div>
       <strong class="brand-name sm">PRIV SPACA</strong>
     </div>
-    <nav class="tab-nav">
-      <button data-tab="chat" class="tab-btn active" title="Chat"><i data-lucide="message-circle"></i><span>Chat</span></button>
-      <button data-tab="feed" class="tab-btn" title="Feed"><i data-lucide="newspaper"></i><span>Feed</span></button>
-      <button data-tab="profile" class="tab-btn" title="Profile"><i data-lucide="user"></i><span>Profile</span></button>
-    </nav>
-    <div class="me-chip">
-      <span id="meAvatar" class="avatar sm"></span>
-      <span id="meName"></span>
-      <button id="logoutBtn" class="ghost-btn" title="Sign out"><i data-lucide="log-out"></i></button>
+    <div class="top-actions">
+      <button id="topNotifBtn" class="ghost-btn" title="Notifications"><i data-lucide="heart"></i></button>
+      <button id="topChatBtn" class="ghost-btn" title="Messages"><i data-lucide="send"></i></button>
     </div>
   </header>
 
   <!-- ====== CHAT TAB ====== -->
-  <main id="chatView" class="view chat-view active">
+  <main id="chatView" class="view chat-view">
     <aside class="rooms-pane">
       <div class="pane-title"><i data-lucide="hash"></i> Rooms</div>
       <ul id="roomsList" class="rooms-list">
@@ -206,7 +200,7 @@
   </main>
 
   <!-- ====== FEED TAB ====== -->
-  <main id="feedView" class="view feed-view">
+  <main id="feedView" class="view feed-view active">
     <div class="feed-wrap">
 
       <!-- Stories rail -->
@@ -276,6 +270,40 @@
       </form>
     </div>
   </main>
+
+  <!-- ====== SEARCH TAB ====== -->
+  <main id="searchView" class="view search-view">
+    <div class="search-wrap">
+      <div class="search-bar">
+        <i data-lucide="search"></i>
+        <input id="searchInput" type="search" placeholder="Search members…" autocomplete="off" />
+        <button id="searchClearBtn" class="ghost-btn hidden"><i data-lucide="x"></i></button>
+      </div>
+      <ul id="searchResults" class="search-results"></ul>
+    </div>
+  </main>
+
+  <!-- ====== BOTTOM NAV ====== -->
+  <nav class="bottom-nav" role="navigation">
+    <button data-tab="feed" class="bn-btn active" aria-label="Home">
+      <i data-lucide="home" class="i-outline"></i>
+      <i data-lucide="home" class="i-filled"></i>
+    </button>
+    <button data-tab="search" class="bn-btn" aria-label="Search">
+      <i data-lucide="search" class="i-outline"></i>
+      <i data-lucide="search" class="i-filled"></i>
+    </button>
+    <button data-tab="chat" class="bn-btn" aria-label="Chat">
+      <i data-lucide="message-circle" class="i-outline"></i>
+      <i data-lucide="message-circle" class="i-filled"></i>
+    </button>
+    <button data-tab="profile" class="bn-btn" aria-label="Profile">
+      <span id="bnMeAvatar" class="bn-avatar"></span>
+    </button>
+    <button id="bnLogoutBtn" class="bn-btn" aria-label="Sign out">
+      <i data-lucide="log-out" class="i-outline"></i>
+    </button>
+  </nav>
 </section>
 
 <!-- ====== SCHEDULE MODAL ====== -->

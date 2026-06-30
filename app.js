@@ -9,7 +9,7 @@
 const State = {
   token: localStorage.getItem('ps_token') || null,
   user: JSON.parse(localStorage.getItem('ps_user') || 'null'),
-  currentTab: 'chat',
+  currentTab: 'feed',
   currentRoom: { id: 'general-group', kind: 'group', label: '#general-group', target: null },
   members: [],
   messages: [],
@@ -75,6 +75,28 @@ function colorOf(seed) {
   return `hsl(${hue}, ${sat}%, 55%)`;
 }
 
+// In-memory cache of broken photo URLs (so we don't keep retrying within the session)
+const _brokenPhotoUrls = new Set();
+try {
+  const saved = JSON.parse(sessionStorage.getItem('ps_brokenPhotos') || '[]');
+  saved.forEach(u => _brokenPhotoUrls.add(u));
+} catch (_) {}
+
+function _markPhotoBroken(url) {
+  if (!url) return;
+  _brokenPhotoUrls.add(url);
+  try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {}
+}
+
+function _applyInitials(el, user) {
+  const seed = user ? (user.username || user.displayName || user.id || '?') : '?';
+  const c1 = colorOf(seed);
+  const c2 = colorOf(seed + 'x');
+  el.style.backgroundImage = '';
+  el.style.background = `linear-gradient(135deg, ${c1}, ${c2})`;
+  el.textContent = initialsOf(user ? (user.displayName || user.username) : '?');
+}
+
 function renderAvatar(el, user, opts = {}) {
   if (!el) return;
   el.textContent = '';
@@ -82,14 +104,18 @@ function renderAvatar(el, user, opts = {}) {
   el.style.background = '';
   el.classList.toggle('with-status', !!opts.showStatus);
   el.classList.toggle('online', !!opts.online);
-  if (user && user.photoUrl) {
-    el.style.backgroundImage = `url("${String(user.photoUrl).replace(/"/g, '%22')}")`;
+  const url = user && user.photoUrl;
+  if (url && !_brokenPhotoUrls.has(url)) {
+    // Probe load asynchronously; if it fails, swap to initials
+    el.style.backgroundImage = `url("${String(url).replace(/"/g, '%22')}")`;
+    const probe = new Image();
+    probe.onerror = () => {
+      _markPhotoBroken(url);
+      _applyInitials(el, user);
+    };
+    probe.src = url;
   } else {
-    const seed = user ? (user.username || user.displayName || user.id || '?') : '?';
-    const c1 = colorOf(seed);
-    const c2 = colorOf(seed + 'x');
-    el.style.background = `linear-gradient(135deg, ${c1}, ${c2})`;
-    el.textContent = initialsOf(user ? (user.displayName || user.username) : '?');
+    _applyInitials(el, user);
   }
 }
 
@@ -221,23 +247,48 @@ function showApp() {
   hideSplash();
   refreshIcons();
   hydrateMeChips();
-  switchTab('chat');
+  switchTab('feed');
   startPolls();
   loadAll();
 }
 
 function hydrateMeChips() {
   if (!State.user) return;
-  $('#meName').textContent = State.user.displayName || State.user.username;
-  renderAvatar($('#meAvatar'), State.user);
-  if ($('#feedMeName')) $('#feedMeName').textContent = State.user.displayName || State.user.username;
+  if ($('#feedMeName')) $('#feedMeName').textContent = (State.user.displayName || State.user.username).toUpperCase();
   if ($('#feedMeAvatar')) renderAvatar($('#feedMeAvatar'), State.user);
   if ($('#profileAvatarPreview')) renderAvatar($('#profileAvatarPreview'), State.user);
+  // Bottom-nav avatar (uses the same broken-URL detection as renderAvatar)
+  const bn = $('#bnMeAvatar');
+  if (bn) {
+    bn.textContent = '';
+    bn.style.backgroundImage = '';
+    bn.style.backgroundColor = '';
+    const url = State.user.photoUrl;
+    if (url && !_brokenPhotoUrls.has(url)) {
+      bn.style.backgroundImage = `url("${String(url).replace(/"/g, '%22')}")`;
+      const probe = new Image();
+      probe.onerror = () => {
+        _markPhotoBroken(url);
+        const seed = State.user.username || State.user.displayName || State.user.id || '?';
+        bn.style.backgroundImage = '';
+        bn.style.backgroundColor = colorOf(seed);
+        bn.textContent = initialsOf(State.user.displayName || State.user.username);
+      };
+      probe.src = url;
+    } else {
+      const seed = State.user.username || State.user.displayName || State.user.id || '?';
+      bn.style.backgroundColor = colorOf(seed);
+      bn.textContent = initialsOf(State.user.displayName || State.user.username);
+    }
+  }
   const pf = $('#profileForm');
   if (pf) {
-    pf.displayName.value = State.user.displayName || '';
-    pf.username.value = State.user.username || '';
-    pf.bio.value = State.user.bio || '';
+    const dn = pf.querySelector('[name="displayName"]');
+    const un = pf.querySelector('[name="username"]');
+    const bio = pf.querySelector('[name="bio"]');
+    if (dn) dn.value = State.user.displayName || '';
+    if (un) un.value = State.user.username || '';
+    if (bio) bio.value = State.user.bio || '';
   }
 }
 
@@ -401,16 +452,22 @@ function acceptSession(data) {
 
 // ====== Tabs ======
 function bindTabs() {
-  $$('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
-  $('#logoutBtn').addEventListener('click', () => { if (confirm('Sign out?')) logout(false); });
+  $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+  const lo = $('#bnLogoutBtn');
+  if (lo) lo.addEventListener('click', () => { if (confirm('Sign out?')) logout(false); });
+  const tc = $('#topChatBtn');
+  if (tc) tc.addEventListener('click', () => switchTab('chat'));
+  const tn = $('#topNotifBtn');
+  if (tn) tn.addEventListener('click', () => toast('Notifications coming soon'));
 }
 
 function switchTab(tab) {
   State.currentTab = tab;
-  $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $$('.bn-btn[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $$('.view').forEach(v => v.classList.remove('active'));
-  if (tab === 'chat') $('#chatView').classList.add('active');
   if (tab === 'feed') { $('#feedView').classList.add('active'); loadMembers(); loadPosts(); }
+  if (tab === 'search') { $('#searchView').classList.add('active'); loadMembers(); renderSearch(''); $('#searchInput').focus(); }
+  if (tab === 'chat') $('#chatView').classList.add('active');
   if (tab === 'profile') $('#profileView').classList.add('active');
   refreshIcons();
 }
@@ -749,14 +806,23 @@ async function handleAttach(file) {
   $('#attachProgress').style.width = '0%';
   $('#attachPreview').classList.remove('hidden');
   try {
-    const res = await uploadImage(file, (p) => { $('#attachProgress').style.width = p + '%'; });
-    State.attach = { url: res.url, name: res.name, size: res.size };
-    $('#attachName').textContent = file.name + ' · ready';
+    // Permanent GitHub-CDN upload preferred
+    const res = await uploadPermanentImage(file, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => { $('#attachProgress').style.width = p + '%'; }});
+    State.attach = { url: res.url, name: file.name, size: file.size };
+    $('#attachName').textContent = file.name + (res.persisted ? ' · ready (permanent)' : ' · ready');
     $('#attachProgress').style.width = '100%';
     refreshIcons();
   } catch (err) {
-    toast('Upload failed: ' + (err.message || ''), 'error');
-    clearAttach();
+    // Fallback to tmpfiles temporary host
+    try {
+      const res2 = await uploadImage(file, (p) => { $('#attachProgress').style.width = p + '%'; });
+      State.attach = { url: res2.url, name: res2.name, size: res2.size };
+      $('#attachName').textContent = file.name + ' · ready (temp)';
+      $('#attachProgress').style.width = '100%';
+    } catch (err2) {
+      toast('Upload failed: ' + (err2.message || err.message), 'error');
+      clearAttach();
+    }
   }
 }
 
@@ -1363,12 +1429,24 @@ function bindFeedComposer() {
     $('#postAttachProgress').style.width = '0%';
     $('#postAttachPreview').classList.remove('hidden');
     try {
-      const res = await uploadImage(f, (p) => $('#postAttachProgress').style.width = p + '%');
-      State.postAttach = { url: res.url, name: res.name };
-      $('#postAttachName').textContent = f.name + ' · ready';
+      // Use permanent GitHub-CDN upload (resize to 1200px max, JPEG 0.82)
+      const res = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => $('#postAttachProgress').style.width = p + '%' });
+      State.postAttach = { url: res.url, name: f.name };
+      $('#postAttachName').textContent = f.name + (res.persisted ? ' · ready (permanent)' : ' · ready (inline)');
       $('#postAttachProgress').style.width = '100%';
       refreshIcons();
-    } catch (err) { toast('Upload failed: ' + (err.message || ''), 'error'); clearPostAttach(); }
+    } catch (err) {
+      // Final fallback to tmpfiles.org so the user is never stuck
+      try {
+        const res2 = await uploadImage(f, (p) => $('#postAttachProgress').style.width = p + '%');
+        State.postAttach = { url: res2.url, name: res2.name };
+        $('#postAttachName').textContent = f.name + ' · ready (temporary)';
+        $('#postAttachProgress').style.width = '100%';
+      } catch (err2) {
+        toast('Upload failed: ' + (err2.message || err.message), 'error');
+        clearPostAttach();
+      }
+    }
   });
   $('#postCancelAttachBtn').addEventListener('click', clearPostAttach);
   $('#postSubmitBtn').addEventListener('click', async () => {
@@ -1397,6 +1475,54 @@ function clearPostAttach() {
 }
 
 // ====== Profile ======
+
+/**
+ * Client-side resize + compress an image File to a JPEG data URL.
+ * @param {File} file
+ * @param {number} maxDim — max width/height in px
+ * @param {number} quality — 0..1
+ */
+function resizeImageToDataUrl(file, maxDim = 600, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Read failed'));
+    reader.onload = () => { img.src = reader.result; };
+    img.onerror = () => reject(new Error('Decode failed'));
+    img.onload = () => {
+      try {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width >= height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+          else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      } catch (e) { reject(e); }
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Permanent photo upload via /api/upload-photo (commits to GitHub repo → raw.githubusercontent.com CDN).
+ * Returns: { url, persisted }
+ */
+async function uploadPermanentImage(file, { kind = 'avatar', maxDim = 600, quality = 0.85, onProgress } = {}) {
+  if (onProgress) onProgress(10);
+  const dataUrl = await resizeImageToDataUrl(file, maxDim, quality);
+  if (onProgress) onProgress(40);
+  const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind } });
+  if (onProgress) onProgress(100);
+  return res;
+}
+
 function bindProfile() {
   $('#profilePhotoBtn').addEventListener('click', () => $('#profilePhotoInput').click());
   $('#profilePhotoInput').addEventListener('change', async (e) => {
@@ -1407,12 +1533,12 @@ function bindProfile() {
     const status = $('#profilePhotoStatus');
     status.textContent = 'Uploading 0%';
     try {
-      const res = await uploadImage(f, (p) => { status.textContent = 'Uploading ' + p + '%'; });
+      const res = await uploadPermanentImage(f, { kind: 'avatar', maxDim: 500, quality: 0.85, onProgress: (p) => { status.textContent = 'Uploading ' + p + '%'; }});
       const data = await api('/user/update', { method: 'POST', body: { photoUrl: res.url } });
       State.user = data.user;
       localStorage.setItem('ps_user', JSON.stringify(State.user));
       hydrateMeChips();
-      status.textContent = 'Photo updated ✓';
+      status.textContent = res.persisted ? 'Photo updated ✓ (permanent)' : 'Photo updated (inline fallback)';
       toast('Profile photo updated', 'success');
     } catch (err) { status.textContent = ''; toast('Upload failed: ' + (err.message || ''), 'error'); }
   });
@@ -1516,6 +1642,83 @@ function openLightbox(url, uploaderName) {
   refreshIcons();
 }
 
+// ===== Search =====
+function bindSearch() {
+  const inp = $('#searchInput');
+  const clear = $('#searchClearBtn');
+  if (!inp) return;
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim();
+    clear.classList.toggle('hidden', !q);
+    renderSearch(q);
+  });
+  clear.addEventListener('click', () => {
+    inp.value = ''; clear.classList.add('hidden');
+    renderSearch(''); inp.focus();
+  });
+}
+
+function renderSearch(query) {
+  const list = $('#searchResults');
+  if (!list) return;
+  list.innerHTML = '';
+  const meId = State.user && State.user.id;
+  const all = (State.members || []).filter(u => u.id !== meId);
+  const q = String(query || '').toLowerCase().trim();
+  let shown = all;
+  if (q) {
+    shown = all.filter(u =>
+      (u.username || '').toLowerCase().includes(q) ||
+      (u.displayName || '').toLowerCase().includes(q) ||
+      (u.bio || '').toLowerCase().includes(q)
+    );
+  } else {
+    // Show "Suggested" header when empty
+    const h = document.createElement('div');
+    h.className = 'search-section-title';
+    h.textContent = 'Suggested';
+    list.appendChild(h);
+    // Sort: online first
+    shown = shown.slice().sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+  }
+  if (shown.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'search-empty';
+    empty.textContent = q ? `No members match "${escapeHtml(q)}"` : 'No other members yet.';
+    list.appendChild(empty);
+    return;
+  }
+  shown.forEach(u => {
+    const li = document.createElement('li');
+    const av = document.createElement('span');
+    av.className = 'avatar md';
+    renderAvatar(av, u);
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = `
+      <div class="nm">${escapeHtml(u.username || u.displayName)}</div>
+      <div class="un">${escapeHtml(u.displayName || '')}${u.bio ? ' · ' + escapeHtml(u.bio) : ''}</div>
+    `;
+    li.appendChild(av);
+    li.appendChild(meta);
+    if (u.online) {
+      const d = document.createElement('span');
+      d.className = 'online-dot';
+      d.title = 'Online';
+      li.appendChild(d);
+    }
+    const send = document.createElement('button');
+    send.className = 'ghost-btn';
+    send.innerHTML = '<i data-lucide="send"></i>';
+    send.title = 'Message';
+    send.addEventListener('click', (e) => { e.stopPropagation(); openDM(u); switchTab('chat'); });
+    li.appendChild(send);
+    li.addEventListener('click', () => { openDM(u); switchTab('chat'); });
+    list.appendChild(li);
+  });
+  refreshIcons();
+}
+
 function bindLightbox() {
   $('#lightboxClose').addEventListener('click', closeLightbox);
   $('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
@@ -1553,6 +1756,7 @@ function boot() {
   bindLightbox();
   bindCommentsSheet();
   bindStoryViewer();
+  bindSearch();
   refreshIcons();
 
   if (State.token && State.user) {
