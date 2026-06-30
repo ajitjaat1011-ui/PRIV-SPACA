@@ -107,7 +107,7 @@ async function startCall(video) {
     rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
-    toast('Camera/Microphone access denied', 'error');
+    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
     return;
   }
   showCallUI('Calling...', State.currentRoom.target);
@@ -165,7 +165,7 @@ async function acceptCall() {
     rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
-    toast('Camera/Microphone access denied', 'error');
+    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
     endCall();
     return;
   }
@@ -1088,7 +1088,7 @@ async function startCall(video) {
     rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
-    toast('Camera/Microphone access denied', 'error');
+    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
     return;
   }
   showCallUI('Calling...', State.currentRoom.target);
@@ -1146,7 +1146,7 @@ async function acceptCall() {
     rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
-    toast('Camera/Microphone access denied', 'error');
+    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
     endCall();
     return;
   }
@@ -1371,7 +1371,7 @@ async function startCall(video) {
     rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
-    toast('Camera/Microphone access denied', 'error');
+    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
     return;
   }
   showCallUI('Calling...', State.currentRoom.target);
@@ -1429,7 +1429,7 @@ async function acceptCall() {
     rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
-    toast('Camera/Microphone access denied', 'error');
+    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
     endCall();
     return;
   }
@@ -4263,7 +4263,7 @@ async function startCall(video) {
     rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
-    toast('Camera/Microphone access denied', 'error');
+    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
     return;
   }
   showCallUI('Calling...', State.currentRoom.target);
@@ -4321,7 +4321,7 @@ async function acceptCall() {
     rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
-    toast('Camera/Microphone access denied', 'error');
+    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
     endCall();
     return;
   }

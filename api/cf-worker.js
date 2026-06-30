@@ -629,7 +629,7 @@ app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('X-Frame-Options', 'SAMEORIGIN');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  c.header('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
   await next();
 });
 app.use('/api/*', globalRateLimit);
