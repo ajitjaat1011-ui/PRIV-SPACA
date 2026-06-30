@@ -35,7 +35,7 @@ function authHeaders() {
 // and view loaders don't double-fetch the same endpoint within the same tick.
 const _apiCache = new Map();      // key -> { ts, data }
 const _apiInflight = new Map();   // key -> Promise
-const API_CACHE_TTL_MS = 1500;
+const API_CACHE_TTL_MS = 300;
 
 async function api(path, options = {}) {
   const opts = Object.assign({ method: 'GET', headers: {} }, options);
