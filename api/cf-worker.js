@@ -75,30 +75,39 @@ function sanitizeUser(u) {
 }
 
 // ---------- GitHub repo persistence ----------
+
 async function repoRead() {
   if (!isRepo()) return null;
   try {
-    // Add cache-bust query param + no-cache header so different Cloudflare isolates
-    // don't sit on stale db.json from GitHub's CDN after a recent write.
     const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}?ref=${encodeURIComponent(GH_BRANCH)}&_=${Date.now()}`;
+    
+    // First, fetch just to get the SHA (since raw doesn't give us the sha we need for writing)
+    const rSha = await fetch(url, {
+      headers: { Authorization: 'token ' + GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json', 'Cache-Control': 'no-cache' },
+      cf: { cacheTtl: 0, cacheEverything: false },
+    });
+    if (rSha.ok) {
+      const dSha = await rSha.json();
+      if (dSha && dSha.sha) ghFileSha = dSha.sha;
+    }
+
+    // Then fetch the raw content
     const r = await fetch(url, {
       headers: {
         Authorization: 'token ' + GITHUB_PAT,
         'User-Agent': 'PRIV-SPACA',
-        Accept: 'application/vnd.github+json',
+        Accept: 'application/vnd.github.v3.raw',
         'Cache-Control': 'no-cache',
       },
       cf: { cacheTtl: 0, cacheEverything: false },
     });
-    if (!r.ok) { const txt = await r.text(); console.error('[repoRead]', r.status, txt); return { _httpError: r.status, txt }; }
-    const d = await r.json();
-    ghFileSha = d.sha || null;
-    if (!d.content) return { _err: 'No content in response', _d: JSON.stringify(d).slice(0, 200) };
-    const cleanB64 = d.content.replace(/\n/g, ''); const binStr = atob(cleanB64); const bytes = new Uint8Array(binStr.length); for(let i=0; i<binStr.length; i++) bytes[i] = binStr.charCodeAt(i); const dec = new TextDecoder('utf8').decode(bytes);
-    return safeJson(dec, null);
-  } catch (e) { console.error('[repoRead]', e.message); return { _err: e.message, _stack: e.stack }; }
+    if (!r.ok) return { _httpError: r.status, txt: await r.text() };
+    const text = await r.text();
+    return safeJson(text, { _err: 'Invalid JSON', _textPreview: text.slice(0, 100) });
+  } catch (e) {
+    return { _err: e.message, _stack: e.stack };
+  }
 }
-
 async function repoWrite(dbObj) {
   if (!isRepo()) return false;
   try {
