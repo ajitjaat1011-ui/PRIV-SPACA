@@ -249,35 +249,98 @@
   <!-- ====== PROFILE TAB ====== -->
   <main id="profileView" class="view profile-view">
     <div class="profile-wrap">
-      <h2 class="section-title">Your profile</h2>
-      <form id="profileForm" class="profile-form">
-        <div class="profile-head">
-          <span id="profileAvatarPreview" class="avatar xl"></span>
-          <div class="profile-photo-actions">
-            <button type="button" id="profilePhotoBtn" class="ghost-btn"><i data-lucide="camera"></i> Change photo</button>
-            <input type="file" id="profilePhotoInput" accept="image/*" hidden />
-            <div id="profilePhotoStatus" class="muted small"></div>
+
+      <!-- VIEW MODE: IG-style profile -->
+      <div id="profileViewMode" class="profile-mode">
+        <div class="ig-profile-head">
+          <span id="profileAvatarPreview" class="avatar xxl"></span>
+          <div class="ig-profile-stats">
+            <button class="stat-btn" data-stat="posts"><strong id="statPosts">0</strong><span>posts</span></button>
+            <button class="stat-btn" data-stat="followers"><strong id="statFollowers">0</strong><span>followers</span></button>
+            <button class="stat-btn" data-stat="following"><strong id="statFollowing">0</strong><span>following</span></button>
           </div>
         </div>
-        <div class="row-2">
-          <label class="field">
-            <span>Display name</span>
-            <input name="displayName" type="text" minlength="1" maxlength="60" required />
-          </label>
-          <label class="field">
-            <span>Username</span>
-            <input name="username" type="text" minlength="3" maxlength="24" pattern="[a-zA-Z0-9_]{3,24}" required />
-          </label>
+        <div class="ig-profile-meta">
+          <div id="profileDisplayName" class="ig-name"></div>
+          <div id="profileUsername" class="ig-handle"></div>
+          <div id="profileBio" class="ig-bio"></div>
         </div>
-        <label class="field">
-          <span>Bio</span>
-          <textarea name="bio" maxlength="280" rows="3" placeholder="A short bio…"></textarea>
-        </label>
-        <button type="submit" class="primary-btn">Save changes</button>
-        <div id="profileStatus" class="muted small"></div>
-      </form>
+        <div class="ig-profile-actions">
+          <button id="editProfileBtn" class="ig-action-btn primary">Edit profile</button>
+          <button id="shareProfileBtn" class="ig-action-btn">Share</button>
+        </div>
+        <div class="ig-tabs">
+          <button class="ig-tab active" data-grid="posts" aria-label="Posts"><i data-lucide="grid-3x3"></i></button>
+          <button class="ig-tab" data-grid="saved" aria-label="Saved"><i data-lucide="bookmark"></i></button>
+        </div>
+        <div id="profilePostsGrid" class="ig-posts-grid"></div>
+      </div>
+
+      <!-- EDIT MODE: form -->
+      <div id="profileEditMode" class="profile-mode hidden">
+        <div class="profile-edit-header">
+          <button id="cancelEditBtn" class="ghost-btn"><i data-lucide="arrow-left"></i></button>
+          <strong>Edit profile</strong>
+          <span></span>
+        </div>
+        <form id="profileForm" class="profile-form">
+          <div class="profile-head">
+            <span id="profileEditAvatar" class="avatar xl"></span>
+            <div class="profile-photo-actions">
+              <button type="button" id="profilePhotoBtn" class="ghost-btn"><i data-lucide="camera"></i> Change photo</button>
+              <input type="file" id="profilePhotoInput" accept="image/*" hidden />
+              <div id="profilePhotoStatus" class="muted small"></div>
+            </div>
+          </div>
+          <div class="row-2">
+            <label class="field">
+              <span>Display name</span>
+              <input name="displayName" type="text" minlength="1" maxlength="60" required />
+            </label>
+            <label class="field">
+              <span>Username</span>
+              <input name="username" type="text" minlength="3" maxlength="24" pattern="[a-zA-Z0-9_]{3,24}" required />
+            </label>
+          </div>
+          <label class="field">
+            <span>Bio</span>
+            <textarea name="bio" maxlength="280" rows="3" placeholder="A short bio…"></textarea>
+          </label>
+          <button type="submit" class="primary-btn">Save changes</button>
+          <div id="profileStatus" class="muted small"></div>
+        </form>
+      </div>
+
     </div>
   </main>
+
+  <!-- ====== OTHER USER PROFILE (full-screen overlay) ====== -->
+  <div id="userProfileSheet" class="user-profile-sheet hidden">
+    <header class="up-header">
+      <button id="upBackBtn" class="ghost-btn" aria-label="Back"><i data-lucide="arrow-left"></i></button>
+      <strong id="upHeaderUsername" class="up-header-username"></strong>
+      <button id="upMoreBtn" class="ghost-btn" aria-label="More"><i data-lucide="more-vertical"></i></button>
+    </header>
+    <div class="up-body">
+      <div class="ig-profile-head">
+        <span id="upAvatar" class="avatar xxl"></span>
+        <div class="ig-profile-stats">
+          <button class="stat-btn"><strong id="upStatPosts">0</strong><span>posts</span></button>
+          <button class="stat-btn"><strong id="upStatFollowers">0</strong><span>followers</span></button>
+          <button class="stat-btn"><strong id="upStatFollowing">0</strong><span>following</span></button>
+        </div>
+      </div>
+      <div class="ig-profile-meta">
+        <div id="upDisplayName" class="ig-name"></div>
+        <div id="upBio" class="ig-bio"></div>
+      </div>
+      <div class="ig-profile-actions">
+        <button id="upFollowBtn" class="ig-action-btn primary">Follow</button>
+        <button id="upMessageBtn" class="ig-action-btn">Message</button>
+      </div>
+      <div id="upPostsGrid" class="ig-posts-grid"></div>
+    </div>
+  </div>
 
   <!-- ====== SEARCH TAB ====== -->
   <main id="searchView" class="view search-view">
@@ -344,6 +407,24 @@
 </div>
 
 <!-- ====== COMMENTS SHEET ====== -->
+<!-- ====== NOTIFICATIONS SHEET ====== -->
+<div id="notifSheet" class="comments-sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-backdrop" data-close-notif></div>
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h3>Notifications</h3>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button id="notifClearBtn" class="ghost-btn" title="Clear all"><i data-lucide="trash-2"></i></button>
+        <button class="ghost-btn" data-close-notif><i data-lucide="x"></i></button>
+      </div>
+    </div>
+    <div class="sheet-body">
+      <ul id="notifList" class="notif-list"></ul>
+    </div>
+  </div>
+</div>
+
 <div id="commentsSheet" class="comments-sheet hidden" role="dialog" aria-modal="true">
   <div class="sheet-backdrop" data-close-sheet></div>
   <div class="sheet-card">
