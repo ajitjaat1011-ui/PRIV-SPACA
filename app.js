@@ -1083,6 +1083,13 @@ async function sendHeartbeat() {
   try { await api('/user/heartbeat', { method: 'POST' }); } catch (_) {}
 }
 
+/* ========== Adaptive polling ========== */
+// Fast poll mode: after any user interaction we boost polling cadence so things feel
+// near-real-time even when SSE isn't available (Netlify Functions buffers SSE).
+let _fastPollUntil = 0;
+function boostPolling(durationMs = 30000) { _fastPollUntil = Date.now() + durationMs; }
+function isFastPolling() { return Date.now() < _fastPollUntil; }
+
 function startPolls() {
   sendHeartbeat();
   loadMembers();
@@ -1090,23 +1097,25 @@ function startPolls() {
   pollNotifications();
   State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
   State.pollTimers.members = setInterval(loadMembers, 15000);
-  // Polling cadence backs OFF when SSE is connected (becomes a safety net instead of primary)
+  // MESSAGES: 1.5s on chat tab (fast feels live), 3s otherwise — unless SSE is alive
   State.pollTimers.msg = setInterval(() => {
     if (State.currentTab !== 'chat') return;
-    if (_sseConnected) return; // SSE already pushes us new messages
+    if (_sseConnected) return;
     loadMessages(false);
-  }, 3000);
-  State.pollTimers.typing = setInterval(() => { if (State.currentTab === 'chat') pollTyping(); }, 2500);
+  }, 1500);
+  State.pollTimers.typing = setInterval(() => { if (State.currentTab === 'chat') pollTyping(); }, 2000);
+  // FEED: 4s on feed tab (or 1.5s during fast mode)
   State.pollTimers.feed = setInterval(() => {
     if (State.currentTab !== 'feed') return;
     if (_sseConnected) return;
     loadPosts();
-  }, 10000);
+  }, isFastPolling() ? 1500 : 4000);
+  // NOTIFICATIONS: 5s normally, 2s during fast mode (after sending a message etc)
   State.pollTimers.notif = setInterval(() => {
     if (_sseConnected) return;
     pollNotifications();
-  }, 12000);
-  // Kick off real-time
+  }, 5000);
+  // Try SSE — it'll auto-fall-back if not supported
   connectSSE();
 }
 
@@ -1117,9 +1126,15 @@ let _sseLastEventId = null;
 let _sseReconnectTimer = null;
 let _sseAttempts = 0;
 
+/**
+ * Connect SSE. Falls back gracefully on serverless hosts that buffer streaming responses
+ * (e.g. Netlify Functions on AWS Lambda). If we don't see ANY data within 3s of opening,
+ * we mark it unsupported and rely on the aggressive polling fallback.
+ */
 function connectSSE() {
   if (!State.token) return;
   if (!('EventSource' in window)) return;
+  if (_sseUnsupported) return;
   disconnectSSE();
   const url = '/api/stream?token=' + encodeURIComponent(State.token)
             + (_sseLastEventId ? '&lastEventId=' + encodeURIComponent(_sseLastEventId) : '');
@@ -1127,15 +1142,27 @@ function connectSSE() {
     _sseSource = new EventSource(url);
   } catch (e) {
     console.warn('[sse] failed', e.message);
+    _sseUnsupported = true;
     return;
   }
+  // Fallback detection: if no `open` event within 3s, assume host doesn't support streaming
+  const probeTimer = setTimeout(() => {
+    if (!_sseConnected) {
+      console.warn('[sse] no data within 3s — likely buffered by host; falling back to polling');
+      _sseUnsupported = true;
+      disconnectSSE();
+      updateRealtimeStatus();
+    }
+  }, 3000);
   _sseSource.addEventListener('open', () => {
+    clearTimeout(probeTimer);
     _sseConnected = true; _sseAttempts = 0;
     updateRealtimeStatus();
     console.log('[sse] connected');
   });
-
   const onAny = (type, e) => {
+    clearTimeout(probeTimer);
+    if (!_sseConnected) { _sseConnected = true; updateRealtimeStatus(); }
     if (e.lastEventId) _sseLastEventId = e.lastEventId;
     let data = null;
     try { data = JSON.parse(e.data); } catch (_) {}
@@ -1148,14 +1175,15 @@ function connectSSE() {
   _sseSource.addEventListener('error', () => {
     _sseConnected = false;
     updateRealtimeStatus();
-    // Reconnect with exponential backoff (capped at 8s; usually instant since server auto-closes at 24s)
     if (_sseSource) { try { _sseSource.close(); } catch (_) {} _sseSource = null; }
+    if (_sseUnsupported) return;
     _sseAttempts = Math.min(_sseAttempts + 1, 5);
     const backoff = Math.min(8000, 500 * Math.pow(2, _sseAttempts));
     if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
     _sseReconnectTimer = setTimeout(connectSSE, backoff);
   });
 }
+let _sseUnsupported = false;
 
 function disconnectSSE() {
   _sseConnected = false;
