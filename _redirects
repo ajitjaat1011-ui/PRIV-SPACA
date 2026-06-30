@@ -1,0 +1,8 @@
+# Cloudflare Pages routing
+# /api/* routes go to the Pages Function (functions/api/[[path]].js)
+# Everything else falls back to index.html for the SPA
+
+# (api/* is handled by the function automatically — no rewrite needed)
+
+# SPA fallback
+/*  /index.html  200

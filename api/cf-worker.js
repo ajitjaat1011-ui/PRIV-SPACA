@@ -1,0 +1,1117 @@
+/**
+ * PRIV SPACA — Cloudflare Pages / Workers entry.
+ *
+ * Hono-based reimplementation of the Express API in api/index.js.
+ * Same routes, same input/output, same JWT, same DB layout, same persistence.
+ * The Express version (api/index.js) remains for Netlify / local Node.
+ *
+ * Required compatibility: nodejs_compat (Buffer + crypto + process.env).
+ */
+
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { Buffer } from 'node:buffer';
+
+const app = new Hono();
+app.use('*', cors());
+
+// ---------- Config (refreshed on every request from c.env) ----------
+let JWT_SECRET = 'priv-spaca-dev-secret-change-me';
+let GITHUB_PAT = '';
+let GH_REPO    = 'ajitjaat1011-ui/PRIV-SPACA';
+let GH_BRANCH  = 'data';
+let GH_FILE    = 'db.json';
+let VAPID_PUBLIC  = '';
+let VAPID_PRIVATE = '';
+let VAPID_SUBJECT = 'mailto:admin@priv-spaca.app';
+function loadConfig(env) {
+  if (!env) return;
+  // Always overwrite — values can change per-deploy
+  if (env.JWT_SECRET) JWT_SECRET = env.JWT_SECRET;
+  if (env.GITHUB_PAT) GITHUB_PAT = env.GITHUB_PAT;
+  if (env.GH_REPO) GH_REPO = env.GH_REPO;
+  if (env.GH_BRANCH) GH_BRANCH = env.GH_BRANCH;
+  if (env.GH_FILE) GH_FILE = env.GH_FILE;
+  if (env.VAPID_PUBLIC_KEY) VAPID_PUBLIC = env.VAPID_PUBLIC_KEY;
+  if (env.VAPID_PRIVATE_KEY) VAPID_PRIVATE = env.VAPID_PRIVATE_KEY;
+  if (env.VAPID_SUBJECT) VAPID_SUBJECT = env.VAPID_SUBJECT;
+}
+
+const JWT_EXPIRES_DAYS = 7;
+// Lower cache TTL on Cloudflare since each request can hit a different isolate
+// (no shared memory). Faster TTL = better consistency across concurrent users.
+const CACHE_TTL_MS = 500;
+const EPHEMERAL_WRITE_INTERVAL_MS = 30000;
+
+// ---------- In-memory cache + DB ----------
+let localCache = {
+  users: [], messages: [], scheduledMessages: [], posts: [], notifications: [],
+  typing: {}, heartbeat: {},
+};
+let cacheTimestamp = 0;
+let lastEphemeralWrite = 0;
+let ghFileSha = null;
+
+// ---------- Helpers ----------
+const nowMs = () => Date.now();
+const uid = (p = 'id') => p + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
+const safeJson = (s, f) => { try { return JSON.parse(s); } catch (_) { return f; } };
+const isRepo = () => !!(GITHUB_PAT && GH_REPO && GH_BRANCH);
+const isPersist = () => isRepo();
+const isEmail = s => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+const isUsername = s => typeof s === 'string' && /^[a-zA-Z0-9_]{3,24}$/.test(s);
+const isPin = s => typeof s === 'string' && /^\d{4}$/.test(s);
+function sanitizeText(s, max = 4000) {
+  if (typeof s !== 'string') return '';
+  return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+          .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '')
+          .slice(0, max);
+}
+function sanitizeUser(u) {
+  if (!u) return null;
+  return { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
+           bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt };
+}
+
+// ---------- GitHub repo persistence ----------
+async function repoRead() {
+  if (!isRepo()) return null;
+  try {
+    const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}?ref=${encodeURIComponent(GH_BRANCH)}`;
+    const r = await fetch(url, { headers: { Authorization: 'token ' + GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json' } });
+    if (!r.ok) { console.error('[repoRead]', r.status); return null; }
+    const d = await r.json();
+    ghFileSha = d.sha || null;
+    if (!d.content) return null;
+    const buf = Buffer.from(d.content, d.encoding || 'base64');
+    return safeJson(buf.toString('utf8'), null);
+  } catch (e) { console.error('[repoRead]', e.message); return null; }
+}
+
+async function repoWrite(dbObj) {
+  if (!isRepo()) return false;
+  try {
+    if (!ghFileSha) await repoRead();
+    const content = Buffer.from(JSON.stringify(dbObj)).toString('base64');
+    const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}`;
+    const doPut = async (sha) => {
+      const body = { message: 'priv-spaca sync ' + new Date().toISOString(), content, branch: GH_BRANCH };
+      if (sha) body.sha = sha;
+      return fetch(url, {
+        method: 'PUT',
+        headers: { Authorization: 'token ' + GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    };
+    let r = await doPut(ghFileSha);
+    for (let i = 0; i < 3 && (r.status === 409 || r.status === 422); i++) {
+      ghFileSha = null; await repoRead(); r = await doPut(ghFileSha);
+    }
+    if (!r.ok) {
+      const t = await r.text().catch(() => '');
+      console.error('[repoWrite]', r.status, t.slice(0, 200));
+      return false;
+    }
+    const j = await r.json();
+    if (j && j.content && j.content.sha) ghFileSha = j.content.sha;
+    return true;
+  } catch (e) { console.error('[repoWrite]', e.message); return false; }
+}
+
+function runScheduler(db) {
+  const now = nowMs();
+  let changed = false;
+  const PURGE = 30 * 24 * 3600 * 1000;
+  const bp = (db.posts || []).length;
+  db.posts = (db.posts || []).filter(p => !p.deletedAt || (now - p.deletedAt) < PURGE);
+  if (db.posts.length !== bp) changed = true;
+  const bm = (db.messages || []).length;
+  db.messages = (db.messages || []).filter(m => !m.deletedAt || (now - m.deletedAt) < PURGE);
+  if (db.messages.length !== bm) changed = true;
+  if (db.typing && typeof db.typing === 'object') {
+    for (const room of Object.keys(db.typing)) {
+      const map = db.typing[room];
+      if (!map || typeof map !== 'object') { delete db.typing[room]; continue; }
+      for (const u of Object.keys(map)) if (now - (map[u] || 0) > 10000) delete map[u];
+      if (Object.keys(map).length === 0) delete db.typing[room];
+    }
+  }
+  if (!Array.isArray(db.scheduledMessages) || db.scheduledMessages.length === 0) return changed;
+  const due = [], remaining = [];
+  for (const sm of db.scheduledMessages) {
+    if (sm && typeof sm.deliverAt === 'number' && sm.deliverAt <= now) due.push(sm);
+    else remaining.push(sm);
+  }
+  if (due.length === 0) return changed;
+  for (const sm of due) {
+    const author = db.users.find(u => u.id === sm.userId);
+    const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : (sm.authorSnapshot || null);
+    db.messages.push({
+      id: sm.id || uid('msg'), roomId: sm.roomId, userId: sm.userId,
+      text: sm.text || '', imageUrl: sm.imageUrl || null,
+      replyTo: sm.replyTo || null, authorSnapshot: snap,
+      createdAt: now, scheduledOriginally: true,
+    });
+  }
+  db.scheduledMessages = remaining;
+  return true;
+}
+
+async function fetchDatabase() {
+  const now = nowMs();
+  if (now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
+    runScheduler(localCache);
+    return localCache;
+  }
+  const remote = await repoRead();
+  if (remote && typeof remote === 'object') {
+    localCache = {
+      users: Array.isArray(remote.users) ? remote.users : [],
+      messages: Array.isArray(remote.messages) ? remote.messages : [],
+      scheduledMessages: Array.isArray(remote.scheduledMessages) ? remote.scheduledMessages : [],
+      posts: Array.isArray(remote.posts) ? remote.posts : [],
+      notifications: Array.isArray(remote.notifications) ? remote.notifications : [],
+      typing: remote.typing && typeof remote.typing === 'object' ? remote.typing : {},
+      heartbeat: remote.heartbeat && typeof remote.heartbeat === 'object' ? remote.heartbeat : {},
+    };
+  }
+  cacheTimestamp = now;
+  const changed = runScheduler(localCache);
+  if (changed) await saveDatabase(localCache, false);
+  return localCache;
+}
+
+async function saveDatabase(data, isEphemeral = false) {
+  localCache = data;
+  cacheTimestamp = nowMs();
+  if (!isPersist()) return true;
+  if (isEphemeral) {
+    const now = nowMs();
+    if (now - lastEphemeralWrite < EPHEMERAL_WRITE_INTERVAL_MS) return true;
+    lastEphemeralWrite = now;
+    repoWrite(data).catch(() => {});
+    return true;
+  }
+  return await repoWrite(data);
+}
+
+// ---------- Bcrypt + JWT (using pure-JS for Workers compat) ----------
+// bcryptjs works natively in Workers (pure JS, no native bindings).
+import bcrypt from 'bcryptjs';
+
+// Manual JWT (HS256) — avoids jsonwebtoken which uses Node-specific bits
+async function hmacSha256(secret, msg) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(msg)));
+}
+function b64url(buf) {
+  let s = '';
+  const arr = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+  return btoa(s).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+function b64urlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  return atob(str);
+}
+function b64urlJson(obj) {
+  return b64url(new TextEncoder().encode(JSON.stringify(obj)));
+}
+async function signToken(user) {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + JWT_EXPIRES_DAYS * 24 * 3600;
+  const payload = { uid: user.id, username: user.username, iat, exp };
+  const head = b64urlJson(header);
+  const body = b64urlJson(payload);
+  const sig = b64url(await hmacSha256(JWT_SECRET, head + '.' + body));
+  return head + '.' + body + '.' + sig;
+}
+async function verifyToken(token) {
+  if (!token || typeof token !== 'string') throw new Error('No token');
+  const parts = token.split('.');
+  if (parts.length !== 3) throw new Error('Bad token');
+  const [head, body, sig] = parts;
+  const expected = b64url(await hmacSha256(JWT_SECRET, head + '.' + body));
+  if (expected !== sig) throw new Error('Bad signature');
+  let payload;
+  try { payload = JSON.parse(b64urlDecode(body)); } catch (_) { throw new Error('Bad payload'); }
+  if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) throw new Error('Expired');
+  return payload;
+}
+
+async function authFromRequest(c) {
+  const auth = c.req.header('authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return null;
+  try { return await verifyToken(token); } catch (_) { return null; }
+}
+
+// Hono middleware
+async function requireAuth(c, next) {
+  const p = await authFromRequest(c);
+  if (!p) return c.json({ error: 'Missing or invalid token' }, 401);
+  c.set('userId', p.uid);
+  c.set('username', p.username);
+  await next();
+}
+
+// ---------- Rate limiting ----------
+const _rateBuckets = new Map();
+function rateLimit({ key, limit, windowMs }) {
+  const now = Date.now();
+  let b = _rateBuckets.get(key);
+  if (!b || b.resetAt < now) { b = { count: 0, resetAt: now + windowMs }; _rateBuckets.set(key, b); }
+  b.count++;
+  return { allowed: b.count <= limit, remaining: Math.max(0, limit - b.count), resetAt: b.resetAt };
+}
+function clientIp(c) {
+  return c.req.header('cf-connecting-ip')
+      || (c.req.header('x-forwarded-for') || '').split(',')[0].trim()
+      || c.req.header('x-real-ip') || '0.0.0.0';
+}
+async function authRateLimit(c, next) {
+  const ip = clientIp(c);
+  const r = rateLimit({ key: 'auth:' + ip + ':' + c.req.path, limit: 10, windowMs: 15 * 60_000 });
+  if (!r.allowed) {
+    c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
+    return c.json({ error: 'Too many auth attempts. Try again in 15 minutes.' }, 429);
+  }
+  await next();
+}
+async function globalRateLimit(c, next) {
+  const ip = clientIp(c);
+  const r = rateLimit({ key: 'global:' + ip, limit: 120, windowMs: 60_000 });
+  c.header('X-RateLimit-Limit', '120');
+  c.header('X-RateLimit-Remaining', String(r.remaining));
+  if (!r.allowed) {
+    c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
+    return c.json({ error: 'Too many requests. Please slow down.' }, 429);
+  }
+  await next();
+}
+
+// Brute-force lockout
+const _loginFails = new Map();
+function checkAccountLock(userId) {
+  const rec = _loginFails.get(userId);
+  if (!rec) return { locked: false };
+  const now = Date.now();
+  if (rec.lockedUntil && rec.lockedUntil > now) return { locked: true, remaining: rec.lockedUntil - now };
+  return { locked: false };
+}
+function recordLoginFail(userId) {
+  const now = Date.now();
+  let rec = _loginFails.get(userId);
+  if (!rec || (now - rec.firstAt) > 5 * 60_000) { rec = { count: 0, firstAt: now }; _loginFails.set(userId, rec); }
+  rec.count++;
+  if (rec.count >= 5) rec.lockedUntil = now + 15 * 60_000;
+}
+function clearLoginFails(userId) { _loginFails.delete(userId); }
+
+// ---------- Real-time events (in-memory; SSE per-request) ----------
+const _eventQueues = new Map();
+const _eventSubscribers = new Map();
+function _pushEvent(userId, kind, data) {
+  if (!userId) return;
+  const evt = { id: 'evt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ts: Date.now(), kind, data };
+  if (!_eventQueues.has(userId)) _eventQueues.set(userId, []);
+  const q = _eventQueues.get(userId);
+  q.push(evt);
+  if (q.length > 200) q.splice(0, q.length - 200);
+  const subs = _eventSubscribers.get(userId);
+  if (subs) for (const sub of subs) {
+    if (sub.closed) continue;
+    try { sub.write(`id: ${evt.id}\nevent: ${evt.kind}\ndata: ${JSON.stringify(evt)}\n\n`); }
+    catch (_) { sub.closed = true; }
+  }
+  return evt;
+}
+function _broadcastEvent(kind, data, excludeUserId) {
+  for (const userId of new Set([..._eventSubscribers.keys(), ..._eventQueues.keys()])) {
+    if (userId === excludeUserId) continue;
+    _pushEvent(userId, kind, data);
+  }
+}
+
+// ---------- Notifications + Web Push ----------
+function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
+  if (!recipientId || !fromUserId || recipientId === fromUserId) return null;
+  if (!Array.isArray(db.notifications)) db.notifications = [];
+  const recipient = db.users.find(u => u.id === recipientId);
+  if (recipient && Array.isArray(recipient.blocked) && recipient.blocked.includes(fromUserId)) return null;
+  const now = nowMs();
+  const dupe = db.notifications.find(n =>
+    n.userId === recipientId && n.kind === kind && n.fromUserId === fromUserId &&
+    n.postId === (extra.postId || null) && (now - n.createdAt) < 30000
+  );
+  if (dupe) { dupe.createdAt = now; delete dupe.seenAt; return dupe; }
+  const author = db.users.find(u => u.id === fromUserId);
+  const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
+  const notif = {
+    id: uid('ntf'), userId: recipientId, kind, fromUserId, fromSnapshot: snap,
+    postId: extra.postId || null, commentId: extra.commentId || null,
+    text: extra.text || null, createdAt: now,
+  };
+  db.notifications.push(notif);
+  const perUser = db.notifications.filter(n => n.userId === recipientId);
+  if (perUser.length > 500) {
+    const oldest = perUser.slice(0, perUser.length - 500).map(n => n.id);
+    db.notifications = db.notifications.filter(n => !oldest.includes(n.id));
+  }
+  _pushEvent(recipientId, 'notification', { kind, fromUserId, fromSnapshot: snap, postId: notif.postId, text: notif.text, notifId: notif.id });
+  const fromName = (snap && (snap.username || snap.displayName)) || 'Someone';
+  let title = 'PRIV SPACA', body = '';
+  if (kind === 'like')    body = `${fromName} liked your post`;
+  if (kind === 'comment') body = `${fromName} commented: ${(notif.text || '').slice(0, 80)}`;
+  if (kind === 'follow')  body = `${fromName} started following you`;
+  if (kind === 'message') body = `${fromName}: ${(notif.text || '').slice(0, 80)}`;
+  if (body) sendWebPush(db, recipientId, { title, body, tag: 'priv-spaca-' + notif.id, url: '/', kind, notifId: notif.id }).catch(() => {});
+  return notif;
+}
+
+// Web Push using fetch directly (web-push lib isn't Workers-friendly)
+// For now we send a no-op (push notifications via VAPID need crypto signing - punt to next iteration)
+async function sendWebPush(db, recipientId, payload) {
+  // TODO: implement Web Push protocol natively with WebCrypto VAPID JWT signing
+  // For now this is a no-op so the call doesn't crash. SSE still works.
+  return;
+}
+
+// ---------- Rooms ----------
+function normalizeRoomId(roomId, currentUserId) {
+  if (!roomId) return 'general-group';
+  if (roomId === 'general-group' || roomId.startsWith('group:')) return roomId;
+  if (roomId.startsWith('dm:')) {
+    const parts = roomId.slice(3).split(':');
+    if (parts.length === 2) return 'dm:' + [...parts].sort().join(':');
+  }
+  return roomId;
+}
+function dmRoomFor(a, b) { return 'dm:' + [a, b].sort().join(':'); }
+
+// ---------- Middleware: load config + security headers + global rate limit ----------
+app.use('*', async (c, next) => {
+  loadConfig(c.env);
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'SAMEORIGIN');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  await next();
+});
+app.use('/api/*', globalRateLimit);
+
+// =====================================================================
+// ROUTES
+// =====================================================================
+
+// ---------- Health & diag ----------
+app.get('/api/health', (c) => c.json({
+  ok: true, name: 'PRIV SPACA',
+  persistence: isRepo() ? 'github-repo' : 'in-memory',
+  runtime: 'cloudflare-workers',
+  time: nowMs(),
+}));
+
+app.get('/api/diag', async (c) => {
+  const out = {
+    persistence: isRepo() ? 'github-repo' : 'in-memory',
+    repoConfigured: isRepo(), gistConfigured: false,
+    repo: GH_REPO, branch: GH_BRANCH, file: GH_FILE,
+    canRead: false, canWrite: false, userCount: 0, error: null,
+    runtime: 'cloudflare-workers',
+  };
+  try {
+    const db = await repoRead();
+    if (db && typeof db === 'object') {
+      out.canRead = true;
+      out.userCount = (db.users || []).length;
+      out.canWrite = await repoWrite(db);
+    } else if (!isPersist()) {
+      out.canRead = true; out.canWrite = true;
+      out.userCount = (localCache.users || []).length;
+    } else out.error = 'Read returned no data';
+  } catch (e) { out.error = e.message; }
+  return c.json(out);
+});
+
+// ---------- Auth: signup ----------
+app.post('/api/auth/signup', authRateLimit, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { email, username, displayName, password, pin, termsAccepted, termsVersion } = body;
+    if (!isEmail(email)) return c.json({ error: 'Invalid email' }, 400);
+    if (!isUsername(username)) return c.json({ error: 'Username must be 3-24 chars (letters, numbers, _)' }, 400);
+    const cleanDN = sanitizeText(displayName || '', 60).trim();
+    if (!cleanDN) return c.json({ error: 'Display name required' }, 400);
+    if (!password || password.length < 6) return c.json({ error: 'Password must be at least 6 characters' }, 400);
+    if (password.length > 128) return c.json({ error: 'Password too long (max 128)' }, 400);
+    if (!isPin(pin)) return c.json({ error: 'PIN must be 4 digits' }, 400);
+    const weak = new Set(['0000','1111','2222','3333','4444','5555','6666','7777','8888','9999','1234','4321','0123','2580','1212','1313','1010','0101','1122','1221','2024','2025','2026','2027','0007','1357','2468','9876','6789']);
+    if (weak.has(pin)) return c.json({ error: 'Please choose a less obvious PIN' }, 400);
+    if (termsAccepted !== true) return c.json({ error: 'You must accept the Terms & Community Guidelines.' }, 400);
+
+    const db = await fetchDatabase();
+    const emailLower = email.toLowerCase();
+    const usernameLower = username.toLowerCase();
+    if (db.users.some(u => u.email.toLowerCase() === emailLower)) return c.json({ error: 'Email already registered' }, 409);
+    if (db.users.some(u => u.username.toLowerCase() === usernameLower)) return c.json({ error: 'Username already taken' }, 409);
+    const reserved = new Set(['admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root']);
+    if (reserved.has(usernameLower)) return c.json({ error: 'That username is reserved' }, 403);
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const pinHash = await bcrypt.hash(pin, 12);
+    const newUser = {
+      id: uid('usr'), email: emailLower, username, displayName: cleanDN,
+      bio: '', photoUrl: '', passwordHash, pinHash,
+      followers: [], following: [], blocked: [],
+      termsAccepted: true, termsVersion: String(termsVersion || '1.0'),
+      termsAcceptedAt: nowMs(), createdAt: nowMs(),
+    };
+    db.users.push(newUser);
+    const persisted = await saveDatabase(db, false);
+    if (isPersist() && !persisted) {
+      db.users = db.users.filter(u => u.id !== newUser.id);
+      return c.json({ error: 'Storage temporarily unavailable. Please try again in a moment.' }, 503);
+    }
+    const token = await signToken(newUser);
+    return c.json({ token, user: sanitizeUser(newUser) });
+  } catch (e) {
+    console.error('[signup]', e);
+    return c.json({ error: 'Signup failed: ' + (e.message || 'unknown') }, 500);
+  }
+});
+
+// ---------- Auth: login ----------
+app.post('/api/auth/login', authRateLimit, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { identifier, password } = body;
+    if (!identifier || !password) return c.json({ error: 'Missing credentials' }, 400);
+    if (typeof password !== 'string' || password.length > 128) return c.json({ error: 'Invalid credentials' }, 400);
+    const db = await fetchDatabase();
+    const idLower = String(identifier).toLowerCase().trim();
+    const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
+    if (!user) {
+      await new Promise(r => setTimeout(r, 200 + Math.random() * 100));
+      return c.json({ error: 'Invalid credentials' }, 401);
+    }
+    const lock = checkAccountLock(user.id);
+    if (lock.locked) {
+      const mins = Math.ceil(lock.remaining / 60_000);
+      return c.json({ error: `Account temporarily locked due to failed attempts. Try again in ${mins} minute(s).` }, 423);
+    }
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) { recordLoginFail(user.id); return c.json({ error: 'Invalid credentials' }, 401); }
+    clearLoginFails(user.id);
+    const token = await signToken(user);
+    return c.json({ token, user: sanitizeUser(user) });
+  } catch (e) {
+    console.error('[login]', e);
+    return c.json({ error: 'Login failed' }, 500);
+  }
+});
+
+// ---------- Auth: reset by PIN ----------
+app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { identifier, pin, newPassword } = body;
+    if (!identifier || !isPin(pin) || !newPassword || newPassword.length < 6) {
+      return c.json({ error: 'Invalid reset payload' }, 400);
+    }
+    const db = await fetchDatabase();
+    const idLower = String(identifier).toLowerCase().trim();
+    const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
+    if (!user) return c.json({ error: 'Account not found' }, 404);
+    const pinOk = await bcrypt.compare(pin, user.pinHash);
+    if (!pinOk) return c.json({ error: 'Incorrect PIN' }, 401);
+    const oldHash = user.passwordHash;
+    user.passwordHash = await bcrypt.hash(newPassword, 12);
+    const persisted = await saveDatabase(db, false);
+    if (isPersist() && !persisted) { user.passwordHash = oldHash; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
+    return c.json({ ok: true });
+  } catch (e) {
+    console.error('[reset]', e);
+    return c.json({ error: 'Reset failed: ' + (e.message || 'unknown') }, 500);
+  }
+});
+
+// ---------- Auth: me ----------
+app.get('/api/auth/me', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === c.get('userId'));
+  if (!u) return c.json({ error: 'Not found' }, 404);
+  return c.json({ user: sanitizeUser(u) });
+});
+
+// ---------- Upload photo (to GitHub CDN) ----------
+app.post('/api/upload-photo', requireAuth, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { dataUrl, kind } = body;
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+      return c.json({ error: 'Send a data URL: data:image/...' }, 400);
+    }
+    const m = dataUrl.match(/^data:image\/(jpeg|jpg|png|webp|gif);base64,(.+)$/);
+    if (!m) return c.json({ error: 'Unsupported image type' }, 400);
+    const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+    const b64 = m[2];
+    const size = Math.floor(b64.length * 3 / 4);
+    if (size > 5 * 1024 * 1024) return c.json({ error: 'Image too large (max 5 MB)' }, 413);
+    const userId = c.get('userId');
+    const safeKind = (kind === 'post' || kind === 'avatar') ? kind : 'media';
+    const folder = safeKind === 'avatar' ? 'avatars' : (safeKind === 'post' ? 'posts' : 'media');
+    const id = safeKind === 'avatar' ? userId : uid('img');
+    const path = `media/${folder}/${id}.${ext}`;
+    if (!isRepo()) return c.json({ url: dataUrl, persisted: false });
+    let priorSha = null;
+    try {
+      const h = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(GH_BRANCH)}`, {
+        headers: { Authorization: 'token ' + GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json' },
+      });
+      if (h.ok) { const j = await h.json(); priorSha = j.sha || null; }
+    } catch (_) {}
+    const putBody = { message: `upload ${safeKind} ${id}`, content: b64, branch: GH_BRANCH };
+    if (priorSha) putBody.sha = priorSha;
+    const put = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      headers: { Authorization: 'token ' + GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(putBody),
+    });
+    if (!put.ok) {
+      const t = await put.text().catch(() => '');
+      console.error('[upload]', put.status, t.slice(0, 200));
+      return c.json({ url: dataUrl, persisted: false, warning: 'GitHub upload failed; using inline data URL.' });
+    }
+    const cdn = `https://raw.githubusercontent.com/${GH_REPO}/${encodeURIComponent(GH_BRANCH)}/${path}?t=${Date.now()}`;
+    return c.json({ url: cdn, persisted: true });
+  } catch (e) {
+    console.error('[upload]', e);
+    return c.json({ error: 'Upload failed: ' + (e.message || 'unknown') }, 500);
+  }
+});
+
+// ---------- User update ----------
+app.post('/api/user/update', requireAuth, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { displayName, username, bio, photoUrl } = body;
+    const db = await fetchDatabase();
+    const user = db.users.find(u => u.id === c.get('userId'));
+    if (!user) return c.json({ error: 'Not found' }, 404);
+    if (typeof username === 'string' && username !== user.username) {
+      if (!isUsername(username)) return c.json({ error: 'Invalid username' }, 400);
+      if (db.users.some(u => u.id !== user.id && u.username.toLowerCase() === username.toLowerCase())) return c.json({ error: 'Username taken' }, 409);
+      user.username = username;
+    }
+    if (typeof displayName === 'string') {
+      const dn = sanitizeText(displayName, 60).trim();
+      if (dn.length >= 1) user.displayName = dn;
+    }
+    if (typeof bio === 'string') user.bio = sanitizeText(bio, 280);
+    if (typeof photoUrl === 'string' && photoUrl.length <= 4096) {
+      if (photoUrl === '' || /^(https?:|data:image\/)/i.test(photoUrl)) user.photoUrl = photoUrl;
+    }
+    await saveDatabase(db, false);
+    return c.json({ user: sanitizeUser(user) });
+  } catch (e) { console.error('[user/update]', e); return c.json({ error: 'Update failed' }, 500); }
+});
+
+// ---------- Users list ----------
+app.get('/api/users', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const myId = c.get('userId');
+  const me = db.users.find(u => u.id === myId);
+  const myBlocked = new Set((me && me.blocked) || []);
+  const blockedMe = new Set();
+  db.users.forEach(u => {
+    if (u.id !== myId && Array.isArray(u.blocked) && u.blocked.includes(myId)) blockedMe.add(u.id);
+  });
+  const now = nowMs();
+  const list = db.users
+    .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
+    .map(u => ({ ...sanitizeUser(u), online: now - (db.heartbeat[u.id] || 0) < 45000, lastSeen: db.heartbeat[u.id] || 0 }));
+  return c.json({ users: list });
+});
+
+// ---------- Heartbeat & typing ----------
+app.post('/api/user/heartbeat', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  db.heartbeat[c.get('userId')] = nowMs();
+  await saveDatabase(db, true);
+  return c.json({ ok: true });
+});
+app.post('/api/user/typing', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.roomId) return c.json({ error: 'roomId required' }, 400);
+  const db = await fetchDatabase();
+  if (!db.typing[body.roomId]) db.typing[body.roomId] = {};
+  db.typing[body.roomId][c.get('userId')] = nowMs();
+  await saveDatabase(db, true);
+  return c.json({ ok: true });
+});
+app.get('/api/user/typing', requireAuth, async (c) => {
+  const roomId = c.req.query('roomId');
+  if (!roomId) return c.json({ error: 'roomId required' }, 400);
+  const db = await fetchDatabase();
+  const map = db.typing[roomId] || {};
+  const now = nowMs();
+  const myId = c.get('userId');
+  const typing = Object.keys(map).filter(uid2 => uid2 !== myId && now - map[uid2] < 4000)
+    .map(id => {
+      const u = db.users.find(x => x.id === id);
+      return u ? { id: u.id, username: u.username, displayName: u.displayName } : null;
+    }).filter(Boolean);
+  return c.json({ typing });
+});
+
+// ---------- Messages ----------
+app.get('/api/messages', requireAuth, async (c) => {
+  const roomId = normalizeRoomId(c.req.query('roomId') || 'general-group', c.get('userId'));
+  if (roomId.startsWith('dm:')) {
+    const parts = roomId.slice(3).split(':');
+    if (!parts.includes(c.get('userId'))) return c.json({ error: 'Forbidden' }, 403);
+  }
+  const db = await fetchDatabase();
+  const list = db.messages
+    .filter(m => m.roomId === roomId && !m.deletedAt)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-200);
+  const enriched = list.map(m => {
+    const author = db.users.find(u => u.id === m.userId);
+    if (author) return { ...m, author: sanitizeUser(author) };
+    if (m.authorSnapshot) return { ...m, author: m.authorSnapshot };
+    return { ...m, author: { id: m.userId, displayName: 'Member', username: (m.userId || 'member').slice(-6) } };
+  });
+  return c.json({ messages: enriched, roomId });
+});
+
+app.post('/api/messages/send', requireAuth, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { roomId: raw, text, imageUrl, replyTo, targetUserId } = body;
+    const myId = c.get('userId');
+    let roomId = raw;
+    if (!roomId && targetUserId) roomId = dmRoomFor(myId, targetUserId);
+    roomId = normalizeRoomId(roomId || 'general-group', myId);
+    if (roomId.startsWith('dm:')) {
+      const parts = roomId.slice(3).split(':');
+      if (!parts.includes(myId)) return c.json({ error: 'Forbidden' }, 403);
+    }
+    const ct = sanitizeText(text, 4000);
+    const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
+    if (!ct && !ci) return c.json({ error: 'Empty message' }, 400);
+    const db = await fetchDatabase();
+    let replyRef = null;
+    if (replyTo && typeof replyTo === 'object' && replyTo.id) {
+      replyRef = {
+        id: replyTo.id,
+        text: typeof replyTo.text === 'string' ? replyTo.text.slice(0, 200) : '',
+        username: typeof replyTo.username === 'string' ? replyTo.username.slice(0, 60) : '',
+        imageUrl: typeof replyTo.imageUrl === 'string' ? replyTo.imageUrl.slice(0, 2048) : null,
+      };
+    }
+    const author = db.users.find(u => u.id === myId);
+    const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
+    const msg = { id: uid('msg'), roomId, userId: myId, text: ct, imageUrl: ci, replyTo: replyRef, authorSnapshot: snap, createdAt: nowMs() };
+    db.messages.push(msg);
+    const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
+    if (roomId.startsWith('dm:')) {
+      const parts = roomId.slice(3).split(':');
+      parts.filter(uid2 => uid2 !== myId).forEach(recip => {
+        _pushEvent(recip, 'new_message', { roomId, message: enriched });
+        pushNotification(db, recip, 'message', myId, { text: (ct || (ci ? '📷 Photo' : '')).slice(0, 80) });
+      });
+    } else {
+      _broadcastEvent('new_message', { roomId, message: enriched }, myId);
+    }
+    await saveDatabase(db, false);
+    return c.json({ message: enriched });
+  } catch (e) { console.error('[send]', e); return c.json({ error: 'Send failed' }, 500); }
+});
+
+app.post('/api/messages/delete', requireAuth, async (c) => {
+  try {
+    const { messageId } = await c.req.json().catch(() => ({}));
+    if (!messageId) return c.json({ error: 'messageId required' }, 400);
+    const db = await fetchDatabase();
+    const m = db.messages.find(x => x.id === messageId);
+    if (!m) return c.json({ error: 'Not found' }, 404);
+    if (m.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
+    m.deletedAt = nowMs();
+    await saveDatabase(db, false);
+    return c.json({ ok: true, undoUntil: m.deletedAt + 30 * 24 * 3600 * 1000 });
+  } catch (e) { console.error('[delmsg]', e); return c.json({ error: 'Delete failed' }, 500); }
+});
+app.post('/api/messages/restore', requireAuth, async (c) => {
+  try {
+    const { messageId } = await c.req.json().catch(() => ({}));
+    const db = await fetchDatabase();
+    const m = db.messages.find(x => x.id === messageId);
+    if (!m) return c.json({ error: 'Not found' }, 404);
+    if (m.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
+    delete m.deletedAt;
+    await saveDatabase(db, false);
+    return c.json({ ok: true });
+  } catch (e) { console.error('[restoremsg]', e); return c.json({ error: 'Restore failed' }, 500); }
+});
+
+// Scheduled
+app.post('/api/messages/schedule', requireAuth, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { roomId: raw, targetUserId, text, imageUrl, deliverAt, replyTo } = body;
+    const myId = c.get('userId');
+    let roomId = raw;
+    if (!roomId && targetUserId) roomId = dmRoomFor(myId, targetUserId);
+    roomId = normalizeRoomId(roomId || 'general-group', myId);
+    const ts = Number(deliverAt);
+    if (!ts || isNaN(ts) || ts < nowMs() + 5000) return c.json({ error: 'deliverAt must be at least 5s in future' }, 400);
+    const ct = sanitizeText(text, 4000);
+    const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
+    if (!ct && !ci) return c.json({ error: 'Empty message' }, 400);
+    if (roomId.startsWith('dm:')) {
+      const parts = roomId.slice(3).split(':');
+      if (!parts.includes(myId)) return c.json({ error: 'Forbidden' }, 403);
+    }
+    const db = await fetchDatabase();
+    let replyRef = null;
+    if (replyTo && typeof replyTo === 'object' && replyTo.id) {
+      replyRef = { id: replyTo.id, text: (replyTo.text || '').slice(0, 200), username: (replyTo.username || '').slice(0, 60), imageUrl: (replyTo.imageUrl || '').slice(0, 2048) || null };
+    }
+    const author = db.users.find(u => u.id === myId);
+    const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
+    const sm = { id: uid('sched'), roomId, userId: myId, text: ct, imageUrl: ci, replyTo: replyRef, authorSnapshot: snap, deliverAt: ts, createdAt: nowMs() };
+    db.scheduledMessages.push(sm);
+    await saveDatabase(db, false);
+    return c.json({ scheduled: sm });
+  } catch (e) { return c.json({ error: 'Schedule failed' }, 500); }
+});
+app.get('/api/messages/scheduled', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const list = db.scheduledMessages.filter(s => s.userId === c.get('userId')).sort((a, b) => a.deliverAt - b.deliverAt);
+  return c.json({ scheduled: list });
+});
+app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
+  const { id } = await c.req.json().catch(() => ({}));
+  if (!id) return c.json({ error: 'id required' }, 400);
+  const db = await fetchDatabase();
+  const idx = db.scheduledMessages.findIndex(s => s.id === id);
+  if (idx === -1) return c.json({ error: 'Not found' }, 404);
+  if (db.scheduledMessages[idx].userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
+  db.scheduledMessages.splice(idx, 1);
+  await saveDatabase(db, false);
+  return c.json({ ok: true });
+});
+
+// ---------- Notifications ----------
+app.get('/api/notifications', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const myId = c.get('userId');
+  const mine = (db.notifications || []).filter(n => n.userId === myId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
+  const enriched = mine.map(n => {
+    const author = db.users.find(u => u.id === n.fromUserId);
+    return { ...n, from: author ? sanitizeUser(author) : (n.fromSnapshot || { id: n.fromUserId, displayName: 'Member', username: 'member' }) };
+  });
+  return c.json({ notifications: enriched, unread: enriched.filter(n => !n.seenAt).length });
+});
+app.post('/api/notifications/seen', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const now = nowMs();
+  let n = 0;
+  (db.notifications || []).forEach(x => { if (x.userId === c.get('userId') && !x.seenAt) { x.seenAt = now; n++; } });
+  if (n) await saveDatabase(db, true);
+  return c.json({ ok: true, updated: n });
+});
+app.post('/api/notifications/clear', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const before = (db.notifications || []).length;
+  db.notifications = (db.notifications || []).filter(n => n.userId !== c.get('userId'));
+  if (before !== db.notifications.length) await saveDatabase(db, false);
+  return c.json({ ok: true, removed: before - db.notifications.length });
+});
+
+// ---------- Follow / Block ----------
+app.post('/api/user/follow', requireAuth, async (c) => {
+  const { targetId } = await c.req.json().catch(() => ({}));
+  const myId = c.get('userId');
+  if (!targetId || targetId === myId) return c.json({ error: 'Invalid target' }, 400);
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === myId);
+  const target = db.users.find(u => u.id === targetId);
+  if (!me || !target) return c.json({ error: 'User not found' }, 404);
+  if (Array.isArray(target.blocked) && target.blocked.includes(myId)) return c.json({ error: 'Cannot follow this user' }, 403);
+  if (Array.isArray(me.blocked) && me.blocked.includes(targetId)) return c.json({ error: 'Unblock this user first' }, 403);
+  me.following = me.following || [];
+  target.followers = target.followers || [];
+  if (!me.following.includes(targetId)) me.following.push(targetId);
+  if (!target.followers.includes(myId)) target.followers.push(myId);
+  pushNotification(db, targetId, 'follow', myId);
+  await saveDatabase(db, false);
+  return c.json({ ok: true, following: me.following.length, followers: target.followers.length });
+});
+app.post('/api/user/unfollow', requireAuth, async (c) => {
+  const { targetId } = await c.req.json().catch(() => ({}));
+  if (!targetId) return c.json({ error: 'targetId required' }, 400);
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === c.get('userId'));
+  const target = db.users.find(u => u.id === targetId);
+  if (!me || !target) return c.json({ error: 'User not found' }, 404);
+  me.following = (me.following || []).filter(id => id !== targetId);
+  target.followers = (target.followers || []).filter(id => id !== c.get('userId'));
+  await saveDatabase(db, false);
+  return c.json({ ok: true });
+});
+app.post('/api/user/block', requireAuth, async (c) => {
+  const { targetId } = await c.req.json().catch(() => ({}));
+  const myId = c.get('userId');
+  if (!targetId || targetId === myId) return c.json({ error: 'Invalid target' }, 400);
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === myId);
+  const target = db.users.find(u => u.id === targetId);
+  if (!me || !target) return c.json({ error: 'User not found' }, 404);
+  me.blocked = me.blocked || [];
+  if (!me.blocked.includes(targetId)) me.blocked.push(targetId);
+  me.following = (me.following || []).filter(id => id !== targetId);
+  target.followers = (target.followers || []).filter(id => id !== myId);
+  target.following = (target.following || []).filter(id => id !== myId);
+  me.followers = (me.followers || []).filter(id => id !== targetId);
+  db.notifications = (db.notifications || []).filter(n => !((n.userId === myId && n.fromUserId === targetId) || (n.userId === targetId && n.fromUserId === myId)));
+  await saveDatabase(db, false);
+  return c.json({ ok: true });
+});
+app.post('/api/user/unblock', requireAuth, async (c) => {
+  const { targetId } = await c.req.json().catch(() => ({}));
+  if (!targetId) return c.json({ error: 'targetId required' }, 400);
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === c.get('userId'));
+  if (!me) return c.json({ error: 'Not found' }, 404);
+  me.blocked = (me.blocked || []).filter(id => id !== targetId);
+  await saveDatabase(db, false);
+  return c.json({ ok: true });
+});
+app.get('/api/user/:id/profile', requireAuth, async (c) => {
+  const targetId = c.req.param('id');
+  const myId = c.get('userId');
+  const db = await fetchDatabase();
+  const target = db.users.find(u => u.id === targetId);
+  if (!target) return c.json({ error: 'Not found' }, 404);
+  const me = db.users.find(u => u.id === myId);
+  const blockedMe = Array.isArray(target.blocked) && target.blocked.includes(myId);
+  const iBlocked = me && Array.isArray(me.blocked) && me.blocked.includes(targetId);
+  if (blockedMe) return c.json({ error: 'Profile unavailable' }, 403);
+  const posts = (db.posts || []).filter(p => p.userId === targetId && !p.deletedAt)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(p => ({ id: p.id, imageUrl: p.imageUrl, text: p.text, createdAt: p.createdAt, likeCount: (p.likes || []).length, commentCount: (p.comments || []).length }));
+  return c.json({
+    user: { ...sanitizeUser(target), followers: (target.followers || []).length, following: (target.following || []).length, postsCount: posts.length },
+    posts,
+    relationship: {
+      isMe: targetId === myId,
+      iFollow: !!(me && (me.following || []).includes(targetId)),
+      followsMe: Array.isArray(target.following) && target.following.includes(myId),
+      iBlocked,
+    },
+  });
+});
+
+// ---------- Posts ----------
+app.get('/api/posts', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const myId = c.get('userId');
+  const me = db.users.find(u => u.id === myId);
+  const myBlocked = new Set((me && me.blocked) || []);
+  const blockedMe = new Set();
+  db.users.forEach(u => { if (u.id !== myId && Array.isArray(u.blocked) && u.blocked.includes(myId)) blockedMe.add(u.id); });
+  const list = db.posts
+    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId))
+    .slice().sort((a, b) => b.createdAt - a.createdAt)
+    .map(p => {
+      const author = db.users.find(u => u.id === p.userId);
+      const comments = (p.comments || []).map(cm => {
+        const cu = db.users.find(u => u.id === cm.userId);
+        const ca = cu ? sanitizeUser(cu) : (cm.authorSnapshot || { id: cm.userId, displayName: 'Member', username: (cm.userId || 'm').slice(-6) });
+        return { ...cm, author: ca };
+      });
+      const pa = author ? sanitizeUser(author) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
+      return { ...p, likes: p.likes || [], likeCount: (p.likes || []).length, comments, commentCount: comments.length, author: pa };
+    });
+  return c.json({ posts: list });
+});
+
+app.post('/api/posts/create', requireAuth, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { text, imageUrl } = body;
+    const ct = sanitizeText(text, 2000);
+    const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
+    if (!ct && !ci) return c.json({ error: 'Empty post' }, 400);
+    const myId = c.get('userId');
+    const db = await fetchDatabase();
+    const author = db.users.find(u => u.id === myId);
+    const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
+    const post = { id: uid('post'), userId: myId, text: ct, imageUrl: ci, likes: [], comments: [], authorSnapshot: snap, createdAt: nowMs() };
+    db.posts.push(post);
+    const enriched = { ...post, likeCount: 0, commentCount: 0, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
+    _broadcastEvent('new_post', { post: enriched }, myId);
+    await saveDatabase(db, false);
+    return c.json({ post: enriched });
+  } catch (e) { return c.json({ error: 'Create post failed' }, 500); }
+});
+
+app.post('/api/posts/like', requireAuth, async (c) => {
+  const { postId } = await c.req.json().catch(() => ({}));
+  if (!postId) return c.json({ error: 'postId required' }, 400);
+  let db = await fetchDatabase();
+  let post = db.posts.find(p => p.id === postId);
+  // Cross-isolate consistency: if cache misses, force-refresh from GitHub
+  if (!post) {
+    cacheTimestamp = 0;
+    db = await fetchDatabase();
+    post = db.posts.find(p => p.id === postId);
+  }
+  if (!post) return c.json({ error: 'Not found' }, 404);
+  post.likes = post.likes || [];
+  const myId = c.get('userId');
+  const idx = post.likes.indexOf(myId);
+  let liked;
+  if (idx === -1) { post.likes.push(myId); liked = true; } else { post.likes.splice(idx, 1); liked = false; }
+  if (liked) pushNotification(db, post.userId, 'like', myId, { postId: post.id });
+  await saveDatabase(db, false);
+  return c.json({ liked, likeCount: post.likes.length });
+});
+
+app.post('/api/posts/comment', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { postId, text } = body;
+  if (!postId) return c.json({ error: 'postId required' }, 400);
+  const ct = sanitizeText(text, 600).trim();
+  if (!ct) return c.json({ error: 'Empty comment' }, 400);
+  let db = await fetchDatabase();
+  let post = db.posts.find(p => p.id === postId);
+  if (!post) { cacheTimestamp = 0; db = await fetchDatabase(); post = db.posts.find(p => p.id === postId); }
+  if (!post) return c.json({ error: 'Not found' }, 404);
+  post.comments = post.comments || [];
+  const myId = c.get('userId');
+  const author = db.users.find(u => u.id === myId);
+  const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
+  const comment = { id: uid('cmt'), userId: myId, text: ct, authorSnapshot: snap, createdAt: nowMs() };
+  post.comments.push(comment);
+  pushNotification(db, post.userId, 'comment', myId, { postId: post.id, commentId: comment.id, text: ct.slice(0, 140) });
+  await saveDatabase(db, false);
+  return c.json({ comment: { ...comment, author: snap || { id: myId, displayName: 'Member', username: 'member' } } });
+});
+
+app.post('/api/posts/delete', requireAuth, async (c) => {
+  const { postId } = await c.req.json().catch(() => ({}));
+  if (!postId) return c.json({ error: 'postId required' }, 400);
+  let db = await fetchDatabase();
+  let p = db.posts.find(x => x.id === postId);
+  if (!p) { cacheTimestamp = 0; db = await fetchDatabase(); p = db.posts.find(x => x.id === postId); }
+  if (!p) return c.json({ error: 'Not found' }, 404);
+  if (p.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
+  p.deletedAt = nowMs();
+  await saveDatabase(db, false);
+  return c.json({ ok: true, undoUntil: p.deletedAt + 30 * 24 * 3600 * 1000 });
+});
+app.post('/api/posts/restore', requireAuth, async (c) => {
+  const { postId } = await c.req.json().catch(() => ({}));
+  if (!postId) return c.json({ error: 'postId required' }, 400);
+  let db = await fetchDatabase();
+  let p = db.posts.find(x => x.id === postId);
+  if (!p) { cacheTimestamp = 0; db = await fetchDatabase(); p = db.posts.find(x => x.id === postId); }
+  if (!p) return c.json({ error: 'Not found' }, 404);
+  if (p.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
+  delete p.deletedAt;
+  await saveDatabase(db, false);
+  return c.json({ ok: true });
+});
+
+// ---------- Push (subscribe endpoints - actual delivery is no-op for now) ----------
+app.get('/api/push/vapid-public', (c) => c.json({ key: VAPID_PUBLIC }));
+app.post('/api/push/subscribe', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { subscription } = body;
+  if (!subscription || !subscription.endpoint) return c.json({ error: 'Invalid subscription' }, 400);
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === c.get('userId'));
+  if (!u) return c.json({ error: 'Not found' }, 404);
+  u.pushSubs = u.pushSubs || [];
+  const i = u.pushSubs.findIndex(s => s.endpoint === subscription.endpoint);
+  if (i >= 0) u.pushSubs[i] = subscription; else u.pushSubs.push(subscription);
+  if (u.pushSubs.length > 5) u.pushSubs = u.pushSubs.slice(-5);
+  await saveDatabase(db, false);
+  return c.json({ ok: true, devices: u.pushSubs.length });
+});
+app.post('/api/push/unsubscribe', requireAuth, async (c) => {
+  const { endpoint } = await c.req.json().catch(() => ({}));
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === c.get('userId'));
+  if (!u) return c.json({ error: 'Not found' }, 404);
+  u.pushSubs = (u.pushSubs || []).filter(s => s.endpoint !== endpoint);
+  await saveDatabase(db, false);
+  return c.json({ ok: true });
+});
+
+// ---------- SSE stream — real streaming on Workers using ReadableStream ----------
+app.get('/api/stream', async (c) => {
+  const token = c.req.query('token') || (c.req.header('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!token) return c.text('', 401);
+  let payload;
+  try { payload = await verifyToken(token); } catch (_) { return c.text('', 401); }
+  const userId = payload.uid;
+  const lastEventId = c.req.header('last-event-id') || c.req.query('lastEventId') || null;
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (text) => { try { controller.enqueue(encoder.encode(text)); } catch (_) {} };
+      send(': connected\n\n');
+      // Flush any queued events
+      const queue = _eventQueues.get(userId) || [];
+      let startIdx = 0;
+      if (lastEventId) {
+        const i = queue.findIndex(e => e.id === lastEventId);
+        if (i >= 0) startIdx = i + 1;
+      }
+      for (let i = startIdx; i < queue.length; i++) {
+        const e = queue[i];
+        send(`id: ${e.id}\nevent: ${e.kind}\ndata: ${JSON.stringify(e)}\n\n`);
+      }
+      // Register as live subscriber
+      const sub = { closed: false, write: send };
+      if (!_eventSubscribers.has(userId)) _eventSubscribers.set(userId, new Set());
+      _eventSubscribers.get(userId).add(sub);
+      const heartbeat = setInterval(() => { try { send(': ping\n\n'); } catch (_) {} }, 10000);
+      const autoclose = setTimeout(() => cleanup(), 24000);
+      function cleanup() {
+        if (sub.closed) return;
+        sub.closed = true;
+        clearInterval(heartbeat);
+        clearTimeout(autoclose);
+        const set = _eventSubscribers.get(userId);
+        if (set) { set.delete(sub); if (set.size === 0) _eventSubscribers.delete(userId); }
+        try { controller.close(); } catch (_) {}
+      }
+      c.req.raw.signal.addEventListener('abort', cleanup);
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+});
+
+// ---------- 404 ----------
+app.all('/api/*', (c) => c.json({ error: 'Route not found', path: c.req.path }, 404));
+
+// ---------- Export for Cloudflare ----------
+export default app;
