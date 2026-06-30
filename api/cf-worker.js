@@ -774,13 +774,13 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const { dataUrl, kind } = body;
-    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
-      return c.json({ error: 'Send a data URL: data:image/...' }, 400);
+    if (typeof dataUrl !== 'string' || (!dataUrl.startsWith('data:image/') && !dataUrl.startsWith('data:audio/'))) {
+      return c.json({ error: 'Send a data URL: data:image/... or data:audio/...' }, 400);
     }
-    const m = dataUrl.match(/^data:image\/(jpeg|jpg|png|webp|gif);base64,(.+)$/);
-    if (!m) return c.json({ error: 'Unsupported image type' }, 400);
-    const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
-    const b64 = m[2];
+    const m = dataUrl.match(/^data:(image|audio)\/(jpeg|jpg|png|webp|gif|webm|mp3);base64,(.+)$/);
+    if (!m) return c.json({ error: 'Unsupported media type' }, 400);
+    const ext = m[2] === 'jpeg' ? 'jpg' : m[2];
+    const b64 = m[3];
     const size = Math.floor(b64.length * 3 / 4);
     if (size > 5 * 1024 * 1024) return c.json({ error: 'Image too large (max 5 MB)' }, 413);
     const userId = c.get('userId');

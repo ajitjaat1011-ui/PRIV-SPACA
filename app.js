@@ -1269,14 +1269,25 @@ function renderMessage(m, meId, grouped) {
     }
   }
   if (m.imageUrl) {
-    const img = document.createElement('img');
-    img.className = 'img-attach';
-    img.src = m.imageUrl;
-    img.alt = 'attachment';
-    img.loading = 'lazy';
-    img.addEventListener('click', () => openLightbox(m.imageUrl, author.displayName));
-    img.addEventListener('error', () => { img.alt = '(image)'; img.style.display = 'none'; });
-    bubble.appendChild(img);
+    if (m.imageUrl.includes('.webm') || m.imageUrl.includes('.mp3') || m.imageUrl.startsWith('data:audio/')) {
+      const au = document.createElement('audio');
+      au.controls = true;
+      au.src = m.imageUrl;
+      au.style.width = '200px';
+      au.style.display = 'block';
+      au.style.borderRadius = '24px';
+      au.style.marginTop = '4px';
+      bubble.appendChild(au);
+    } else {
+      const img = document.createElement('img');
+      img.className = 'img-attach';
+      img.src = m.imageUrl;
+      img.alt = 'attachment';
+      img.loading = 'lazy';
+      img.addEventListener('click', () => openLightbox(m.imageUrl, author.displayName));
+      img.addEventListener('error', () => { img.alt = '(image)'; img.style.display = 'none'; });
+      bubble.appendChild(img);
+    }
   }
 
   // Actions
@@ -1418,6 +1429,48 @@ function bindComposer() {
 
   $('#cancelReplyBtn').addEventListener('click', clearReply);
   $('#cancelAttachBtn').addEventListener('click', clearAttach);
+
+  let mediaRecorder = null;
+  let audioChunks = [];
+  const micBtn = $('#micBtn');
+  micBtn.addEventListener('click', async () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+      micBtn.classList.remove('recording');
+      micBtn.innerHTML = '<i data-lucide="mic"></i>';
+      refreshIcons();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      mediaRecorder.addEventListener('dataavailable', e => {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      });
+      mediaRecorder.addEventListener('stop', async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        stream.getTracks().forEach(t => t.stop());
+        if (audioBlob.size < 100) return;
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64data = reader.result;
+          try {
+            const data = await api('/upload-photo', { method: 'POST', body: { dataUrl: base64data, kind: 'media' } });
+            State.attach = { file: new File([audioBlob], 'voice_note.webm', {type:'audio/webm'}), url: data.url };
+            showAttachPreview(State.attach);
+          } catch(e) { toast('Audio upload failed', 'error'); }
+        };
+        reader.readAsDataURL(audioBlob);
+      });
+      mediaRecorder.start();
+      micBtn.classList.add('recording');
+      micBtn.innerHTML = '<i data-lucide="square" style="color:red"></i>';
+      refreshIcons();
+    } catch (err) {
+      toast('Microphone access denied', 'error');
+    }
+  });
 
   $('#attachBtn').addEventListener('click', () => $('#fileInput').click());
   $('#fileInput').addEventListener('change', async (e) => {

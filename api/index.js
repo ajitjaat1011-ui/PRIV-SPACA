@@ -871,13 +871,13 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 app.post('/api/upload-photo', authMiddleware, async (req, res) => {
   try {
     const { dataUrl, kind } = req.body || {};
-    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
-      return res.status(400).json({ error: 'Send a data URL: data:image/...' });
+    if (typeof dataUrl !== 'string' || (!dataUrl.startsWith('data:image/') && !dataUrl.startsWith('data:audio/'))) {
+      return res.status(400).json({ error: 'Send a data URL: data:image/... or data:audio/...' });
     }
-    const match = dataUrl.match(/^data:image\/(jpeg|jpg|png|webp|gif);base64,(.+)$/);
-    if (!match) return res.status(400).json({ error: 'Unsupported image type' });
-    const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-    const b64 = match[2];
+    const match = dataUrl.match(/^data:(image|audio)\/(jpeg|jpg|png|webp|gif|webm|mp3);base64,(.+)$/);
+    if (!match) return res.status(400).json({ error: 'Unsupported media type' });
+    const ext = match[2] === 'jpeg' ? 'jpg' : match[2];
+    const b64 = match[3];
     const sizeBytes = Math.floor(b64.length * 3 / 4);
     if (sizeBytes > 5 * 1024 * 1024) {
       return res.status(413).json({ error: 'Image too large (max 5 MB after compression)' });
