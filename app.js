@@ -75,7 +75,164 @@ async function api(path, options = {}) {
       }
     }
     return data;
-  })();
+  // --- WEBRTC ---
+let rtcPeerConnection = null;
+let rtcLocalStream = null;
+let rtcRemoteStream = null;
+let rtcCurrentPeer = null; // targetId we are talking to
+let isVideoCall = false;
+
+const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+function initWebRTC() {
+  const btnAudio = $('#rtcAudioBtn');
+  const btnVideo = $('#rtcVideoBtn');
+  const btnAccept = $('#rtcAcceptBtn');
+  const btnReject = $('#rtcRejectBtn');
+  if(btnAudio) btnAudio.addEventListener('click', () => startCall(false));
+  if(btnVideo) btnVideo.addEventListener('click', () => startCall(true));
+  if(btnAccept) btnAccept.addEventListener('click', acceptCall);
+  if(btnReject) btnReject.addEventListener('click', endCall);
+}
+
+function sendRTCSignal(targetId, signal) {
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => console.error('Signal error', e));
+}
+
+async function startCall(video) {
+  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
+  isVideoCall = video;
+  rtcCurrentPeer = State.currentRoom.target.id;
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied', 'error');
+    return;
+  }
+  showCallUI('Calling...', State.currentRoom.target);
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+  
+  try {
+    const offer = await rtcPeerConnection.createOffer();
+    await rtcPeerConnection.setLocalDescription(offer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
+  } catch (err) {
+    toast('Failed to start call', 'error');
+    endCall();
+  }
+}
+
+async function handleRTCSignal(data) {
+  if (!data || !data.signal) return;
+  const peerId = data.fromId;
+  const signal = data.signal;
+  const author = data.author;
+
+  if (signal.type === 'offer') {
+    if (rtcPeerConnection) {
+      // Busy
+      sendRTCSignal(peerId, { type: 'busy' });
+      return;
+    }
+    rtcCurrentPeer = peerId;
+    isVideoCall = signal.video;
+    showCallUI('Incoming Call...', author, true);
+    // Store offer to use upon acceptance
+    window._rtcPendingOffer = signal.offer;
+  } else if (signal.type === 'answer') {
+    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
+      rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      $('#callStatusText').textContent = 'Connected';
+    }
+  } else if (signal.type === 'candidate') {
+    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
+      rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.log(e));
+    }
+  } else if (signal.type === 'end' || signal.type === 'busy') {
+    if (rtcCurrentPeer === peerId) {
+      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
+      endCall(true);
+    }
+  }
+}
+
+async function acceptCall() {
+  $('#rtcAcceptBtn').classList.add('hidden');
+  $('#callStatusText').textContent = 'Connecting...';
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied', 'error');
+    endCall();
+    return;
+  }
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+  
+  try {
+    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
+    const answer = await rtcPeerConnection.createAnswer();
+    await rtcPeerConnection.setLocalDescription(answer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
+    window._rtcPendingOffer = null;
+  } catch(err) {
+    endCall();
+  }
+}
+
+function createPeerConnection() {
+  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
+  rtcRemoteStream = new MediaStream();
+  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
+  
+  rtcPeerConnection.onicecandidate = (e) => {
+    if (e.candidate && rtcCurrentPeer) {
+      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
+    }
+  };
+  rtcPeerConnection.ontrack = (e) => {
+    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
+    $('#callVideos').classList.remove('hidden');
+    $('#callStatusText').textContent = '';
+  };
+  rtcPeerConnection.oniceconnectionstatechange = () => {
+    if (rtcPeerConnection.iceConnectionState === 'disconnected' || rtcPeerConnection.iceConnectionState === 'failed') {
+      endCall(true);
+    }
+  };
+}
+
+function showCallUI(status, user, incoming = false) {
+  $('#callStatusText').textContent = status;
+  $('#callName').textContent = user.displayName || user.username || 'User';
+  $('#callVideos').classList.add('hidden');
+  $('#callOverlay').classList.remove('hidden');
+  if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
+  else $('#rtcAcceptBtn').classList.add('hidden');
+}
+
+function endCall(remote = false) {
+  if (rtcPeerConnection) {
+    rtcPeerConnection.close();
+    rtcPeerConnection = null;
+  }
+  if (rtcLocalStream) {
+    rtcLocalStream.getTracks().forEach(t => t.stop());
+    rtcLocalStream = null;
+  }
+  if (!remote && rtcCurrentPeer) {
+    sendRTCSignal(rtcCurrentPeer, { type: 'end' });
+  }
+  rtcCurrentPeer = null;
+  $('#callOverlay').classList.add('hidden');
+  $('#rtcLocalVideo').srcObject = null;
+  $('#rtcRemoteVideo').srcObject = null;
+}
+
+})();
   if (cacheKey) {
     _apiInflight.set(cacheKey, fetchPromise);
     fetchPromise.finally(() => _apiInflight.delete(cacheKey));
@@ -715,6 +872,7 @@ function openDM(user) {
   renderAvatar(ca, user, { showStatus: true, online: !!user.online });
   $$('#roomsList .room-item').forEach(r => r.classList.remove('active'));
   $('#chatView').classList.remove('show-rooms');
+  if ($('#rtcCallActions')) $('#rtcCallActions').style.display = 'flex';
   // Reset message-id memo so all messages in the new room animate-in once
   _previousMessageIds = new Set();
   renderMembers();
@@ -805,6 +963,7 @@ function bindRooms() {
       $('#chatSubtitle').textContent = 'Tap members to start a private chat';
       $('#chatAvatar').style.display = 'none';
       $('#chatView').classList.remove('show-rooms');
+      if ($('#rtcCallActions')) $('#rtcCallActions').style.display = 'none';
       _previousMessageIds = new Set();
       renderMembers();
       refreshSecretChatUI();
@@ -897,7 +1056,164 @@ const E2E = (() => {
       );
       await _idbPut(KEY_ID, { privateKey: kp.privateKey, publicKey: kp.publicKey });
       return kp;
-    })();
+    // --- WEBRTC ---
+let rtcPeerConnection = null;
+let rtcLocalStream = null;
+let rtcRemoteStream = null;
+let rtcCurrentPeer = null; // targetId we are talking to
+let isVideoCall = false;
+
+const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+function initWebRTC() {
+  const btnAudio = $('#rtcAudioBtn');
+  const btnVideo = $('#rtcVideoBtn');
+  const btnAccept = $('#rtcAcceptBtn');
+  const btnReject = $('#rtcRejectBtn');
+  if(btnAudio) btnAudio.addEventListener('click', () => startCall(false));
+  if(btnVideo) btnVideo.addEventListener('click', () => startCall(true));
+  if(btnAccept) btnAccept.addEventListener('click', acceptCall);
+  if(btnReject) btnReject.addEventListener('click', endCall);
+}
+
+function sendRTCSignal(targetId, signal) {
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => console.error('Signal error', e));
+}
+
+async function startCall(video) {
+  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
+  isVideoCall = video;
+  rtcCurrentPeer = State.currentRoom.target.id;
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied', 'error');
+    return;
+  }
+  showCallUI('Calling...', State.currentRoom.target);
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+  
+  try {
+    const offer = await rtcPeerConnection.createOffer();
+    await rtcPeerConnection.setLocalDescription(offer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
+  } catch (err) {
+    toast('Failed to start call', 'error');
+    endCall();
+  }
+}
+
+async function handleRTCSignal(data) {
+  if (!data || !data.signal) return;
+  const peerId = data.fromId;
+  const signal = data.signal;
+  const author = data.author;
+
+  if (signal.type === 'offer') {
+    if (rtcPeerConnection) {
+      // Busy
+      sendRTCSignal(peerId, { type: 'busy' });
+      return;
+    }
+    rtcCurrentPeer = peerId;
+    isVideoCall = signal.video;
+    showCallUI('Incoming Call...', author, true);
+    // Store offer to use upon acceptance
+    window._rtcPendingOffer = signal.offer;
+  } else if (signal.type === 'answer') {
+    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
+      rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      $('#callStatusText').textContent = 'Connected';
+    }
+  } else if (signal.type === 'candidate') {
+    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
+      rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.log(e));
+    }
+  } else if (signal.type === 'end' || signal.type === 'busy') {
+    if (rtcCurrentPeer === peerId) {
+      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
+      endCall(true);
+    }
+  }
+}
+
+async function acceptCall() {
+  $('#rtcAcceptBtn').classList.add('hidden');
+  $('#callStatusText').textContent = 'Connecting...';
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied', 'error');
+    endCall();
+    return;
+  }
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+  
+  try {
+    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
+    const answer = await rtcPeerConnection.createAnswer();
+    await rtcPeerConnection.setLocalDescription(answer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
+    window._rtcPendingOffer = null;
+  } catch(err) {
+    endCall();
+  }
+}
+
+function createPeerConnection() {
+  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
+  rtcRemoteStream = new MediaStream();
+  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
+  
+  rtcPeerConnection.onicecandidate = (e) => {
+    if (e.candidate && rtcCurrentPeer) {
+      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
+    }
+  };
+  rtcPeerConnection.ontrack = (e) => {
+    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
+    $('#callVideos').classList.remove('hidden');
+    $('#callStatusText').textContent = '';
+  };
+  rtcPeerConnection.oniceconnectionstatechange = () => {
+    if (rtcPeerConnection.iceConnectionState === 'disconnected' || rtcPeerConnection.iceConnectionState === 'failed') {
+      endCall(true);
+    }
+  };
+}
+
+function showCallUI(status, user, incoming = false) {
+  $('#callStatusText').textContent = status;
+  $('#callName').textContent = user.displayName || user.username || 'User';
+  $('#callVideos').classList.add('hidden');
+  $('#callOverlay').classList.remove('hidden');
+  if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
+  else $('#rtcAcceptBtn').classList.add('hidden');
+}
+
+function endCall(remote = false) {
+  if (rtcPeerConnection) {
+    rtcPeerConnection.close();
+    rtcPeerConnection = null;
+  }
+  if (rtcLocalStream) {
+    rtcLocalStream.getTracks().forEach(t => t.stop());
+    rtcLocalStream = null;
+  }
+  if (!remote && rtcCurrentPeer) {
+    sendRTCSignal(rtcCurrentPeer, { type: 'end' });
+  }
+  rtcCurrentPeer = null;
+  $('#callOverlay').classList.add('hidden');
+  $('#rtcLocalVideo').srcObject = null;
+  $('#rtcRemoteVideo').srcObject = null;
+}
+
+})();
     return _myKeypairP;
   }
 
@@ -1023,6 +1339,163 @@ const E2E = (() => {
     getOrCreateKeypair, getMyPublicKeyB64, publishPublicKey,
     encryptFor, decryptFrom, clearPeerCache,
   };
+// --- WEBRTC ---
+let rtcPeerConnection = null;
+let rtcLocalStream = null;
+let rtcRemoteStream = null;
+let rtcCurrentPeer = null; // targetId we are talking to
+let isVideoCall = false;
+
+const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+function initWebRTC() {
+  const btnAudio = $('#rtcAudioBtn');
+  const btnVideo = $('#rtcVideoBtn');
+  const btnAccept = $('#rtcAcceptBtn');
+  const btnReject = $('#rtcRejectBtn');
+  if(btnAudio) btnAudio.addEventListener('click', () => startCall(false));
+  if(btnVideo) btnVideo.addEventListener('click', () => startCall(true));
+  if(btnAccept) btnAccept.addEventListener('click', acceptCall);
+  if(btnReject) btnReject.addEventListener('click', endCall);
+}
+
+function sendRTCSignal(targetId, signal) {
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => console.error('Signal error', e));
+}
+
+async function startCall(video) {
+  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
+  isVideoCall = video;
+  rtcCurrentPeer = State.currentRoom.target.id;
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied', 'error');
+    return;
+  }
+  showCallUI('Calling...', State.currentRoom.target);
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+  
+  try {
+    const offer = await rtcPeerConnection.createOffer();
+    await rtcPeerConnection.setLocalDescription(offer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
+  } catch (err) {
+    toast('Failed to start call', 'error');
+    endCall();
+  }
+}
+
+async function handleRTCSignal(data) {
+  if (!data || !data.signal) return;
+  const peerId = data.fromId;
+  const signal = data.signal;
+  const author = data.author;
+
+  if (signal.type === 'offer') {
+    if (rtcPeerConnection) {
+      // Busy
+      sendRTCSignal(peerId, { type: 'busy' });
+      return;
+    }
+    rtcCurrentPeer = peerId;
+    isVideoCall = signal.video;
+    showCallUI('Incoming Call...', author, true);
+    // Store offer to use upon acceptance
+    window._rtcPendingOffer = signal.offer;
+  } else if (signal.type === 'answer') {
+    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
+      rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      $('#callStatusText').textContent = 'Connected';
+    }
+  } else if (signal.type === 'candidate') {
+    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
+      rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.log(e));
+    }
+  } else if (signal.type === 'end' || signal.type === 'busy') {
+    if (rtcCurrentPeer === peerId) {
+      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
+      endCall(true);
+    }
+  }
+}
+
+async function acceptCall() {
+  $('#rtcAcceptBtn').classList.add('hidden');
+  $('#callStatusText').textContent = 'Connecting...';
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied', 'error');
+    endCall();
+    return;
+  }
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+  
+  try {
+    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
+    const answer = await rtcPeerConnection.createAnswer();
+    await rtcPeerConnection.setLocalDescription(answer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
+    window._rtcPendingOffer = null;
+  } catch(err) {
+    endCall();
+  }
+}
+
+function createPeerConnection() {
+  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
+  rtcRemoteStream = new MediaStream();
+  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
+  
+  rtcPeerConnection.onicecandidate = (e) => {
+    if (e.candidate && rtcCurrentPeer) {
+      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
+    }
+  };
+  rtcPeerConnection.ontrack = (e) => {
+    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
+    $('#callVideos').classList.remove('hidden');
+    $('#callStatusText').textContent = '';
+  };
+  rtcPeerConnection.oniceconnectionstatechange = () => {
+    if (rtcPeerConnection.iceConnectionState === 'disconnected' || rtcPeerConnection.iceConnectionState === 'failed') {
+      endCall(true);
+    }
+  };
+}
+
+function showCallUI(status, user, incoming = false) {
+  $('#callStatusText').textContent = status;
+  $('#callName').textContent = user.displayName || user.username || 'User';
+  $('#callVideos').classList.add('hidden');
+  $('#callOverlay').classList.remove('hidden');
+  if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
+  else $('#rtcAcceptBtn').classList.add('hidden');
+}
+
+function endCall(remote = false) {
+  if (rtcPeerConnection) {
+    rtcPeerConnection.close();
+    rtcPeerConnection = null;
+  }
+  if (rtcLocalStream) {
+    rtcLocalStream.getTracks().forEach(t => t.stop());
+    rtcLocalStream = null;
+  }
+  if (!remote && rtcCurrentPeer) {
+    sendRTCSignal(rtcCurrentPeer, { type: 'end' });
+  }
+  rtcCurrentPeer = null;
+  $('#callOverlay').classList.add('hidden');
+  $('#rtcLocalVideo').srcObject = null;
+  $('#rtcRemoteVideo').srcObject = null;
+}
+
 })();
 
 // ---- Secret Chat per-DM toggle (persisted in localStorage) ----
@@ -1718,6 +2191,8 @@ function handleRealtimeEvent(type, evt) {
   } else if (type === 'presence' || type === 'typing') {
     // Refresh members
     loadMembers();
+  } else if (type === 'rtc_signal') {
+    handleRTCSignal(data);
   }
 }
 
@@ -3721,7 +4196,9 @@ function boot() {
   // Pause/resume polls when the tab is hidden to save data
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      if (State.token && State.user) {
+      initWebRTC();
+
+  if (State.token && State.user) {
         loadMembers();
         pollNotifications();
         if (State.currentTab === 'chat') loadMessages(false);
@@ -3733,6 +4210,8 @@ function boot() {
       disconnectSSE();
     }
   });
+
+  initWebRTC();
 
   if (State.token && State.user) {
     api('/auth/me').then(d => {
@@ -3752,4 +4231,161 @@ if (document.readyState === 'loading') {
 } else {
   boot();
 }
+// --- WEBRTC ---
+let rtcPeerConnection = null;
+let rtcLocalStream = null;
+let rtcRemoteStream = null;
+let rtcCurrentPeer = null; // targetId we are talking to
+let isVideoCall = false;
+
+const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+function initWebRTC() {
+  const btnAudio = $('#rtcAudioBtn');
+  const btnVideo = $('#rtcVideoBtn');
+  const btnAccept = $('#rtcAcceptBtn');
+  const btnReject = $('#rtcRejectBtn');
+  if(btnAudio) btnAudio.addEventListener('click', () => startCall(false));
+  if(btnVideo) btnVideo.addEventListener('click', () => startCall(true));
+  if(btnAccept) btnAccept.addEventListener('click', acceptCall);
+  if(btnReject) btnReject.addEventListener('click', endCall);
+}
+
+function sendRTCSignal(targetId, signal) {
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => console.error('Signal error', e));
+}
+
+async function startCall(video) {
+  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
+  isVideoCall = video;
+  rtcCurrentPeer = State.currentRoom.target.id;
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied', 'error');
+    return;
+  }
+  showCallUI('Calling...', State.currentRoom.target);
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+  
+  try {
+    const offer = await rtcPeerConnection.createOffer();
+    await rtcPeerConnection.setLocalDescription(offer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
+  } catch (err) {
+    toast('Failed to start call', 'error');
+    endCall();
+  }
+}
+
+async function handleRTCSignal(data) {
+  if (!data || !data.signal) return;
+  const peerId = data.fromId;
+  const signal = data.signal;
+  const author = data.author;
+
+  if (signal.type === 'offer') {
+    if (rtcPeerConnection) {
+      // Busy
+      sendRTCSignal(peerId, { type: 'busy' });
+      return;
+    }
+    rtcCurrentPeer = peerId;
+    isVideoCall = signal.video;
+    showCallUI('Incoming Call...', author, true);
+    // Store offer to use upon acceptance
+    window._rtcPendingOffer = signal.offer;
+  } else if (signal.type === 'answer') {
+    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
+      rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      $('#callStatusText').textContent = 'Connected';
+    }
+  } else if (signal.type === 'candidate') {
+    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
+      rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.log(e));
+    }
+  } else if (signal.type === 'end' || signal.type === 'busy') {
+    if (rtcCurrentPeer === peerId) {
+      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
+      endCall(true);
+    }
+  }
+}
+
+async function acceptCall() {
+  $('#rtcAcceptBtn').classList.add('hidden');
+  $('#callStatusText').textContent = 'Connecting...';
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied', 'error');
+    endCall();
+    return;
+  }
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+  
+  try {
+    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
+    const answer = await rtcPeerConnection.createAnswer();
+    await rtcPeerConnection.setLocalDescription(answer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
+    window._rtcPendingOffer = null;
+  } catch(err) {
+    endCall();
+  }
+}
+
+function createPeerConnection() {
+  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
+  rtcRemoteStream = new MediaStream();
+  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
+  
+  rtcPeerConnection.onicecandidate = (e) => {
+    if (e.candidate && rtcCurrentPeer) {
+      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
+    }
+  };
+  rtcPeerConnection.ontrack = (e) => {
+    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
+    $('#callVideos').classList.remove('hidden');
+    $('#callStatusText').textContent = '';
+  };
+  rtcPeerConnection.oniceconnectionstatechange = () => {
+    if (rtcPeerConnection.iceConnectionState === 'disconnected' || rtcPeerConnection.iceConnectionState === 'failed') {
+      endCall(true);
+    }
+  };
+}
+
+function showCallUI(status, user, incoming = false) {
+  $('#callStatusText').textContent = status;
+  $('#callName').textContent = user.displayName || user.username || 'User';
+  $('#callVideos').classList.add('hidden');
+  $('#callOverlay').classList.remove('hidden');
+  if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
+  else $('#rtcAcceptBtn').classList.add('hidden');
+}
+
+function endCall(remote = false) {
+  if (rtcPeerConnection) {
+    rtcPeerConnection.close();
+    rtcPeerConnection = null;
+  }
+  if (rtcLocalStream) {
+    rtcLocalStream.getTracks().forEach(t => t.stop());
+    rtcLocalStream = null;
+  }
+  if (!remote && rtcCurrentPeer) {
+    sendRTCSignal(rtcCurrentPeer, { type: 'end' });
+  }
+  rtcCurrentPeer = null;
+  $('#callOverlay').classList.add('hidden');
+  $('#rtcLocalVideo').srcObject = null;
+  $('#rtcRemoteVideo').srcObject = null;
+}
+
 })();

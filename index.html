@@ -172,6 +172,10 @@
           </div>
         </div>
         <div class="chat-header-actions">
+          <div id="rtcCallActions" style="display:none; gap: 8px;">
+            <button id="rtcAudioBtn" class="ghost-btn" title="Audio Call"><i data-lucide="phone"></i></button>
+            <button id="rtcVideoBtn" class="ghost-btn" title="Video Call"><i data-lucide="video"></i></button>
+          </div>
           <button id="secretChatBtn" class="ghost-btn" title="Secret Chat (E2E)" style="display:none"><i data-lucide="lock"></i></button>
           <button id="scheduleBtn" class="ghost-btn" title="Scheduled messages"><i data-lucide="clock"></i></button>
         </div>
@@ -606,6 +610,24 @@
     <div class="lightbox-meta">
       <span id="lightboxUploader" class="muted small"></span>
       <a id="lightboxDownload" class="primary-btn sm" download href="#"><i data-lucide="download"></i> Download</a>
+    </div>
+  </div>
+</div>
+
+<!-- ====== WEBRTC CALL OVERLAY ====== -->
+<div id="callOverlay" class="call-overlay hidden">
+  <div class="call-box">
+    <div class="call-info">
+      <div id="callName" class="call-name">Incoming Call...</div>
+      <div id="callStatusText" class="call-status muted">Calling...</div>
+    </div>
+    <div class="call-videos hidden" id="callVideos">
+      <video id="rtcRemoteVideo" autoplay playsinline></video>
+      <video id="rtcLocalVideo" autoplay playsinline muted></video>
+    </div>
+    <div class="call-controls">
+      <button id="rtcAcceptBtn" class="call-btn accept hidden"><i data-lucide="phone"></i></button>
+      <button id="rtcRejectBtn" class="call-btn reject"><i data-lucide="phone-off"></i></button>
     </div>
   </div>
 </div>
