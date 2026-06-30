@@ -30,6 +30,12 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 function authHeaders() {
   return State.token ? { 'Authorization': 'Bearer ' + State.token } : {};
 }
+// Tiny GET cache (1.5s TTL) + in-flight de-duplication so notification poller
+// and view loaders don't double-fetch the same endpoint within the same tick.
+const _apiCache = new Map();      // key -> { ts, data }
+const _apiInflight = new Map();   // key -> Promise
+const API_CACHE_TTL_MS = 1500;
+
 async function api(path, options = {}) {
   const opts = Object.assign({ method: 'GET', headers: {} }, options);
   opts.headers = Object.assign({}, opts.headers, authHeaders());
@@ -37,19 +43,44 @@ async function api(path, options = {}) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(opts.body);
   }
-  let res;
-  try { res = await fetch(API_BASE + path, opts); }
-  catch (e) { throw new Error('Network error'); }
-  let data = null;
-  try { data = await res.json(); } catch (_) { data = null; }
-  if (!res.ok) {
-    if (res.status === 401 && State.token && !path.startsWith('/auth/')) {
-      logout(true);
-    }
-    const msg = (data && data.error) || ('Request failed (' + res.status + ')');
-    const err = new Error(msg); err.status = res.status; err.data = data; throw err;
+  const isGet = (opts.method || 'GET').toUpperCase() === 'GET';
+  const cacheKey = isGet ? path : null;
+  if (cacheKey) {
+    const cached = _apiCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < API_CACHE_TTL_MS) return cached.data;
+    if (_apiInflight.has(cacheKey)) return _apiInflight.get(cacheKey);
   }
-  return data;
+  const fetchPromise = (async () => {
+    let res;
+    try { res = await fetch(API_BASE + path, opts); }
+    catch (e) { throw new Error('Network error'); }
+    let data = null;
+    try { data = await res.json(); } catch (_) { data = null; }
+    if (!res.ok) {
+      if (res.status === 401 && State.token && !path.startsWith('/auth/')) {
+        logout(true);
+      }
+      const msg = (data && data.error) || ('Request failed (' + res.status + ')');
+      const err = new Error(msg); err.status = res.status; err.data = data; throw err;
+    }
+    if (cacheKey) _apiCache.set(cacheKey, { ts: Date.now(), data });
+    // Bust GET cache when a mutation happens for related endpoints
+    if (!isGet) {
+      if (path.startsWith('/messages')) {
+        for (const k of [..._apiCache.keys()]) if (k.startsWith('/messages')) _apiCache.delete(k);
+      } else if (path.startsWith('/posts')) {
+        for (const k of [..._apiCache.keys()]) if (k.startsWith('/posts')) _apiCache.delete(k);
+      } else if (path.startsWith('/user')) {
+        _apiCache.delete('/users'); _apiCache.delete('/auth/me');
+      }
+    }
+    return data;
+  })();
+  if (cacheKey) {
+    _apiInflight.set(cacheKey, fetchPromise);
+    fetchPromise.finally(() => _apiInflight.delete(cacheKey));
+  }
+  return fetchPromise;
 }
 
 // ====== Utilities ======
@@ -73,6 +104,22 @@ function colorOf(seed) {
   const hue = h % 360;
   const sat = 60 + (h % 20);
   return `hsl(${hue}, ${sat}%, 55%)`;
+}
+
+/**
+ * Per-user pastel bubble tint (background, text, author-name color).
+ * Deterministic from userId hash → same user always gets same color.
+ */
+function bubbleTintFor(seed) {
+  if (!seed) return { bg: '#eef3f7', fg: '#1a2733', author: '#3a4d5c' };
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return {
+    bg:     `hsl(${hue}, 78%, 95%)`,   // soft pastel
+    fg:     `hsl(${hue}, 40%, 18%)`,   // dark readable text
+    author: `hsl(${hue}, 60%, 38%)`,   // medium-dark for author line
+  };
 }
 
 // In-memory cache of broken photo URLs (so we don't keep retrying within the session)
@@ -465,11 +512,13 @@ function switchTab(tab) {
   State.currentTab = tab;
   $$('.bn-btn[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $$('.view').forEach(v => v.classList.remove('active'));
-  if (tab === 'feed') { $('#feedView').classList.add('active'); loadMembers(); loadPosts(); }
+  if (tab === 'feed') { $('#feedView').classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
   if (tab === 'search') { $('#searchView').classList.add('active'); loadMembers(); renderSearch(''); $('#searchInput').focus(); }
-  if (tab === 'chat') $('#chatView').classList.add('active');
+  if (tab === 'chat') { $('#chatView').classList.add('active'); markTabSeen('chat'); }
   if (tab === 'profile') $('#profileView').classList.add('active');
   refreshIcons();
+  // Refresh dots after switch (the just-opened tab loses its dot)
+  if (typeof updateNotifDots === 'function') updateNotifDots();
 }
 
 // ====== Rooms & Members ======
@@ -631,12 +680,20 @@ function renderMessage(m, meId, grouped) {
     const al = document.createElement('div');
     al.className = 'author-line';
     al.textContent = author.displayName || ('@' + author.username);
+    const tA = bubbleTintFor(m.userId);
+    al.style.setProperty('--bubble-author', tA.author);
     wrap.appendChild(al);
   }
 
   const bubble = document.createElement('div');
   const isImageOnly = !!m.imageUrl && !m.text && !m.replyTo;
   bubble.className = 'bubble' + (isImageOnly ? ' image-only' : '');
+  // Per-user pastel bubble color (only for "their" messages)
+  if (!isMine && !isImageOnly) {
+    const tint = bubbleTintFor(m.userId);
+    bubble.style.setProperty('--bubble-bg', tint.bg);
+    bubble.style.setProperty('--bubble-fg', tint.fg);
+  }
 
   if (m.replyTo) {
     const q = document.createElement('div');
@@ -874,11 +931,119 @@ function startPolls() {
   sendHeartbeat();
   loadMembers();
   pollTyping();
+  pollNotifications();
   State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
   State.pollTimers.members = setInterval(loadMembers, 15000);
   State.pollTimers.msg = setInterval(() => { if (State.currentTab === 'chat') loadMessages(false); }, 3000);
   State.pollTimers.typing = setInterval(() => { if (State.currentTab === 'chat') pollTyping(); }, 2500);
   State.pollTimers.feed = setInterval(() => { if (State.currentTab === 'feed') loadPosts(); }, 10000);
+  State.pollTimers.notif = setInterval(pollNotifications, 12000);
+}
+
+/* ========== Notification dots ========== */
+// "lastSeen" timestamps stored per-tab in localStorage.
+// chat dot = any new message in #general-group or in any DM room I belong to,
+//           created AFTER lastSeenChatAt AND not authored by me.
+// feed dot = any post-like or post-comment on MY posts created AFTER lastSeenFeedAt,
+//           OR any new post by someone else AFTER lastSeenFeedAt
+//           OR any unviewed story (= a member's latest post the user hasn't opened).
+function _getLastSeen(key) {
+  const v = parseInt(localStorage.getItem(key) || '0', 10);
+  return isNaN(v) ? 0 : v;
+}
+function _setLastSeen(key, ts) { try { localStorage.setItem(key, String(ts || Date.now())); } catch (_) {} }
+
+function markTabSeen(tab) {
+  const now = Date.now();
+  if (tab === 'chat') _setLastSeen('ps_seenChatAt', now);
+  if (tab === 'feed') _setLastSeen('ps_seenFeedAt', now);
+  updateNotifDots();
+}
+
+let _lastNotif = { chatUnread: 0, feedUnread: 0 };
+async function pollNotifications() {
+  if (!State.token || !State.user) return;
+  const meId = State.user.id;
+  const seenChat = _getLastSeen('ps_seenChatAt') || (Date.now() - 24*3600*1000);
+  const seenFeed = _getLastSeen('ps_seenFeedAt') || (Date.now() - 24*3600*1000);
+
+  let chatUnread = 0, feedUnread = 0;
+
+  // 1) General chat messages
+  try {
+    const r = await api('/messages?roomId=general-group');
+    (r.messages || []).forEach(m => {
+      if (m.userId !== meId && m.createdAt > seenChat) chatUnread++;
+    });
+  } catch (_) {}
+
+  // 2) DM rooms — derive list from members directory (DM rooms = me <-> each other user)
+  // To keep it cheap, only check the 5 most-recently-online others
+  try {
+    const others = (State.members || []).filter(u => u.id !== meId)
+      .sort((a,b) => (b.lastSeen||0) - (a.lastSeen||0)).slice(0, 5);
+    for (const u of others) {
+      const roomId = 'dm:' + [meId, u.id].sort().join(':');
+      const r = await api('/messages?roomId=' + encodeURIComponent(roomId));
+      (r.messages || []).forEach(m => {
+        if (m.userId !== meId && m.createdAt > seenChat) chatUnread++;
+      });
+    }
+  } catch (_) {}
+
+  // 3) Feed: posts/likes/comments
+  try {
+    const r = await api('/posts');
+    (r.posts || []).forEach(p => {
+      // New post by someone else
+      if (p.userId !== meId && p.createdAt > seenFeed) feedUnread++;
+      // Likes/comments on MY post (since lastSeenFeed)
+      if (p.userId === meId) {
+        // Heuristic: count comments by others after seenFeed
+        (p.comments || []).forEach(c => {
+          if (c.userId !== meId && c.createdAt > seenFeed) feedUnread++;
+        });
+        // Likes — server doesn't carry timestamps per-like, so count any post with
+        // likes from others and use the post.createdAt+1m as a proxy.
+        const othersLiked = (p.likes || []).filter(uid => uid !== meId);
+        if (othersLiked.length > 0 && _lastNotif._likeMap) {
+          const prev = _lastNotif._likeMap[p.id] || 0;
+          if (othersLiked.length > prev) feedUnread += (othersLiked.length - prev);
+        }
+      }
+    });
+    // Snapshot like counts for next diff
+    const likeMap = {};
+    (r.posts || []).forEach(p => {
+      if (p.userId === meId) {
+        likeMap[p.id] = (p.likes || []).filter(uid => uid !== meId).length;
+      }
+    });
+    _lastNotif._likeMap = likeMap;
+    // Cache posts so renderStoriesRail can compute story viewed-state
+    State.posts = r.posts || State.posts;
+  } catch (_) {}
+
+  // 4) Unviewed stories (any other member with a latest post the user hasn't opened)
+  try {
+    (State.members || []).forEach(u => {
+      if (u.id === meId) return;
+      const theirLatest = (State.posts || []).filter(p => p.userId === u.id)
+        .reduce((max, p) => Math.max(max, p.createdAt || 0), 0);
+      if (theirLatest && !isStoryViewed(u.id)) feedUnread++;
+    });
+  } catch (_) {}
+
+  _lastNotif.chatUnread = chatUnread;
+  _lastNotif.feedUnread = feedUnread;
+  updateNotifDots();
+}
+
+function updateNotifDots() {
+  const showChat = (_lastNotif.chatUnread > 0) && (State.currentTab !== 'chat');
+  const showFeed = (_lastNotif.feedUnread > 0) && (State.currentTab !== 'feed');
+  $$('[data-dot="chat"], [data-dot="chat-top"]').forEach(d => d.classList.toggle('hidden', !showChat));
+  $$('[data-dot="feed"], [data-dot="feed-top"]').forEach(d => d.classList.toggle('hidden', !showFeed));
 }
 
 // ====== Feed ======
@@ -920,15 +1085,24 @@ function buildStoryCell(user, isMe) {
   cell.type = 'button';
   cell.className = 'story-cell' + (isMe ? ' me' : '');
   const ring = document.createElement('div');
-  ring.className = 'story-ring' + (isMe ? ' is-me' : '');
+  const viewed = !isMe && isStoryViewed(user.id);
+  ring.className = 'story-ring' + (isMe ? ' is-me' : (viewed ? ' viewed' : ''));
   const inner = document.createElement('div');
   inner.className = 'avatar-inner';
-  if (user && user.photoUrl) {
-    inner.style.backgroundImage = `url("${String(user.photoUrl).replace(/"/g, '%22')}")`;
-  } else {
-    const seed = user ? (user.username || user.displayName || user.id || '?') : '?';
+  const url = user && user.photoUrl;
+  const seed = user ? (user.username || user.displayName || user.id || '?') : '?';
+  const setInitials = () => {
+    inner.style.backgroundImage = '';
     inner.style.backgroundColor = colorOf(seed);
     inner.textContent = initialsOf(user ? (user.displayName || user.username) : '?');
+  };
+  if (url && !_brokenPhotoUrls.has(url)) {
+    inner.style.backgroundImage = `url("${String(url).replace(/"/g, '%22')}")`;
+    const probe = new Image();
+    probe.onerror = () => { _markPhotoBroken(url); setInitials(); };
+    probe.src = url;
+  } else {
+    setInitials();
   }
   ring.appendChild(inner);
   if (isMe) {
@@ -1368,8 +1542,38 @@ function bindCommentsSheet() {
   });
 }
 
+// ===== Story viewed-state (per user, persisted) =====
+// Stores { userId: { lastPostTs: timestamp, viewedAt: timestamp } }
+function _getStoryViewed() {
+  try { return JSON.parse(localStorage.getItem('ps_storyViewed') || '{}'); }
+  catch (_) { return {}; }
+}
+function _setStoryViewed(obj) {
+  try { localStorage.setItem('ps_storyViewed', JSON.stringify(obj)); } catch (_) {}
+}
+function isStoryViewed(userId) {
+  const map = _getStoryViewed();
+  const entry = map[userId];
+  if (!entry) return false;
+  // Find the user's latest post timestamp
+  const latest = (State.posts || []).filter(p => p.userId === userId)
+    .reduce((max, p) => Math.max(max, p.createdAt || 0), 0);
+  // If we haven't seen any post (latest=0) treat as not-viewed only for first 24h after first appearance
+  if (!latest) return !!entry.viewedAt;
+  // Viewed if our last view is at or after the latest post
+  return entry.viewedAt >= latest;
+}
+function markStoryViewed(userId) {
+  const latest = (State.posts || []).filter(p => p.userId === userId)
+    .reduce((max, p) => Math.max(max, p.createdAt || 0), 0);
+  const map = _getStoryViewed();
+  map[userId] = { lastPostTs: latest, viewedAt: Date.now() };
+  _setStoryViewed(map);
+}
+
 let storyTimer = null;
 function openStoryFor(user) {
+  markStoryViewed(user.id);
   const theirPosts = (State.posts || []).filter(p => p.userId === user.id).sort((a, b) => b.createdAt - a.createdAt);
   const recent = theirPosts[0];
   const v = $('#storyViewer');
@@ -1405,6 +1609,8 @@ function closeStory() {
   clearTimeout(storyTimer);
   storyTimer = null;
   $('#storyViewer').classList.add('hidden');
+  // Re-render the stories rail so the just-viewed ring turns grey
+  if (typeof renderStoriesRail === 'function') renderStoriesRail();
 }
 function bindStoryViewer() {
   $('#storyClose').addEventListener('click', closeStory);
@@ -1758,6 +1964,19 @@ function boot() {
   bindStoryViewer();
   bindSearch();
   refreshIcons();
+
+  // Pause/resume polls when the tab is hidden to save data
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      // Refresh once on visibility return
+      if (State.token && State.user) {
+        loadMembers();
+        pollNotifications();
+        if (State.currentTab === 'chat') loadMessages(false);
+        if (State.currentTab === 'feed') loadPosts();
+      }
+    }
+  });
 
   if (State.token && State.user) {
     api('/auth/me').then(d => {

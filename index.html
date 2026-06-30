@@ -125,8 +125,14 @@
       <strong class="brand-name sm">PRIV SPACA</strong>
     </div>
     <div class="top-actions">
-      <button id="topNotifBtn" class="ghost-btn" title="Notifications"><i data-lucide="heart"></i></button>
-      <button id="topChatBtn" class="ghost-btn" title="Messages"><i data-lucide="send"></i></button>
+      <button id="topNotifBtn" class="ghost-btn icon-with-dot" title="Notifications">
+        <i data-lucide="heart"></i>
+        <span class="dot hidden" data-dot="feed-top"></span>
+      </button>
+      <button id="topChatBtn" class="ghost-btn icon-with-dot" title="Messages">
+        <i data-lucide="send"></i>
+        <span class="dot hidden" data-dot="chat-top"></span>
+      </button>
     </div>
   </header>
 
@@ -288,6 +294,7 @@
     <button data-tab="feed" class="bn-btn active" aria-label="Home">
       <i data-lucide="home" class="i-outline"></i>
       <i data-lucide="home" class="i-filled"></i>
+      <span class="dot hidden" data-dot="feed"></span>
     </button>
     <button data-tab="search" class="bn-btn" aria-label="Search">
       <i data-lucide="search" class="i-outline"></i>
@@ -296,6 +303,7 @@
     <button data-tab="chat" class="bn-btn" aria-label="Chat">
       <i data-lucide="message-circle" class="i-outline"></i>
       <i data-lucide="message-circle" class="i-filled"></i>
+      <span class="dot hidden" data-dot="chat"></span>
     </button>
     <button data-tab="profile" class="bn-btn" aria-label="Profile">
       <span id="bnMeAvatar" class="bn-avatar"></span>
