@@ -411,6 +411,7 @@ function hydrateMeChips() {
 function logout(silent) {
   Object.values(State.pollTimers).forEach(t => clearInterval(t));
   State.pollTimers = {};
+  if (typeof disconnectSSE === 'function') disconnectSSE();
   State.token = null;
   State.user = null;
   State.messages = [];
@@ -1089,10 +1090,136 @@ function startPolls() {
   pollNotifications();
   State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
   State.pollTimers.members = setInterval(loadMembers, 15000);
-  State.pollTimers.msg = setInterval(() => { if (State.currentTab === 'chat') loadMessages(false); }, 3000);
+  // Polling cadence backs OFF when SSE is connected (becomes a safety net instead of primary)
+  State.pollTimers.msg = setInterval(() => {
+    if (State.currentTab !== 'chat') return;
+    if (_sseConnected) return; // SSE already pushes us new messages
+    loadMessages(false);
+  }, 3000);
   State.pollTimers.typing = setInterval(() => { if (State.currentTab === 'chat') pollTyping(); }, 2500);
-  State.pollTimers.feed = setInterval(() => { if (State.currentTab === 'feed') loadPosts(); }, 10000);
-  State.pollTimers.notif = setInterval(pollNotifications, 12000);
+  State.pollTimers.feed = setInterval(() => {
+    if (State.currentTab !== 'feed') return;
+    if (_sseConnected) return;
+    loadPosts();
+  }, 10000);
+  State.pollTimers.notif = setInterval(() => {
+    if (_sseConnected) return;
+    pollNotifications();
+  }, 12000);
+  // Kick off real-time
+  connectSSE();
+}
+
+/* ========== Real-time Server-Sent Events ========== */
+let _sseConnected = false;
+let _sseSource = null;
+let _sseLastEventId = null;
+let _sseReconnectTimer = null;
+let _sseAttempts = 0;
+
+function connectSSE() {
+  if (!State.token) return;
+  if (!('EventSource' in window)) return;
+  disconnectSSE();
+  const url = '/api/stream?token=' + encodeURIComponent(State.token)
+            + (_sseLastEventId ? '&lastEventId=' + encodeURIComponent(_sseLastEventId) : '');
+  try {
+    _sseSource = new EventSource(url);
+  } catch (e) {
+    console.warn('[sse] failed', e.message);
+    return;
+  }
+  _sseSource.addEventListener('open', () => {
+    _sseConnected = true; _sseAttempts = 0;
+    updateRealtimeStatus();
+    console.log('[sse] connected');
+  });
+
+  const onAny = (type, e) => {
+    if (e.lastEventId) _sseLastEventId = e.lastEventId;
+    let data = null;
+    try { data = JSON.parse(e.data); } catch (_) {}
+    if (!data) return;
+    handleRealtimeEvent(type, data);
+  };
+  ['notification','new_message','new_post','presence','typing'].forEach(t => {
+    _sseSource.addEventListener(t, (e) => onAny(t, e));
+  });
+  _sseSource.addEventListener('error', () => {
+    _sseConnected = false;
+    updateRealtimeStatus();
+    // Reconnect with exponential backoff (capped at 8s; usually instant since server auto-closes at 24s)
+    if (_sseSource) { try { _sseSource.close(); } catch (_) {} _sseSource = null; }
+    _sseAttempts = Math.min(_sseAttempts + 1, 5);
+    const backoff = Math.min(8000, 500 * Math.pow(2, _sseAttempts));
+    if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
+    _sseReconnectTimer = setTimeout(connectSSE, backoff);
+  });
+}
+
+function disconnectSSE() {
+  _sseConnected = false;
+  if (_sseSource) { try { _sseSource.close(); } catch (_) {} _sseSource = null; }
+  if (_sseReconnectTimer) { clearTimeout(_sseReconnectTimer); _sseReconnectTimer = null; }
+}
+
+function handleRealtimeEvent(type, evt) {
+  const data = evt.data || {};
+  if (type === 'new_message') {
+    const msg = data.message; if (!msg) return;
+    // Only render if user is currently viewing that room
+    if (msg.roomId === State.currentRoom.id) {
+      // Append if not already present
+      if (!State.messages.some(m => m.id === msg.id)) {
+        State.messages.push(msg);
+        lastMessagesSignature = '';
+        renderMessages(false);
+      }
+    }
+    // Bust message cache so a manual switch will reload fresh
+    if (_apiCache) {
+      for (const k of [..._apiCache.keys()]) {
+        if (k.startsWith('/messages')) _apiCache.delete(k);
+      }
+    }
+    // Trigger notification refresh (chat dot)
+    pollNotifications();
+  } else if (type === 'new_post') {
+    const post = data.post; if (!post) return;
+    if (!State.posts.some(p => p.id === post.id)) {
+      State.posts.unshift(post);
+      lastPostsSignature = '';
+      if (State.currentTab === 'feed') renderPosts();
+    }
+    pollNotifications();
+  } else if (type === 'notification') {
+    // Refresh badge counts + show OS push notification if granted+inactive tab
+    pollNotifications();
+    maybeNativeNotify(data);
+  } else if (type === 'presence' || type === 'typing') {
+    // Refresh members
+    loadMembers();
+  }
+}
+
+function maybeNativeNotify(data) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (document.visibilityState === 'visible') return; // don't notify while user is actively viewing
+  if (localStorage.getItem('ps_pushEnabled') !== '1') return;
+  const from = (data.fromSnapshot && data.fromSnapshot.username) || 'Someone';
+  let title = 'PRIV SPACA', body = '';
+  if (data.kind === 'like')    body = `${from} liked your post`;
+  if (data.kind === 'comment') body = `${from} commented: ${(data.text || '').slice(0, 80)}`;
+  if (data.kind === 'follow')  body = `${from} started following you`;
+  if (data.kind === 'message') body = `${from}: ${(data.text || '').slice(0, 80)}`;
+  if (!body) return;
+  try {
+    const n = new Notification(title, {
+      body, tag: 'priv-spaca-' + data.notifId,
+      icon: '/manifest.json',
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch (_) {}
 }
 
 /* ========== Notification dots ========== */
@@ -2282,6 +2409,135 @@ function buildNotifRow(n, i) {
   return li;
 }
 
+/* ====== Web Push subscription ====== */
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function togglePushSubscription() {
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    toast('Push notifications not supported on this browser', 'error');
+    return;
+  }
+  // If already subscribed, unsubscribe
+  if (localStorage.getItem('ps_pushEnabled') === '1') {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await api('/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });
+        await sub.unsubscribe();
+      }
+      localStorage.removeItem('ps_pushEnabled');
+      toast('Push notifications turned off');
+      updatePushStatus();
+    } catch (e) { toast(e.message || 'Failed', 'error'); }
+    return;
+  }
+  // Ask permission
+  let perm = Notification.permission;
+  if (perm === 'default') perm = await Notification.requestPermission();
+  if (perm !== 'granted') {
+    toast('Permission denied — enable notifications for this site in your browser settings', 'error');
+    updatePushStatus();
+    return;
+  }
+  // Fetch VAPID public key
+  let keyRes;
+  try { keyRes = await api('/push/vapid-public'); }
+  catch (e) { toast('Server not ready for push', 'error'); return; }
+  if (!keyRes || !keyRes.key) {
+    toast('Push notifications unavailable (no VAPID key configured)', 'error');
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(keyRes.key),
+    });
+    await api('/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+    localStorage.setItem('ps_pushEnabled', '1');
+    toast('Push notifications enabled', 'success');
+    updatePushStatus();
+  } catch (e) {
+    toast('Push subscribe failed: ' + (e.message || ''), 'error');
+  }
+}
+
+/* ====== Settings sheet ====== */
+function openSettings() {
+  const sheet = $('#settingsSheet');
+  sheet.classList.remove('hidden');
+  const card = sheet.querySelector('.sheet-card');
+  if (card) motionAnimate(card,
+    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
+    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
+  );
+  // Sync visual state of theme + accent inside the sheet
+  const stored = localStorage.getItem('ps_theme') || 'auto';
+  $$('#settingsSheet [data-theme-set]').forEach(b => b.classList.toggle('active', b.dataset.themeSet === stored));
+  const accent = localStorage.getItem('ps_accent') || '#00a2ff';
+  $$('#settingsSheet [data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === accent));
+  updatePushStatus();
+  updateRealtimeStatus();
+  refreshIcons();
+}
+function closeSettings() {
+  $('#settingsSheet').classList.add('hidden');
+}
+function updatePushStatus() {
+  const el = $('#pushStatus');
+  if (!el) return;
+  if (!('Notification' in window)) {
+    el.textContent = 'Unsupported'; el.className = 'settings-chip';
+  } else if (Notification.permission === 'granted' && localStorage.getItem('ps_pushEnabled') === '1') {
+    el.textContent = 'On'; el.className = 'settings-chip on';
+  } else {
+    el.textContent = Notification.permission === 'denied' ? 'Blocked' : 'Off';
+    el.className = 'settings-chip';
+  }
+}
+function updateRealtimeStatus() {
+  const el = $('#rtStatus');
+  if (!el) return;
+  if (typeof _sseConnected !== 'undefined' && _sseConnected) {
+    el.textContent = 'Live'; el.className = 'settings-chip live';
+  } else {
+    el.textContent = 'Polling'; el.className = 'settings-chip';
+  }
+}
+function bindSettingsSheet() {
+  const open = $('#topSettingsBtn');
+  if (open) open.addEventListener('click', openSettings);
+  $$('[data-close-settings]').forEach(b => b.addEventListener('click', closeSettings));
+  const push = $('#enablePushBtn');
+  if (push) push.addEventListener('click', togglePushSubscription);
+  const ep = $('#settingsEditProfile');
+  if (ep) ep.addEventListener('click', () => {
+    closeSettings();
+    switchTab('profile');
+    setTimeout(() => { const btn = $('#editProfileBtn'); if (btn) btn.click(); }, 200);
+  });
+  const vt = $('#settingsViewTerms');
+  if (vt) vt.addEventListener('click', () => {
+    closeSettings();
+    const m = $('#termsModal');
+    m.classList.remove('hidden');
+    refreshIcons();
+  });
+  const lo = $('#settingsLogout');
+  if (lo) lo.addEventListener('click', () => {
+    if (confirm('Sign out of PRIV SPACA?')) { closeSettings(); logout(false); }
+  });
+  // Bottom-sheet rebind for theme/accent buttons that live inside #settingsSheet (rebound by bindThemeToggle)
+}
+
 function bindNotifSheet() {
   $$('[data-close-notif]').forEach(b => b.addEventListener('click', closeNotifications));
   const clr = $('#notifClearBtn');
@@ -2642,6 +2898,7 @@ function bindLightbox() {
       if (!$('#termsModal').classList.contains('hidden')) $('#termsModal').classList.add('hidden');
       if (!$('#commentsSheet').classList.contains('hidden')) closeCommentsSheet();
       if (!$('#notifSheet').classList.contains('hidden')) closeNotifications();
+      if (!$('#settingsSheet').classList.contains('hidden')) closeSettings();
       if (!$('#userProfileSheet').classList.contains('hidden')) closeUserProfile();
       if (!$('#storyViewer').classList.contains('hidden')) closeStory();
       const mm = document.querySelector('.more-menu'); if (mm) mm.remove();
@@ -2863,6 +3120,7 @@ function boot() {
   bindProfileView();
   bindInstallPrompt();
   bindThemeToggle();
+  bindSettingsSheet();
   registerServiceWorker();
   applyStoredTheme();
   refreshIcons();
@@ -2870,13 +3128,16 @@ function boot() {
   // Pause/resume polls when the tab is hidden to save data
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      // Refresh once on visibility return
       if (State.token && State.user) {
         loadMembers();
         pollNotifications();
         if (State.currentTab === 'chat') loadMessages(false);
         if (State.currentTab === 'feed') loadPosts();
+        if (!_sseConnected) connectSSE();
       }
+    } else {
+      // When tab is hidden, drop SSE to save battery; reconnect on return
+      disconnectSSE();
     }
   });
 

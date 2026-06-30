@@ -467,6 +467,191 @@ function isValidPin(s) {
   return typeof s === 'string' && /^[0-9]{4}$/.test(s);
 }
 
+// ---------- Web Push (VAPID) ----------
+let webpush = null;
+try { webpush = require('web-push'); } catch (_) { /* optional */ }
+
+const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY  || '';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@priv-spaca.app';
+if (webpush && VAPID_PUBLIC && VAPID_PRIVATE) {
+  try { webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE); }
+  catch (e) { console.error('[push] setVapidDetails failed', e.message); }
+}
+
+// GET /api/push/vapid-public — frontend fetches the public key
+app.get('/api/push/vapid-public', (req, res) => {
+  res.json({ key: VAPID_PUBLIC });
+});
+
+// POST /api/push/subscribe — save subscription on the user record
+app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
+  const { subscription } = req.body || {};
+  if (!subscription || !subscription.endpoint) {
+    return res.status(400).json({ error: 'Invalid subscription' });
+  }
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === req.userId);
+  if (!u) return res.status(404).json({ error: 'Not found' });
+  u.pushSubs = Array.isArray(u.pushSubs) ? u.pushSubs : [];
+  // Replace existing sub with same endpoint, else append
+  const idx = u.pushSubs.findIndex(s => s.endpoint === subscription.endpoint);
+  if (idx >= 0) u.pushSubs[idx] = subscription;
+  else u.pushSubs.push(subscription);
+  // Cap at 5 devices per user
+  if (u.pushSubs.length > 5) u.pushSubs = u.pushSubs.slice(-5);
+  await saveDatabase(db, false);
+  res.json({ ok: true, devices: u.pushSubs.length });
+});
+
+// POST /api/push/unsubscribe — remove subscription
+app.post('/api/push/unsubscribe', authMiddleware, async (req, res) => {
+  const { endpoint } = req.body || {};
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === req.userId);
+  if (!u) return res.status(404).json({ error: 'Not found' });
+  u.pushSubs = (u.pushSubs || []).filter(s => s.endpoint !== endpoint);
+  await saveDatabase(db, false);
+  res.json({ ok: true });
+});
+
+// Send a push notification to a user (called internally by pushNotification).
+// Fire-and-forget; failures (expired sub etc.) are pruned.
+async function sendWebPush(db, recipientId, payload) {
+  if (!webpush || !VAPID_PUBLIC || !VAPID_PRIVATE) return;
+  const u = db.users.find(x => x.id === recipientId);
+  if (!u || !Array.isArray(u.pushSubs) || u.pushSubs.length === 0) return;
+  const body = JSON.stringify(payload);
+  const stillValid = [];
+  await Promise.all(u.pushSubs.map(async (sub) => {
+    try {
+      await webpush.sendNotification(sub, body, { TTL: 60 });
+      stillValid.push(sub);
+    } catch (e) {
+      // 404/410 = subscription expired
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        console.log('[push] pruning expired sub for', u.username);
+      } else {
+        console.warn('[push] send error', e.statusCode, e.body || e.message);
+        stillValid.push(sub); // keep it; might be a transient error
+      }
+    }
+  }));
+  if (stillValid.length !== u.pushSubs.length) {
+    u.pushSubs = stillValid;
+    // Lazy save via ephemeral
+    saveDatabase(db, true).catch(() => {});
+  }
+}
+
+// ---------- Real-time event queue + SSE ----------
+// Per-user FIFO queue holding events that occurred while they were disconnected.
+// Capped at 200 per user so a long-offline account doesn't blow memory.
+// Also a "subscribers" map for active SSE connections so we can fan-out push immediately.
+
+const _eventQueues = new Map();       // userId -> [{ id, ts, kind, data }]
+const _eventSubscribers = new Map();  // userId -> Set of {res, lastEventId, closed}
+
+function _pushEvent(userId, kind, data) {
+  if (!userId) return;
+  const evt = { id: 'evt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ts: Date.now(), kind, data };
+  // Queue it
+  if (!_eventQueues.has(userId)) _eventQueues.set(userId, []);
+  const q = _eventQueues.get(userId);
+  q.push(evt);
+  if (q.length > 200) q.splice(0, q.length - 200);
+  // Fan-out to live subscribers
+  const subs = _eventSubscribers.get(userId);
+  if (subs) {
+    for (const sub of subs) {
+      if (sub.closed) continue;
+      try {
+        sub.res.write(`id: ${evt.id}\nevent: ${evt.kind}\ndata: ${JSON.stringify(evt)}\n\n`);
+      } catch (_) { sub.closed = true; }
+    }
+  }
+  return evt;
+}
+
+function _broadcastEvent(kind, data, excludeUserId) {
+  // Broadcast to all known users (general-group new messages, presence, etc.)
+  for (const userId of new Set([..._eventSubscribers.keys(), ..._eventQueues.keys()])) {
+    if (userId === excludeUserId) continue;
+    _pushEvent(userId, kind, data);
+  }
+}
+
+// Periodic cleanup of empty queues
+setInterval(() => {
+  const now = Date.now();
+  for (const [uid, q] of _eventQueues) {
+    // Drop events older than 1 hour
+    const fresh = q.filter(e => now - e.ts < 60 * 60 * 1000);
+    if (fresh.length === 0) _eventQueues.delete(uid);
+    else if (fresh.length !== q.length) _eventQueues.set(uid, fresh);
+  }
+}, 5 * 60 * 1000).unref?.();
+
+// GET /api/stream — Server-Sent Events
+// Accepts ?token=... since EventSource cannot set Authorization headers.
+// Holds connection up to 25s (Netlify limit ≈ 26s), client auto-reconnects.
+app.get('/api/stream', async (req, res) => {
+  // Auth via query token (EventSource can't add Authorization header)
+  const token = req.query.token || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) return res.status(401).end();
+  let payload;
+  try { payload = jwt.verify(token, JWT_SECRET); }
+  catch (_) { return res.status(401).end(); }
+  const userId = payload.uid;
+  const lastEventId = req.headers['last-event-id'] || req.query.lastEventId || null;
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.write(': connected\n\n');
+
+  // Flush any queued events since last id
+  const queue = _eventQueues.get(userId) || [];
+  let startIdx = 0;
+  if (lastEventId) {
+    const i = queue.findIndex(e => e.id === lastEventId);
+    if (i >= 0) startIdx = i + 1;
+  }
+  for (let i = startIdx; i < queue.length; i++) {
+    const e = queue[i];
+    res.write(`id: ${e.id}\nevent: ${e.kind}\ndata: ${JSON.stringify(e)}\n\n`);
+  }
+
+  // Register live subscriber
+  if (!_eventSubscribers.has(userId)) _eventSubscribers.set(userId, new Set());
+  const sub = { res, closed: false };
+  _eventSubscribers.get(userId).add(sub);
+
+  // Heartbeat every 10s
+  const heartbeatTimer = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch (_) { closeConn(); }
+  }, 10000);
+
+  // Auto-close at 24s so Netlify doesn't timeout; client reconnects automatically
+  const autoClose = setTimeout(() => closeConn(), 24000);
+
+  function closeConn() {
+    if (sub.closed) return;
+    sub.closed = true;
+    clearInterval(heartbeatTimer);
+    clearTimeout(autoClose);
+    const set = _eventSubscribers.get(userId);
+    if (set) { set.delete(sub); if (set.size === 0) _eventSubscribers.delete(userId); }
+    try { res.end(); } catch (_) {}
+  }
+  req.on('close', closeConn);
+  req.on('error', closeConn);
+});
+
 // ---------- Health ----------
 app.get('/api/health', async (req, res) => {
   res.json({
@@ -906,16 +1091,22 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       createdAt: nowMs(),
     };
     db.messages.push(msg);
-    // Fire 'message' notification(s) for the recipient(s)
+    const enrichedMsg = { ...msg, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } };
+    // Real-time fan-out
     if (roomId.startsWith('dm:')) {
       const parts = roomId.slice(3).split(':');
       parts.filter(uid2 => uid2 !== req.userId).forEach(recip => {
+        // SSE: push the actual message to recipient instantly
+        _pushEvent(recip, 'new_message', { roomId, message: enrichedMsg });
+        // Also create a notification (which itself pushes an SSE 'notification' event)
         pushNotification(db, recip, 'message', req.userId, { text: (cleanText || (cleanImage ? '📷 Photo' : '')).slice(0, 80) });
       });
+    } else {
+      // Group message — broadcast to ALL other users so they get it live (no notification, just SSE)
+      _broadcastEvent('new_message', { roomId, message: enrichedMsg }, req.userId);
     }
-    // For group messages we skip notifications (avoids ringing every member on every chat) — IG doesn't either
     await saveDatabase(db, false);
-    res.json({ message: { ...msg, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } } });
+    res.json({ message: enrichedMsg });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Send failed' });
@@ -1073,6 +1264,30 @@ function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
   if (perUser.length > 500) {
     const oldest = perUser.slice(0, perUser.length - 500).map(n => n.id);
     db.notifications = db.notifications.filter(n => !oldest.includes(n.id));
+  }
+  // Real-time SSE fan-out (in-app)
+  _pushEvent(recipientId, 'notification', {
+    kind,
+    fromUserId,
+    fromSnapshot: snapshot,
+    postId: notif.postId,
+    text: notif.text,
+    notifId: notif.id,
+  });
+  // Web Push (OS-level lock-screen notification)
+  const fromName = (snapshot && (snapshot.username || snapshot.displayName)) || 'Someone';
+  let title = 'PRIV SPACA', body = '';
+  if (kind === 'like')    body = `${fromName} liked your post`;
+  if (kind === 'comment') body = `${fromName} commented: ${(notif.text || '').slice(0, 80)}`;
+  if (kind === 'follow')  body = `${fromName} started following you`;
+  if (kind === 'message') body = `${fromName}: ${(notif.text || '').slice(0, 80)}`;
+  if (body) {
+    sendWebPush(db, recipientId, {
+      title, body,
+      tag: 'priv-spaca-' + notif.id,
+      url: '/',
+      kind, notifId: notif.id,
+    }).catch(() => {});
   }
   return notif;
 }
@@ -1280,8 +1495,11 @@ app.post('/api/posts/create', authMiddleware, async (req, res) => {
       createdAt: nowMs(),
     };
     db.posts.push(post);
+    const enrichedPost = { ...post, likeCount: 0, commentCount: 0, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } };
+    // Broadcast to other users so their feed updates instantly
+    _broadcastEvent('new_post', { post: enrichedPost }, req.userId);
     await saveDatabase(db, false);
-    res.json({ post: { ...post, likeCount: 0, commentCount: 0, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } } });
+    res.json({ post: enrichedPost });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Create post failed' });

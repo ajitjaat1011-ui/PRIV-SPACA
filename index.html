@@ -150,6 +150,9 @@
         <i data-lucide="send"></i>
         <span class="dot hidden" data-dot="chat-top"></span>
       </button>
+      <button id="topSettingsBtn" class="ghost-btn" title="Settings" aria-label="Settings">
+        <i data-lucide="settings"></i>
+      </button>
     </div>
   </header>
 
@@ -283,32 +286,6 @@
         <div class="ig-profile-actions">
           <button id="editProfileBtn" class="ig-action-btn primary">Edit profile</button>
           <button id="shareProfileBtn" class="ig-action-btn">Share</button>
-        </div>
-
-        <!-- Settings strip -->
-        <div class="settings-strip">
-          <button id="installAppBtn" class="settings-row hidden">
-            <i data-lucide="download"></i><span>Install PRIV SPACA</span><i data-lucide="chevron-right" class="chev"></i>
-          </button>
-          <div class="settings-row">
-            <i data-lucide="moon"></i><span>Theme</span>
-            <div class="theme-toggle" role="group" aria-label="Theme">
-              <button data-theme-set="light" class="theme-opt" title="Light"><i data-lucide="sun"></i></button>
-              <button data-theme-set="dark" class="theme-opt" title="Dark"><i data-lucide="moon"></i></button>
-              <button data-theme-set="auto" class="theme-opt active" title="Auto">A</button>
-            </div>
-          </div>
-          <div class="settings-row">
-            <i data-lucide="palette"></i><span>Accent</span>
-            <div class="color-picker">
-              <button data-accent="#00a2ff" class="color-swatch active" style="background:#00a2ff" title="Sky blue"></button>
-              <button data-accent="#7c5cff" class="color-swatch" style="background:#7c5cff" title="Violet"></button>
-              <button data-accent="#ff3d7a" class="color-swatch" style="background:#ff3d7a" title="Pink"></button>
-              <button data-accent="#ff8a3d" class="color-swatch" style="background:#ff8a3d" title="Orange"></button>
-              <button data-accent="#23a55a" class="color-swatch" style="background:#23a55a" title="Green"></button>
-              <button data-accent="#ffb700" class="color-swatch" style="background:#ffb700" title="Sun"></button>
-            </div>
-          </div>
         </div>
 
         <div class="ig-tabs">
@@ -479,6 +456,73 @@
 
 <!-- ====== COMMENTS SHEET ====== -->
 <!-- ====== NOTIFICATIONS SHEET ====== -->
+<!-- ====== SETTINGS SHEET ====== -->
+<div id="settingsSheet" class="comments-sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-backdrop" data-close-settings></div>
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h3><i data-lucide="settings"></i> Settings</h3>
+      <button class="ghost-btn" data-close-settings aria-label="Close"><i data-lucide="x"></i></button>
+    </div>
+    <div class="sheet-body settings-body">
+
+      <div class="settings-section-title">Appearance</div>
+      <div class="settings-strip">
+        <div class="settings-row">
+          <i data-lucide="moon"></i><span>Theme</span>
+          <div class="theme-toggle" role="group" aria-label="Theme">
+            <button data-theme-set="light" class="theme-opt" title="Light"><i data-lucide="sun"></i></button>
+            <button data-theme-set="dark" class="theme-opt" title="Dark"><i data-lucide="moon"></i></button>
+            <button data-theme-set="auto" class="theme-opt active" title="Auto">A</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <i data-lucide="palette"></i><span>Accent color</span>
+          <div class="color-picker">
+            <button data-accent="#00a2ff" class="color-swatch active" style="background:#00a2ff" title="Sky"></button>
+            <button data-accent="#7c5cff" class="color-swatch" style="background:#7c5cff" title="Violet"></button>
+            <button data-accent="#ff3d7a" class="color-swatch" style="background:#ff3d7a" title="Pink"></button>
+            <button data-accent="#ff8a3d" class="color-swatch" style="background:#ff8a3d" title="Orange"></button>
+            <button data-accent="#23a55a" class="color-swatch" style="background:#23a55a" title="Green"></button>
+            <button data-accent="#ffb700" class="color-swatch" style="background:#ffb700" title="Sun"></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section-title">App</div>
+      <div class="settings-strip">
+        <button id="installAppBtn" class="settings-row hidden">
+          <i data-lucide="download"></i><span>Install PRIV SPACA</span><i data-lucide="chevron-right" class="chev"></i>
+        </button>
+        <button id="enablePushBtn" class="settings-row">
+          <i data-lucide="bell"></i><span>Push notifications</span><span id="pushStatus" class="settings-chip">Off</span>
+        </button>
+        <button id="realtimeBadge" class="settings-row" disabled>
+          <i data-lucide="zap"></i><span>Real-time</span><span id="rtStatus" class="settings-chip">Polling</span>
+        </button>
+      </div>
+
+      <div class="settings-section-title">Account</div>
+      <div class="settings-strip">
+        <button id="settingsEditProfile" class="settings-row">
+          <i data-lucide="user"></i><span>Edit profile</span><i data-lucide="chevron-right" class="chev"></i>
+        </button>
+        <button id="settingsViewTerms" class="settings-row">
+          <i data-lucide="shield-check"></i><span>Terms &amp; Guidelines</span><i data-lucide="chevron-right" class="chev"></i>
+        </button>
+        <button id="settingsLogout" class="settings-row danger">
+          <i data-lucide="log-out"></i><span>Sign out</span><i data-lucide="chevron-right" class="chev"></i>
+        </button>
+      </div>
+
+      <div class="settings-foot">
+        PRIV SPACA · v1.0 · <a href="https://github.com/ajitjaat1011-ui/PRIV-SPACA" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="notifSheet" class="comments-sheet hidden" role="dialog" aria-modal="true">
   <div class="sheet-backdrop" data-close-notif></div>
   <div class="sheet-card">

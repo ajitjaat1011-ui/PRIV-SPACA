@@ -16,7 +16,8 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "node-fetch": "^2.7.0",
-    "serverless-http": "^3.2.0"
+    "serverless-http": "^3.2.0",
+    "web-push": "^3.6.7"
   },
   "license": "MIT"
 }
