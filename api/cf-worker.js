@@ -28,8 +28,7 @@ function loadConfig(env) {
   if (!env) return;
   // Always overwrite — values can change per-deploy
   if (env.JWT_SECRET) JWT_SECRET = env.JWT_SECRET;
-  // Override env with new token to fix login
-  GITHUB_PAT = 'ghp_' + 'CNZDeOjR4E' + '1DsT4pwK1B' + '7IeAaT1D9S' + '3vpWpH';
+  if (env.GITHUB_PAT) GITHUB_PAT = env.GITHUB_PAT;
   if (env.GH_REPO) GH_REPO = env.GH_REPO;
   if (env.GH_BRANCH) GH_BRANCH = env.GH_BRANCH;
   if (env.GH_FILE) GH_FILE = env.GH_FILE;
