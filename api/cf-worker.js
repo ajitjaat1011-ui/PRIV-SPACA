@@ -145,8 +145,13 @@ async function repoWrite(dbObj) {
       });
     };
     let r = await doPut(ghFileSha);
-    for (let i = 0; i < 3 && (r.status === 409 || r.status === 422); i++) {
-      ghFileSha = null; await repoRead(); r = await doPut(ghFileSha);
+    // Do NOT retry conflicts here with the same stale content. Return false so
+    // saveDatabase() can re-read, merge, and then retry with unioned data.
+    if (r.status === 409 || r.status === 422) {
+      const t = await r.text().catch(() => '');
+      console.warn('[repoWrite conflict]', r.status, t.slice(0, 120));
+      ghFileSha = null;
+      return false;
     }
     if (!r.ok) {
       const t = await r.text().catch(() => '');
@@ -723,7 +728,7 @@ app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
   persistence: isRepo() ? 'github-repo' : 'in-memory',
   runtime: 'cloudflare-workers',
-  time: nowMs(), version: 'auth-storage-v3-merge',
+  time: nowMs(), version: 'auth-storage-v4-conflict-merge',
 }));
 
 app.get('/api/diag', async (c) => {
