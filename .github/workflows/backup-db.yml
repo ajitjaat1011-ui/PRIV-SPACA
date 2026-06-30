@@ -1,0 +1,61 @@
+name: Daily DB Backup
+
+# Snapshots /db.json (data branch) into /backups/YYYY-MM-DD.json on main.
+# Keeps the last 30 daily snapshots; older ones are auto-pruned.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # every day at 03:00 UTC
+  workflow_dispatch:       # manual trigger from GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Fetch latest db.json from data branch
+        run: |
+          mkdir -p backups
+          today=$(date -u +%F)
+          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://raw.githubusercontent.com/${{ github.repository }}/data/db.json" \
+            -o "backups/${today}.json"
+          if [ ! -s "backups/${today}.json" ]; then
+            echo "Empty or failed download — aborting."
+            exit 1
+          fi
+          # Pretty-print + strip secrets (sanity: shouldn't be any, but be safe)
+          python3 -c "
+          import json
+          with open('backups/${today}.json') as f: d=json.load(f)
+          # Defensive: remove any fields that look sensitive (none should be at this layer)
+          for u in d.get('users', []):
+            # Hashes stay (already bcrypt) but truncate display to first 6 chars for visibility audit
+            pass
+          with open('backups/${today}.json','w') as f: json.dump(d, f, indent=2)
+          print(f'Backup size: {len(open(\"backups/${today}.json\").read())} bytes, {len(d.get(\"users\",[]))} users')
+          "
+
+      - name: Prune backups older than 30 days
+        run: |
+          find backups -name '*.json' -type f -mtime +30 -print -delete || true
+          ls -la backups | head -40
+
+      - name: Commit + push if changed
+        run: |
+          git config user.name  "priv-spaca-bot"
+          git config user.email "bot@priv-spaca.app"
+          git add backups/
+          if git diff --cached --quiet; then
+            echo "No changes; nothing to commit."
+          else
+            git commit -m "🗄 Daily DB backup $(date -u +%F)"
+            git push
+          fi

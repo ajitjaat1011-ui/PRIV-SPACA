@@ -1,0 +1,2 @@
+# Auto-populated by .github/workflows/backup-db.yml every day at 03:00 UTC.
+# Retention: 30 days of snapshots of db.json (from the 'data' branch).

@@ -340,8 +340,31 @@ async function fetchDatabase() {
  * Returns true if any messages were promoted (caller may persist).
  */
 function runScheduler(db) {
-  if (!Array.isArray(db.scheduledMessages) || db.scheduledMessages.length === 0) return false;
   const now = nowMs();
+  let changed = false;
+
+  // Purge soft-deleted older than 30 days
+  const PURGE_AFTER = 30 * 24 * 3600 * 1000;
+  const beforePosts = (db.posts || []).length;
+  db.posts = (db.posts || []).filter(p => !p.deletedAt || (now - p.deletedAt) < PURGE_AFTER);
+  if (db.posts.length !== beforePosts) changed = true;
+  const beforeMsgs = (db.messages || []).length;
+  db.messages = (db.messages || []).filter(m => !m.deletedAt || (now - m.deletedAt) < PURGE_AFTER);
+  if (db.messages.length !== beforeMsgs) changed = true;
+
+  // Purge typing entries older than 10s
+  if (db.typing && typeof db.typing === 'object') {
+    for (const room of Object.keys(db.typing)) {
+      const map = db.typing[room];
+      if (!map || typeof map !== 'object') { delete db.typing[room]; continue; }
+      for (const u of Object.keys(map)) {
+        if (now - (map[u] || 0) > 10000) delete map[u];
+      }
+      if (Object.keys(map).length === 0) delete db.typing[room];
+    }
+  }
+
+  if (!Array.isArray(db.scheduledMessages) || db.scheduledMessages.length === 0) return changed;
   const due = [];
   const remaining = [];
   for (const sm of db.scheduledMessages) {
@@ -351,7 +374,7 @@ function runScheduler(db) {
       remaining.push(sm);
     }
   }
-  if (due.length === 0) return false;
+  if (due.length === 0) return changed;
   for (const sm of due) {
     const author = db.users.find(u => u.id === sm.userId);
     const snapshot = author ? {
@@ -830,7 +853,7 @@ app.get('/api/messages', authMiddleware, async (req, res) => {
   }
   const db = await fetchDatabase();
   const list = db.messages
-    .filter(m => m.roomId === roomId)
+    .filter(m => m.roomId === roomId && !m.deletedAt)
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-200);
   // Enrich with author profile; if user record is gone, fall back to embedded snapshot
@@ -904,15 +927,32 @@ app.post('/api/messages/delete', authMiddleware, async (req, res) => {
     const { messageId } = req.body || {};
     if (!messageId) return res.status(400).json({ error: 'messageId required' });
     const db = await fetchDatabase();
-    const idx = db.messages.findIndex(m => m.id === messageId);
-    if (idx === -1) return res.status(404).json({ error: 'Not found' });
-    if (db.messages[idx].userId !== req.userId) return res.status(403).json({ error: 'Forbidden' });
-    db.messages.splice(idx, 1);
+    const m = db.messages.find(x => x.id === messageId);
+    if (!m) return res.status(404).json({ error: 'Not found' });
+    if (m.userId !== req.userId) return res.status(403).json({ error: 'Forbidden' });
+    // Soft delete — keeps the row for 30 days so we can undo
+    m.deletedAt = nowMs();
+    await saveDatabase(db, false);
+    res.json({ ok: true, undoUntil: m.deletedAt + 30 * 24 * 3600 * 1000 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
+app.post('/api/messages/restore', authMiddleware, async (req, res) => {
+  try {
+    const { messageId } = req.body || {};
+    const db = await fetchDatabase();
+    const m = db.messages.find(x => x.id === messageId);
+    if (!m) return res.status(404).json({ error: 'Not found' });
+    if (m.userId !== req.userId) return res.status(403).json({ error: 'Forbidden' });
+    delete m.deletedAt;
     await saveDatabase(db, false);
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: 'Delete failed' });
+    res.status(500).json({ error: 'Restore failed' });
   }
 });
 
@@ -1195,7 +1235,7 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
     }
   });
   const list = db.posts
-    .filter(p => !myBlocked.has(p.userId) && !blockedMe.has(p.userId))
+    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId))
     .slice()
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => {
@@ -1298,10 +1338,23 @@ app.post('/api/posts/delete', authMiddleware, async (req, res) => {
   const { postId } = req.body || {};
   if (!postId) return res.status(400).json({ error: 'postId required' });
   const db = await fetchDatabase();
-  const idx = db.posts.findIndex(p => p.id === postId);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  if (db.posts[idx].userId !== req.userId) return res.status(403).json({ error: 'Forbidden' });
-  db.posts.splice(idx, 1);
+  const p = db.posts.find(x => x.id === postId);
+  if (!p) return res.status(404).json({ error: 'Not found' });
+  if (p.userId !== req.userId) return res.status(403).json({ error: 'Forbidden' });
+  // Soft delete (30-day undo window)
+  p.deletedAt = nowMs();
+  await saveDatabase(db, false);
+  res.json({ ok: true, undoUntil: p.deletedAt + 30 * 24 * 3600 * 1000 });
+});
+
+app.post('/api/posts/restore', authMiddleware, async (req, res) => {
+  const { postId } = req.body || {};
+  if (!postId) return res.status(400).json({ error: 'postId required' });
+  const db = await fetchDatabase();
+  const p = db.posts.find(x => x.id === postId);
+  if (!p) return res.status(404).json({ error: 'Not found' });
+  if (p.userId !== req.userId) return res.status(403).json({ error: 'Forbidden' });
+  delete p.deletedAt;
   await saveDatabase(db, false);
   res.json({ ok: true });
 });

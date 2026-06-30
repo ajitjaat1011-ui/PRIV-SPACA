@@ -886,12 +886,18 @@ function renderMessage(m, meId, grouped) {
     delBtn.className = 'ghost-btn'; delBtn.title = 'Delete';
     delBtn.innerHTML = '<i data-lucide="trash-2"></i>';
     delBtn.addEventListener('click', async () => {
-      if (!confirm('Delete this message?')) return;
       try {
         await api('/messages/delete', { method: 'POST', body: { messageId: m.id } });
         State.messages = State.messages.filter(x => x.id !== m.id);
         lastMessagesSignature = '';
         renderMessages(false);
+        undoToast('Message deleted', async () => {
+          try {
+            await api('/messages/restore', { method: 'POST', body: { messageId: m.id } });
+            lastMessagesSignature = ''; loadMessages(false);
+            toast('Restored', 'success');
+          } catch (e) { toast(e.message || 'Restore failed', 'error'); }
+        });
       } catch (e) { toast(e.message || 'Delete failed', 'error'); }
     });
     actions.appendChild(delBtn);
@@ -1428,11 +1434,8 @@ function renderPost(p) {
   if (p.imageUrl) {
     const wrap = document.createElement('div');
     wrap.className = 'post-img-wrap';
-    const img = document.createElement('img');
+    const img = lazyImg(p.imageUrl, 'post image', p.id);
     img.className = 'post-img';
-    img.src = p.imageUrl;
-    img.alt = 'post image';
-    img.loading = 'lazy';
     img.addEventListener('error', () => { wrap.style.display = 'none'; });
     const burst = document.createElement('div');
     burst.className = 'heart-burst';
@@ -1740,9 +1743,17 @@ function openMoreMenu(p, isMine) {
   if (isMine) {
     items.push({ label: 'Delete', danger: true, action: async () => {
       close();
-      if (!confirm('Delete this post?')) return;
-      try { await api('/posts/delete', { method: 'POST', body: { postId: p.id } }); lastPostsSignature = ''; loadPosts(); toast('Post deleted'); }
-      catch (e) { toast(e.message || 'Delete failed', 'error'); }
+      try {
+        await api('/posts/delete', { method: 'POST', body: { postId: p.id } });
+        lastPostsSignature = ''; loadPosts();
+        undoToast('Post deleted', async () => {
+          try {
+            await api('/posts/restore', { method: 'POST', body: { postId: p.id } });
+            lastPostsSignature = ''; loadPosts();
+            toast('Restored', 'success');
+          } catch (e) { toast(e.message || 'Restore failed', 'error'); }
+        });
+      } catch (e) { toast(e.message || 'Delete failed', 'error'); }
     }});
   }
   items.push({ label: 'Share to…', action: () => { close(); sharePost(p); }});
@@ -2378,8 +2389,7 @@ function buildGridCell(p) {
   const cell = document.createElement('div');
   cell.className = 'ig-grid-cell';
   if (p.imageUrl) {
-    const img = document.createElement('img');
-    img.src = p.imageUrl; img.alt = ''; img.loading = 'lazy';
+    const img = lazyImg(p.imageUrl, '', p.id);
     img.addEventListener('error', () => {
       img.remove();
       const fb = document.createElement('div');
@@ -2650,6 +2660,191 @@ async function loadAll() {
   await loadMessages(true);
 }
 
+/* ====== Toast with Undo button ====== */
+function undoToast(msg, onUndo, durationMs = 6000) {
+  const t = $('#toast');
+  t.innerHTML = `<span>${escapeHtml(msg)}</span><button class="toast-undo">UNDO</button>`;
+  t.className = 'toast with-undo';
+  t.classList.remove('hidden');
+  if (window.Motion && window.Motion.animate) {
+    try {
+      window.Motion.animate(t,
+        { opacity: [0, 1], transform: ['translate(-50%, 14px) scale(.94)', 'translate(-50%, 0) scale(1)'] },
+        { duration: 0.32, easing: [0.34, 1.4, 0.64, 1] });
+    } catch (_) {}
+  }
+  let resolved = false;
+  const btn = t.querySelector('.toast-undo');
+  btn.addEventListener('click', () => {
+    if (resolved) return;
+    resolved = true;
+    clearTimeout(t._tm);
+    t.classList.add('hidden');
+    try { onUndo(); } catch (_) {}
+  });
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => {
+    if (resolved) return;
+    resolved = true;
+    if (window.Motion && window.Motion.animate) {
+      try {
+        window.Motion.animate(t,
+          { opacity: [1, 0], transform: ['translate(-50%, 0) scale(1)', 'translate(-50%, 8px) scale(.96)'] },
+          { duration: 0.22, easing: 'ease-in' }).finished.then(() => t.classList.add('hidden')).catch(() => t.classList.add('hidden'));
+      } catch (_) { t.classList.add('hidden'); }
+    } else { t.classList.add('hidden'); }
+  }, durationMs);
+}
+
+/* ====== Lazy image with blur-up placeholder ====== */
+// Returns an <img> that shows a colored placeholder until the real image loads.
+function lazyImg(src, alt = '', seed = '') {
+  const img = document.createElement('img');
+  img.alt = alt;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.style.background = `linear-gradient(135deg, ${colorOf(seed || src)}, ${colorOf((seed || src) + 'x')})`;
+  img.style.opacity = '0';
+  img.style.transition = 'opacity .35s ease';
+  img.addEventListener('load', () => {
+    img.style.opacity = '1';
+    img.style.background = '';
+  });
+  img.addEventListener('error', () => {
+    img.style.opacity = '1';   // keep placeholder color visible
+  });
+  // Use IntersectionObserver to defer src assignment for off-screen images
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries, obs) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) { img.src = src; obs.unobserve(img); }
+      });
+    }, { rootMargin: '200px' });
+    requestAnimationFrame(() => io.observe(img));
+  } else {
+    img.src = src;
+  }
+  return img;
+}
+
+/* ====== Theme (dark/light/auto) + accent colour ====== */
+function applyStoredTheme() {
+  const stored = localStorage.getItem('ps_theme') || 'auto';
+  if (stored === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', stored);
+  $$('[data-theme-set]').forEach(b => b.classList.toggle('active', b.dataset.themeSet === stored));
+
+  const accent = localStorage.getItem('ps_accent');
+  if (accent) applyAccent(accent);
+  $$('[data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === (accent || '#00a2ff')));
+
+  updateMetaThemeColor();
+}
+function setTheme(mode) {
+  localStorage.setItem('ps_theme', mode);
+  applyStoredTheme();
+  toast('Theme: ' + (mode === 'auto' ? 'Auto (follow system)' : mode), 'success');
+}
+function applyAccent(hex) {
+  document.documentElement.style.setProperty('--accent', hex);
+  document.documentElement.style.setProperty('--accent-2', shadeColor(hex, -12));
+  document.documentElement.style.setProperty('--accent-rgb', hexToRgb(hex));
+  document.documentElement.style.setProperty('--accent-grad', `linear-gradient(135deg, ${shadeColor(hex, 12)} 0%, ${shadeColor(hex, -18)} 100%)`);
+  updateMetaThemeColor(hex);
+}
+function setAccent(hex) {
+  localStorage.setItem('ps_accent', hex);
+  applyAccent(hex);
+  $$('[data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === hex));
+}
+function shadeColor(hex, percent) {
+  const num = parseInt(hex.slice(1), 16);
+  const r = (num >> 16) & 0xFF, g = (num >> 8) & 0xFF, b = num & 0xFF;
+  const amt = Math.round(2.55 * percent);
+  const cv = (v) => Math.max(0, Math.min(255, v + amt));
+  return '#' + ((1 << 24) | (cv(r) << 16) | (cv(g) << 8) | cv(b)).toString(16).slice(1);
+}
+function hexToRgb(hex) {
+  const num = parseInt(hex.slice(1), 16);
+  return `${(num >> 16) & 255},${(num >> 8) & 255},${num & 255}`;
+}
+function updateMetaThemeColor(accentHex) {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+                 (document.documentElement.getAttribute('data-theme') !== 'light' &&
+                  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const meta = document.querySelector('meta[name="theme-color"]:not([media])');
+  if (meta) meta.content = isDark ? '#0b1620' : (accentHex || '#00a2ff');
+}
+function bindThemeToggle() {
+  $$('[data-theme-set]').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.themeSet)));
+  $$('[data-accent]').forEach(b => b.addEventListener('click', () => setAccent(b.dataset.accent)));
+  const inst = $('#installAppBtn');
+  if (inst) inst.addEventListener('click', showInstallPrompt);
+  // React to OS theme change when in auto mode
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if ((localStorage.getItem('ps_theme') || 'auto') === 'auto') updateMetaThemeColor();
+    });
+  }
+}
+
+/* ====== PWA: service worker + install prompt ====== */
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  // Skip on localhost without https — SW needs secure context
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then((reg) => {
+      // Listen for updates and offer reload
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+            // New version available — silently let it activate on next load
+            console.log('[sw] new version installed; will activate on reload');
+          }
+        });
+      });
+    }).catch(err => console.warn('[sw] register failed', err.message));
+  });
+}
+
+let _installPrompt = null;
+function bindInstallPrompt() {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    _installPrompt = e;
+    // Show our own "Install app" button in the profile view (added in HTML)
+    const btn = $('#installAppBtn');
+    if (btn) btn.classList.remove('hidden');
+  });
+  window.addEventListener('appinstalled', () => {
+    _installPrompt = null;
+    const btn = $('#installAppBtn');
+    if (btn) btn.classList.add('hidden');
+    toast('Installed! Find PRIV SPACA on your home screen.', 'success');
+  });
+}
+async function showInstallPrompt() {
+  if (!_installPrompt) {
+    // iOS Safari: show instructions
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (isIOS) {
+      toast('Tap the Share button → "Add to Home Screen"', '');
+    } else {
+      toast('Open this page in Chrome to install', '');
+    }
+    return;
+  }
+  _installPrompt.prompt();
+  const choice = await _installPrompt.userChoice;
+  _installPrompt = null;
+  if (choice && choice.outcome === 'accepted') {
+    toast('Installing…', 'success');
+  }
+}
+
 function boot() {
   $('#yr').textContent = String(new Date().getFullYear());
   bindAuth();
@@ -2666,6 +2861,10 @@ function boot() {
   bindNotifSheet();
   bindUserProfileSheet();
   bindProfileView();
+  bindInstallPrompt();
+  bindThemeToggle();
+  registerServiceWorker();
+  applyStoredTheme();
   refreshIcons();
 
   // Pause/resume polls when the tab is hidden to save data
