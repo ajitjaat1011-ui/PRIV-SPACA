@@ -96,7 +96,7 @@ async function repoRead() {
     if (!d.content) return null;
     const cleanB64 = d.content.replace(/\n/g, ''); const binStr = atob(cleanB64); const bytes = new Uint8Array(binStr.length); for(let i=0; i<binStr.length; i++) bytes[i] = binStr.charCodeAt(i); const dec = new TextDecoder('utf8').decode(bytes);
     return safeJson(dec, null);
-  } catch (e) { console.error('[repoRead]', e.message); return null; }
+  } catch (e) { console.error('[repoRead]', e.message); return { _err: e.message, _stack: e.stack }; }
 }
 
 async function repoWrite(dbObj) {
