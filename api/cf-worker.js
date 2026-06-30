@@ -90,12 +90,12 @@ async function repoRead() {
       },
       cf: { cacheTtl: 0, cacheEverything: false },
     });
-    if (!r.ok) { console.error('[repoRead]', r.status); return null; }
+    if (!r.ok) { const txt = await r.text(); console.error('[repoRead]', r.status, txt); return { _httpError: r.status, txt }; }
     const d = await r.json();
     ghFileSha = d.sha || null;
     if (!d.content) return null;
-    const buf = Buffer.from(d.content, d.encoding || 'base64');
-    return safeJson(buf.toString('utf8'), null);
+    const cleanB64 = d.content.replace(/\n/g, ''); const binStr = atob(cleanB64); const bytes = new Uint8Array(binStr.length); for(let i=0; i<binStr.length; i++) bytes[i] = binStr.charCodeAt(i); const dec = new TextDecoder('utf8').decode(bytes);
+    return safeJson(dec, null);
   } catch (e) { console.error('[repoRead]', e.message); return null; }
 }
 
@@ -103,7 +103,7 @@ async function repoWrite(dbObj) {
   if (!isRepo()) return false;
   try {
     if (!ghFileSha) await repoRead();
-    const content = Buffer.from(JSON.stringify(dbObj)).toString('base64');
+    const str = JSON.stringify(dbObj); const bytes = new TextEncoder().encode(str); let binStr = ''; for(let i=0; i<bytes.byteLength; i++) binStr += String.fromCharCode(bytes[i]); const content = btoa(binStr);
     const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}`;
     const doPut = async (sha) => {
       const body = { message: 'priv-spaca sync ' + new Date().toISOString(), content, branch: GH_BRANCH };
