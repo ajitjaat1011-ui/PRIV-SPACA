@@ -1,6 +1,8 @@
 # PRIV SPACA
 
-Secure private group chat + social community. Vanilla JS frontend + Vercel serverless Express API. Persistence via GitHub Gist (with in-memory fallback). Free image hosting via tmpfiles.org.
+**🚀 Live:** https://priv-spaca-app.vercel.app
+
+Secure private group chat + social community. Vanilla JS frontend + Vercel serverless Express API. Persistence via GitHub repo (with in-memory fallback). Free image hosting via tmpfiles.org.
 
 ## Run locally
 
@@ -25,16 +27,16 @@ vercel dev
 | Variable    | Purpose                                                                |
 |-------------|------------------------------------------------------------------------|
 | `JWT_SECRET`| HMAC secret for signing JWTs (use a long random string in production). |
-| `GIST_ID`   | GitHub Gist ID containing `db.json`.                                   |
-| `GITHUB_PAT`| GitHub Personal Access Token with `gist` scope.                        |
+| `GITHUB_PAT`| GitHub Personal Access Token with `repo` scope.                        |
+| `GH_REPO`   | `owner/repo` to store db.json (default: `ajitjaat1011-ui/PRIV-SPACA`). |
+| `GH_BRANCH` | Branch name (default: `data`). Create this branch with `db.json` = `{}`. |
 
-When `GIST_ID`/`GITHUB_PAT` are absent, the API uses an in-memory store so local development never breaks.
+When `GITHUB_PAT` is absent, the API uses an in-memory store so local development never breaks.
 
-### Creating the Gist
-1. Create a secret Gist at https://gist.github.com with a file named `db.json` containing `{}`.
-2. Copy its ID from the URL.
-3. Create a fine-grained PAT with **gist** read+write access.
-4. Set both env vars in Vercel project settings.
+### Creating the data branch
+1. In your GitHub repo, create branch `data` containing `db.json` with `{"users":[],"messages":[],"scheduledMessages":[],"posts":[],"typing":{},"heartbeat":{}}`.
+2. Create a PAT with **repo** scope at https://github.com/settings/tokens.
+3. Set env vars in Vercel project settings.
 
 ## Deploy to Vercel
 ```bash
