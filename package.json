@@ -1,0 +1,21 @@
+{
+  "name": "priv-spaca",
+  "version": "1.0.0",
+  "description": "PRIV SPACA - Secure private group chat and social community application",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node api/index.js",
+    "dev": "node api/index.js"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "node-fetch": "^2.7.0"
+  },
+  "license": "MIT"
+}

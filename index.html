@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#00a2ff" />
+<title>PRIV SPACA — Private Group Chat & Community</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<link rel="stylesheet" href="style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2300a2ff'/%3E%3Cpath fill='%23fff' d='M14 32 50 14 42 50 32 36 14 32z'/%3E%3C/svg%3E" />
+</head>
+<body class="font-sans antialiased">
+
+<!-- ====== AUTH SHELL ====== -->
+<section id="authShell" class="auth-shell">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="logo-badge logo-pulse">
+        <svg viewBox="0 0 64 64" width="38" height="38" aria-hidden="true">
+          <path fill="#fff" d="M14 32 50 14 42 50 32 36 14 32z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand-name text-anim">PRIV SPACA</h1>
+        <p class="brand-tag">Private chat. Real community.</p>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="auth-tabs">
+      <button data-auth-tab="login" class="auth-tab active">Sign in</button>
+      <button data-auth-tab="signup" class="auth-tab">Create account</button>
+      <button data-auth-tab="reset" class="auth-tab">Forgot</button>
+    </div>
+
+    <!-- Sign in -->
+    <form id="loginForm" class="auth-form active" autocomplete="on">
+      <label class="field">
+        <span>Email or username</span>
+        <input name="identifier" type="text" required minlength="3" />
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input name="password" type="password" required minlength="6" />
+      </label>
+      <button type="submit" class="primary-btn">Sign in</button>
+      <div class="auth-error" data-error></div>
+    </form>
+
+    <!-- Sign up -->
+    <form id="signupForm" class="auth-form" autocomplete="on">
+      <div class="row-2">
+        <label class="field">
+          <span>Display name</span>
+          <input name="displayName" type="text" required minlength="1" maxlength="60" />
+        </label>
+        <label class="field">
+          <span>Username</span>
+          <input name="username" type="text" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9_]{3,24}" />
+        </label>
+      </div>
+      <label class="field">
+        <span>Email</span>
+        <input name="email" type="email" required />
+      </label>
+      <div class="row-2">
+        <label class="field">
+          <span>Password (min 6)</span>
+          <input name="password" type="password" required minlength="6" />
+        </label>
+        <label class="field">
+          <span>4-digit Security PIN</span>
+          <input name="pin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required />
+        </label>
+      </div>
+      <button type="submit" class="primary-btn">Create account</button>
+      <p class="auth-hint">Your PIN unlocks password recovery. Keep it secret.</p>
+      <div class="auth-error" data-error></div>
+    </form>
+
+    <!-- Reset -->
+    <form id="resetForm" class="auth-form" autocomplete="off">
+      <label class="field">
+        <span>Email or username</span>
+        <input name="identifier" type="text" required minlength="3" />
+      </label>
+      <div class="row-2">
+        <label class="field">
+          <span>4-digit PIN</span>
+          <input name="pin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required />
+        </label>
+        <label class="field">
+          <span>New password</span>
+          <input name="newPassword" type="password" required minlength="6" />
+        </label>
+      </div>
+      <button type="submit" class="primary-btn">Reset password</button>
+      <div class="auth-error" data-error></div>
+    </form>
+  </div>
+  <p class="auth-footer">© <span id="yr"></span> PRIV SPACA · Secure community for the close few.</p>
+</section>
+
+<!-- ====== APP SHELL ====== -->
+<section id="appShell" class="app-shell hidden">
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="brand-row">
+      <div class="logo-badge sm"><svg viewBox="0 0 64 64" width="22" height="22"><path fill="#fff" d="M14 32 50 14 42 50 32 36 14 32z"/></svg></div>
+      <strong class="brand-name sm">PRIV SPACA</strong>
+    </div>
+    <nav class="tab-nav">
+      <button data-tab="chat" class="tab-btn active"><i data-lucide="message-circle"></i><span>Chat</span></button>
+      <button data-tab="feed" class="tab-btn"><i data-lucide="newspaper"></i><span>Feed</span></button>
+      <button data-tab="profile" class="tab-btn"><i data-lucide="user"></i><span>Profile</span></button>
+    </nav>
+    <div class="me-chip">
+      <span id="meAvatar" class="avatar sm"></span>
+      <span id="meName"></span>
+      <button id="logoutBtn" class="ghost-btn" title="Sign out"><i data-lucide="log-out"></i></button>
+    </div>
+  </header>
+
+  <!-- ====== CHAT TAB ====== -->
+  <main id="chatView" class="view chat-view active">
+    <aside class="rooms-pane">
+      <div class="pane-title"><i data-lucide="hash"></i> Rooms</div>
+      <ul id="roomsList" class="rooms-list">
+        <li class="room-item active" data-room="general-group">
+          <span class="room-icon">#</span>
+          <span class="room-name">general-group</span>
+        </li>
+      </ul>
+      <div class="pane-title mt"><i data-lucide="users"></i> Members <span id="memberCount" class="muted-pill">0</span></div>
+      <ul id="membersList" class="members-list"></ul>
+    </aside>
+
+    <section class="chat-pane">
+      <div class="chat-header">
+        <div>
+          <div id="chatTitle" class="chat-title">#general-group</div>
+          <div id="chatSubtitle" class="chat-subtitle muted">The main lounge for everyone in PRIV SPACA.</div>
+        </div>
+        <div class="chat-header-actions">
+          <button id="scheduleBtn" class="ghost-btn" title="Scheduled messages"><i data-lucide="clock"></i></button>
+        </div>
+      </div>
+
+      <div id="messagesScroll" class="messages-scroll">
+        <div id="messagesList" class="messages-list"></div>
+        <button id="scrollBottomBtn" class="scroll-bottom-btn hidden"><i data-lucide="arrow-down"></i> New messages</button>
+      </div>
+
+      <div id="typingIndicator" class="typing-indicator hidden">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span id="typingText"></span>
+      </div>
+
+      <div id="replyBanner" class="reply-banner hidden">
+        <div class="reply-meta">
+          <i data-lucide="corner-up-left"></i>
+          <span>Replying to <strong id="replyToName"></strong></span>
+        </div>
+        <div id="replyToText" class="reply-preview"></div>
+        <button id="cancelReplyBtn" class="ghost-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <div id="attachPreview" class="attach-preview hidden">
+        <img id="attachThumb" alt="attach" />
+        <div class="attach-info">
+          <div id="attachName" class="attach-name"></div>
+          <div class="progress-track"><div id="attachProgress" class="progress-fill"></div></div>
+        </div>
+        <button id="cancelAttachBtn" class="ghost-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="composer" class="composer">
+        <button type="button" id="attachBtn" class="icon-btn" title="Attach image"><i data-lucide="image"></i></button>
+        <input type="file" id="fileInput" accept="image/*" hidden />
+        <button type="button" id="scheduleOpenBtn" class="icon-btn" title="Schedule"><i data-lucide="calendar-clock"></i></button>
+        <textarea id="composerInput" placeholder="Write a message…" rows="1" maxlength="4000"></textarea>
+        <button type="submit" id="sendBtn" class="send-btn" title="Send"><i data-lucide="send"></i></button>
+      </form>
+    </section>
+  </main>
+
+  <!-- ====== FEED TAB ====== -->
+  <main id="feedView" class="view feed-view">
+    <div class="feed-wrap">
+      <div class="composer-card">
+        <div class="composer-card-head">
+          <span id="feedMeAvatar" class="avatar md"></span>
+          <strong id="feedMeName"></strong>
+        </div>
+        <textarea id="postInput" placeholder="Share something with the community…" maxlength="2000" rows="3"></textarea>
+        <div id="postAttachPreview" class="attach-preview small hidden">
+          <img id="postAttachThumb" alt="" />
+          <div class="attach-info">
+            <div id="postAttachName" class="attach-name"></div>
+            <div class="progress-track"><div id="postAttachProgress" class="progress-fill"></div></div>
+          </div>
+          <button id="postCancelAttachBtn" class="ghost-btn" type="button"><i data-lucide="x"></i></button>
+        </div>
+        <div class="composer-card-actions">
+          <button id="postAttachBtn" type="button" class="ghost-btn"><i data-lucide="image"></i> Photo</button>
+          <input type="file" id="postFileInput" accept="image/*" hidden />
+          <button id="postSubmitBtn" type="button" class="primary-btn sm">Publish</button>
+        </div>
+      </div>
+      <div id="feedList" class="feed-list"></div>
+    </div>
+  </main>
+
+  <!-- ====== PROFILE TAB ====== -->
+  <main id="profileView" class="view profile-view">
+    <div class="profile-wrap">
+      <h2 class="section-title">Your profile</h2>
+      <form id="profileForm" class="profile-form">
+        <div class="profile-head">
+          <span id="profileAvatarPreview" class="avatar xl"></span>
+          <div class="profile-photo-actions">
+            <button type="button" id="profilePhotoBtn" class="ghost-btn"><i data-lucide="camera"></i> Change photo</button>
+            <input type="file" id="profilePhotoInput" accept="image/*" hidden />
+            <div id="profilePhotoStatus" class="muted small"></div>
+          </div>
+        </div>
+        <div class="row-2">
+          <label class="field">
+            <span>Display name</span>
+            <input name="displayName" type="text" minlength="1" maxlength="60" required />
+          </label>
+          <label class="field">
+            <span>Username</span>
+            <input name="username" type="text" minlength="3" maxlength="24" pattern="[a-zA-Z0-9_]{3,24}" required />
+          </label>
+        </div>
+        <label class="field">
+          <span>Bio</span>
+          <textarea name="bio" maxlength="280" rows="3" placeholder="A short bio…"></textarea>
+        </label>
+        <button type="submit" class="primary-btn">Save changes</button>
+        <div id="profileStatus" class="muted small"></div>
+      </form>
+    </div>
+  </main>
+</section>
+
+<!-- ====== SCHEDULE MODAL ====== -->
+<div id="scheduleModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3><i data-lucide="calendar-clock"></i> Scheduled messages</h3>
+      <button class="ghost-btn" data-close-modal><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="schedule-create">
+        <label class="field">
+          <span>Message</span>
+          <textarea id="scheduleText" rows="2" maxlength="4000" placeholder="What's the message?"></textarea>
+        </label>
+        <label class="field">
+          <span>Deliver at</span>
+          <input id="scheduleAt" type="datetime-local" />
+        </label>
+        <button id="scheduleSubmit" class="primary-btn sm">Schedule</button>
+        <div id="scheduleError" class="auth-error"></div>
+      </div>
+      <hr class="div" />
+      <h4 class="sub-title">Your pending</h4>
+      <ul id="scheduleList" class="schedule-list"><li class="muted small">Loading…</li></ul>
+    </div>
+  </div>
+</div>
+
+<!-- ====== LIGHTBOX ====== -->
+<div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true">
+  <button class="lightbox-close ghost-btn" id="lightboxClose" aria-label="Close"><i data-lucide="x"></i></button>
+  <div class="lightbox-inner">
+    <img id="lightboxImg" alt="" />
+    <div class="lightbox-meta">
+      <span id="lightboxUploader" class="muted small"></span>
+      <a id="lightboxDownload" class="primary-btn sm" download href="#"><i data-lucide="download"></i> Download</a>
+    </div>
+  </div>
+</div>
+
+<!-- ====== TOAST ====== -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
