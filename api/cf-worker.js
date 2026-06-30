@@ -225,6 +225,38 @@ function normalizeDb(remote) {
     meta: r.meta && typeof r.meta === 'object' ? r.meta : {},
   };
 }
+
+function mergeById(remoteArr, localArr) {
+  const map = new Map();
+  for (const x of Array.isArray(remoteArr) ? remoteArr : []) if (x && x.id) map.set(x.id, x);
+  for (const x of Array.isArray(localArr) ? localArr : []) if (x && x.id) {
+    const prev = map.get(x.id) || {};
+    // Local wins, but preserve soft-delete/seen metadata if either side has it.
+    const merged = { ...prev, ...x };
+    if (prev.deletedAt && !merged.deletedAt) merged.deletedAt = prev.deletedAt;
+    if (prev.seenAt && !merged.seenAt) merged.seenAt = prev.seenAt;
+    map.set(x.id, merged);
+  }
+  return Array.from(map.values()).sort((a,b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+function mergeMaps(remoteObj, localObj) {
+  return { ...(remoteObj && typeof remoteObj === 'object' ? remoteObj : {}), ...(localObj && typeof localObj === 'object' ? localObj : {}) };
+}
+function mergeDatabase(remoteRaw, localRaw) {
+  const remote = normalizeDb(remoteRaw);
+  const local = normalizeDb(localRaw);
+  return {
+    users: mergeById(remote.users, local.users),
+    messages: mergeById(remote.messages, local.messages),
+    scheduledMessages: mergeById(remote.scheduledMessages, local.scheduledMessages),
+    posts: mergeById(remote.posts, local.posts),
+    notifications: mergeById(remote.notifications, local.notifications),
+    rtcSignals: mergeById(remote.rtcSignals, local.rtcSignals).slice(-200),
+    typing: mergeMaps(remote.typing, local.typing),
+    heartbeat: mergeMaps(remote.heartbeat, local.heartbeat),
+    meta: { ...remote.meta, ...local.meta, updatedAt: nowMs(), storage: 'github-merge-v3' },
+  };
+}
 async function fetchDatabase({ fresh = false } = {}) {
   const now = nowMs();
   if (!fresh && now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
@@ -252,13 +284,22 @@ async function saveDatabase(data, isEphemeral = false) {
     repoWrite(data).catch(() => {});
     return true;
   }
-  let ok = await repoWrite(data);
-  if (!ok) {
-    // One forced SHA refresh + retry. This protects login/signup/posts from transient GitHub content conflicts.
-    ghFileSha = null;
-    await repoRead();
-    ok = await repoWrite(data);
+  // Merge with the newest remote DB before writing. This prevents a later request
+  // from overwriting a user/message/post created by an earlier request.
+  let toWrite = data;
+  const remoteBeforeWrite = await repoRead();
+  if (remoteBeforeWrite && typeof remoteBeforeWrite === 'object' && !remoteBeforeWrite._httpError && !remoteBeforeWrite._err) {
+    toWrite = mergeDatabase(remoteBeforeWrite, data);
   }
+  let ok = await repoWrite(toWrite);
+  if (!ok) {
+    // One forced SHA refresh + merge retry. This protects signup/login/posts from transient GitHub content conflicts.
+    ghFileSha = null;
+    const latest = await repoRead();
+    if (latest && typeof latest === 'object' && !latest._httpError && !latest._err) toWrite = mergeDatabase(latest, toWrite);
+    ok = await repoWrite(toWrite);
+  }
+  if (ok) { localCache = normalizeDb(toWrite); cacheTimestamp = nowMs(); }
   return ok;
 }
 
@@ -682,7 +723,7 @@ app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
   persistence: isRepo() ? 'github-repo' : 'in-memory',
   runtime: 'cloudflare-workers',
-  time: nowMs(), version: 'auth-storage-v2',
+  time: nowMs(), version: 'auth-storage-v3-merge',
 }));
 
 app.get('/api/diag', async (c) => {
