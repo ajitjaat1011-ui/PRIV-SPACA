@@ -735,19 +735,23 @@ function bindAuth() {
     const orig = btn.innerHTML;
     btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Resetting…';
     try {
-      await api('/auth/reset-by-pin', { method: 'POST', body: {
+      const data = await api('/auth/reset-by-pin', { method: 'POST', body: {
         identifier: String(fd.get('identifier') || '').trim(),
         pin,
         newPassword: String(fd.get('newPassword') || ''),
       }});
-      errEl.style.color = 'var(--green)';
-      errEl.textContent = 'Password reset! Please sign in.';
-      setTimeout(() => {
-        errEl.style.color = ''; errEl.textContent = '';
-        $('[data-auth-tab="login"]').click();
-        $('#loginForm input[name=identifier]').value = String(fd.get('identifier') || '').trim();
-        $('#loginForm input[name=password]').focus();
-      }, 1300);
+      if (data && data.token && data.user) {
+        acceptSession(data);
+      } else {
+        errEl.style.color = 'var(--green)';
+        errEl.textContent = 'Password reset! Please sign in.';
+        setTimeout(() => {
+          errEl.style.color = ''; errEl.textContent = '';
+          $('[data-auth-tab="login"]').click();
+          $('#loginForm input[name=identifier]').value = String(fd.get('identifier') || '').trim();
+          $('#loginForm input[name=password]').focus();
+        }, 900);
+      }
     } catch (err) { errEl.textContent = err.message || 'Reset failed'; }
     finally { btn.disabled = false; btn.innerHTML = orig; }
   });

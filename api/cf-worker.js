@@ -728,7 +728,7 @@ app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
   persistence: isRepo() ? 'github-repo' : 'in-memory',
   runtime: 'cloudflare-workers',
-  time: nowMs(), version: 'auth-storage-v4-conflict-merge',
+  time: nowMs(), version: 'auth-storage-v5-reset-token',
 }));
 
 app.get('/api/diag', async (c) => {
@@ -848,7 +848,8 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     user.passwordHash = await bcrypt.hash(newPassword, 12);
     const persisted = await saveDatabase(db, false);
     if (isPersist() && !persisted) { user.passwordHash = oldHash; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
-    return c.json({ ok: true });
+    const token = await signToken(user);
+    return c.json({ ok: true, token, user: sanitizeUser(user) });
   } catch (e) {
     console.error('[reset]', e);
     return c.json({ error: 'Reset failed: ' + (e.message || 'unknown') }, 500);
