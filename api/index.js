@@ -102,60 +102,52 @@ async function repoRead() {
 
 async function repoWrite(dbObj) {
   if (!isRepoConfigured()) return false;
+  // Always refresh sha right before writing — prevents stale-sha conflicts
+  // across cold starts and concurrent writes.
   try {
-    // Ensure we have a current sha (refresh if cached one is missing)
     if (!ghFileSha) await repoRead();
     const content = Buffer.from(JSON.stringify(dbObj)).toString('base64');
     const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}`;
-    const body = {
-      message: 'priv-spaca sync ' + new Date().toISOString(),
-      content,
-      branch: GH_BRANCH,
+    const doPut = async (sha) => {
+      const body = {
+        message: 'priv-spaca sync ' + new Date().toISOString(),
+        content,
+        branch: GH_BRANCH,
+      };
+      if (sha) body.sha = sha;
+      return fetchFn(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${GITHUB_PAT}`,
+          'User-Agent': 'PRIV-SPACA',
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
     };
-    if (ghFileSha) body.sha = ghFileSha;
-    const res = await fetchFn(url, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `token ${GITHUB_PAT}`,
-        'User-Agent': 'PRIV-SPACA',
-        'Accept': 'application/vnd.github+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
-    if (res.status === 409 || res.status === 422) {
-      // sha conflict — refresh and retry once
+    let res = await doPut(ghFileSha);
+    // Retry on sha conflict (409/422) — refresh and try again, up to 3 attempts
+    for (let attempt = 0; attempt < 3 && (res.status === 409 || res.status === 422); attempt++) {
       ghFileSha = null;
       await repoRead();
-      if (ghFileSha) {
-        body.sha = ghFileSha;
-        const r2 = await fetchFn(url, {
-          method: 'PUT',
-          headers: {
-            'Authorization': `token ${GITHUB_PAT}`,
-            'User-Agent': 'PRIV-SPACA',
-            'Accept': 'application/vnd.github+json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(body)
-        });
-        if (r2.ok) {
-          const j = await r2.json();
-          if (j && j.content && j.content.sha) ghFileSha = j.content.sha;
-          return true;
-        }
-        return false;
-      }
+      res = await doPut(ghFileSha);
+    }
+    if (res.status === 401 || res.status === 403) {
+      const txt = await res.text().catch(() => '');
+      console.error('[repoWrite] AUTH FAILED — check GITHUB_PAT scopes/validity. HTTP', res.status, txt.slice(0, 200));
+      return false;
     }
     if (!res.ok) {
-      console.error('repoWrite HTTP', res.status);
+      const txt = await res.text().catch(() => '');
+      console.error('[repoWrite] HTTP', res.status, txt.slice(0, 200));
       return false;
     }
     const j = await res.json();
     if (j && j.content && j.content.sha) ghFileSha = j.content.sha;
     return true;
   } catch (e) {
-    console.error('repoWrite error', e.message);
+    console.error('[repoWrite] exception:', e.message);
     return false;
   }
 }
@@ -367,6 +359,40 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+// Diagnostics — verifies the configured persistence layer can READ & WRITE
+app.get('/api/diag', async (req, res) => {
+  const out = {
+    persistence: isRepoConfigured() ? 'github-repo' : (isGistConfigured() ? 'gist' : 'in-memory'),
+    repoConfigured: isRepoConfigured(),
+    gistConfigured: isGistConfigured(),
+    repo: GH_REPO,
+    branch: GH_BRANCH,
+    file: GH_FILE,
+    canRead: false,
+    canWrite: false,
+    userCount: 0,
+    error: null,
+  };
+  try {
+    const db = await persistRead();
+    if (db && typeof db === 'object') {
+      out.canRead = true;
+      out.userCount = Array.isArray(db.users) ? db.users.length : 0;
+      // Test write by re-saving the same content
+      const ok = await persistWrite(db);
+      out.canWrite = !!ok;
+    } else if (!isPersistConfigured()) {
+      out.canRead = true; out.canWrite = true; // in-memory always works
+      out.userCount = (localCache.users || []).length;
+    } else {
+      out.error = 'Read returned no data';
+    }
+  } catch (e) {
+    out.error = e.message;
+  }
+  res.json(out);
+});
+
 // ---------- Auth Routes ----------
 app.post('/api/auth/signup', async (req, res) => {
   try {
@@ -403,13 +429,20 @@ app.post('/api/auth/signup', async (req, res) => {
       createdAt: nowMs(),
     };
     db.users.push(newUser);
-    await saveDatabase(db, false);
+    const persisted = await saveDatabase(db, false);
+    if (isPersistConfigured() && !persisted) {
+      // Roll back the in-memory addition to keep state consistent
+      const idx = db.users.findIndex(u => u.id === newUser.id);
+      if (idx !== -1) db.users.splice(idx, 1);
+      console.error('[signup] persistence failed for', newUser.username);
+      return res.status(503).json({ error: 'Storage temporarily unavailable. Please try again in a moment.' });
+    }
 
     const token = signToken(newUser);
     return res.json({ token, user: sanitizeUser(newUser) });
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: 'Signup failed' });
+    console.error('[signup] exception', e);
+    return res.status(500).json({ error: 'Signup failed: ' + (e.message || 'unknown') });
   }
 });
 
@@ -443,12 +476,18 @@ app.post('/api/auth/reset-by-pin', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'Account not found' });
     const pinOk = await bcrypt.compare(pin, user.pinHash);
     if (!pinOk) return res.status(401).json({ error: 'Incorrect PIN' });
+    const oldHash = user.passwordHash;
     user.passwordHash = await bcrypt.hash(newPassword, 10);
-    await saveDatabase(db, false);
+    const persisted = await saveDatabase(db, false);
+    if (isPersistConfigured() && !persisted) {
+      user.passwordHash = oldHash; // roll back
+      console.error('[reset] persistence failed for', user.username);
+      return res.status(503).json({ error: 'Storage temporarily unavailable. Please try again in a moment.' });
+    }
     return res.json({ ok: true });
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: 'Reset failed' });
+    console.error('[reset] exception', e);
+    return res.status(500).json({ error: 'Reset failed: ' + (e.message || 'unknown') });
   }
 });
 
