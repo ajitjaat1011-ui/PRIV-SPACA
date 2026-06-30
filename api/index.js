@@ -18,8 +18,20 @@ try {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
-app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+// Body parsing — only use Express's parser when running on a real Node host.
+// When running on Cloudflare Workers (detected via CF_PAGES env), our adapter
+// has already populated req.body, and express.json() depends on body-parser
+// → raw-body → iconv-lite which fail under the Workers bundler. We skip in that case.
+const _isCloudflareWorker = typeof globalThis.WebSocketPair !== 'undefined' ||
+                             process.env.CF_PAGES === '1' ||
+                             process.env.CF_WORKER === '1';
+if (!_isCloudflareWorker) {
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+} else {
+  // No-op middleware — body is already parsed by the CF worker adapter
+  app.use((req, res, next) => { if (req.body === undefined) req.body = {}; next(); });
+}
 
 // ---------- Security headers (lightweight, no external deps) ----------
 app.use((req, res, next) => {
@@ -469,7 +481,7 @@ function isValidPin(s) {
 
 // ---------- Web Push (VAPID) ----------
 let webpush = null;
-try { webpush = require('web-push'); } catch (_) { /* optional */ }
+try { webpush = require('web-push'); } catch (e) { console.warn('[push] web-push unavailable:', e.message); }
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY  || '';
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || '';
@@ -1595,3 +1607,27 @@ if (require.main === module) {
 }
 
 module.exports = app;
+// Also export helpers so the Cloudflare Hono adapter can reuse the same business logic.
+module.exports.helpers = {
+  // DB
+  fetchDatabase, saveDatabase, isPersistConfigured, isRepoConfigured, isGistConfigured,
+  // Auth
+  signToken, JWT_SECRET, JWT_EXPIRES, sanitizeUser,
+  // Validation
+  isValidEmail, isValidUsername, isValidPin, sanitizeText,
+  // IDs
+  uid, nowMs,
+  // Rate limit & lockout
+  rateLimit, clientIp, checkAccountLock, recordLoginFail, clearLoginFails,
+  // Rooms
+  normalizeRoomId, dmRoomFor,
+  // Notifications + SSE + push
+  pushNotification, sendWebPush,
+  _pushEvent, _broadcastEvent, _eventQueues, _eventSubscribers,
+  // Photo upload
+  GH_REPO, GH_BRANCH, GH_FILE, GITHUB_PAT, VAPID_PUBLIC, VAPID_PRIVATE, VAPID_SUBJECT,
+  // bcrypt + jwt
+  bcrypt, jwt,
+  // fetch
+  fetchFn,
+};
