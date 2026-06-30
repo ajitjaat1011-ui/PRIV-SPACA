@@ -366,6 +366,10 @@ function showApp() {
   switchTab('feed');
   startPolls();
   loadAll();
+  // Part 3: publish E2E public key so peers can DM us with Secret Chat
+  if (window.crypto && crypto.subtle && window.indexedDB) {
+    setTimeout(() => { E2E.publishPublicKey().catch(() => {}); }, 800);
+  }
 }
 
 function hydrateMeChips() {
@@ -623,7 +627,7 @@ function switchTab(tab) {
   let activeView = null;
   if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
   if (tab === 'search') { activeView = $('#searchView'); activeView.classList.add('active'); loadMembers(); renderSearch(''); setTimeout(() => $('#searchInput').focus(), 100); }
-  if (tab === 'chat') { activeView = $('#chatView'); activeView.classList.add('active'); markTabSeen('chat'); }
+  if (tab === 'chat') { activeView = $('#chatView'); activeView.classList.add('active'); markTabSeen('chat'); refreshSecretChatUI(); }
   if (tab === 'profile') {
     activeView = $('#profileView');
     activeView.classList.add('active');
@@ -701,10 +705,82 @@ function openDM(user) {
   // Reset message-id memo so all messages in the new room animate-in once
   _previousMessageIds = new Set();
   renderMembers();
+  refreshSecretChatUI();
   loadMessages(true);
 }
 
 function dmRoomId(a, b) { return 'dm:' + [a, b].sort().join(':'); }
+
+// Show/hide Secret Chat controls based on current room
+function refreshSecretChatUI() {
+  const room = State.currentRoom;
+  const btn = $('#secretChatBtn');
+  const banner = $('#secretBanner');
+  if (!btn || !banner) return;
+  // Secret chat only available in DMs (1-to-1)
+  if (!room || room.kind !== 'dm' || !room.target) {
+    btn.style.display = 'none';
+    banner.classList.add('hidden');
+    return;
+  }
+  btn.style.display = '';
+  const on = isSecretChatOn(room.id);
+  btn.classList.toggle('active', on);
+  btn.title = on ? 'Secret Chat is ON (tap to turn off)' : 'Turn on Secret Chat (end-to-end encrypted)';
+  if (on) {
+    banner.classList.remove('hidden');
+    const sel = $('#disappearSelect');
+    if (sel) sel.value = String(getDisappearMs(room.id) || 0);
+  } else {
+    banner.classList.add('hidden');
+  }
+  refreshIcons();
+}
+
+async function toggleSecretChat() {
+  const room = State.currentRoom;
+  if (!room || room.kind !== 'dm' || !room.target) return;
+  const on = !isSecretChatOn(room.id);
+  if (on) {
+    // Pre-flight: make sure peer has uploaded a public key
+    try {
+      const r = await api('/user/public-key?userId=' + encodeURIComponent(room.target.id));
+      if (!r || !r.publicKey) {
+        toast(`${room.target.username} hasn't opened the app recently — Secret Chat needs their key.`, 'error');
+        return;
+      }
+    } catch (e) {
+      toast('Could not reach server to set up Secret Chat', 'error');
+      return;
+    }
+    // Make sure my own key is published
+    try { await E2E.publishPublicKey(); } catch (_) {}
+  }
+  setSecretChat(room.id, on);
+  refreshSecretChatUI();
+  toast(on ? '🔒 Secret Chat ON — messages are end-to-end encrypted' : 'Secret Chat off', 'success');
+}
+
+function bindSecretChat() {
+  const btn = $('#secretChatBtn');
+  if (btn) btn.addEventListener('click', toggleSecretChat);
+  const off = $('#secretOffBtn');
+  if (off) off.addEventListener('click', () => {
+    const room = State.currentRoom;
+    if (!room) return;
+    setSecretChat(room.id, false);
+    refreshSecretChatUI();
+    toast('Secret Chat off', 'success');
+  });
+  const sel = $('#disappearSelect');
+  if (sel) sel.addEventListener('change', () => {
+    const room = State.currentRoom;
+    if (!room) return;
+    setDisappearMs(room.id, Number(sel.value) || 0);
+    const ms = Number(sel.value) || 0;
+    toast(ms > 0 ? 'Messages will disappear after ' + (ms < 60000 ? (ms/1000)+'s' : Math.round(ms/60000)+' min') : 'Disappearing off', 'success');
+  });
+}
 
 function bindRooms() {
   $$('#roomsList .room-item').forEach(r => {
@@ -718,11 +794,271 @@ function bindRooms() {
       $('#chatView').classList.remove('show-rooms');
       _previousMessageIds = new Set();
       renderMembers();
+      refreshSecretChatUI();
       loadMessages(true);
     });
   });
   const back = $('#backToRoomsBtn');
   if (back) back.addEventListener('click', () => $('#chatView').classList.toggle('show-rooms'));
+}
+
+// ============================================================
+// ====== E2E (Part 3) — Secret Chat + Disappearing Messages ====
+// ============================================================
+// Each user generates an ECDH P-256 keypair on first login.
+// - Private key lives in IndexedDB (browser-local, non-exportable)
+// - Public key is uploaded to the server
+// To encrypt a DM:
+//   1) Derive a shared 32-byte secret via ECDH with peer's public key
+//   2) HKDF-derive a 32-byte AES-GCM key
+//   3) Encrypt text with random 12-byte IV
+//   4) Send { cipher, iv, encrypted:true } — server never sees plaintext
+const E2E = (() => {
+  const DB_NAME = 'priv-spaca-e2e';
+  const STORE = 'keys';
+  const KEY_ID = 'self';
+  let _myKeypairP = null;        // cached Promise<{privateKey, publicKey}>
+  let _myPublicRawB64 = null;    // cached base64url of own public key
+  let _peerKeyCache = new Map(); // userId -> CryptoKey (peer public)
+  let _peerKeyB64Cache = new Map();
+  let _aesKeyCache = new Map();  // peerId -> CryptoKey (AES-GCM derived)
+  let _publishedOnce = false;
+
+  // ---- IndexedDB helpers (we only ever read/write one record) ----
+  function _openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function _idbGet(key) {
+    const db = await _openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const r = tx.objectStore(STORE).get(key);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror  = () => reject(r.error);
+    });
+  }
+  async function _idbPut(key, val) {
+    const db = await _openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const r = tx.objectStore(STORE).put(val, key);
+      r.onsuccess = () => resolve();
+      r.onerror  = () => reject(r.error);
+    });
+  }
+
+  // ---- base64url ↔ bytes ----
+  function b64uEncode(buf) {
+    const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function b64uDecode(str) {
+    str = String(str).replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) str += '=';
+    const bin = atob(str);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  // ---- Load or generate user's keypair ----
+  async function getOrCreateKeypair() {
+    if (_myKeypairP) return _myKeypairP;
+    _myKeypairP = (async () => {
+      const stored = await _idbGet(KEY_ID).catch(() => null);
+      if (stored && stored.privateKey && stored.publicKey) {
+        return { privateKey: stored.privateKey, publicKey: stored.publicKey };
+      }
+      // Generate fresh keypair
+      const kp = await crypto.subtle.generateKey(
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,                    // not extractable (private stays inside)
+        ['deriveBits']
+      );
+      await _idbPut(KEY_ID, { privateKey: kp.privateKey, publicKey: kp.publicKey });
+      return kp;
+    })();
+    return _myKeypairP;
+  }
+
+  async function getMyPublicKeyB64() {
+    if (_myPublicRawB64) return _myPublicRawB64;
+    const { publicKey } = await getOrCreateKeypair();
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', publicKey));
+    _myPublicRawB64 = b64uEncode(raw);
+    return _myPublicRawB64;
+  }
+
+  // ---- Publish my public key to server (once per session, or if changed) ----
+  async function publishPublicKey() {
+    if (_publishedOnce) return;
+    try {
+      const pub = await getMyPublicKeyB64();
+      // Skip if server already has the same key for me
+      try {
+        const me = State.user && State.user.id;
+        if (me) {
+          const r = await api('/user/public-key?userId=' + encodeURIComponent(me));
+          if (r && r.publicKey === pub) { _publishedOnce = true; return; }
+        }
+      } catch (_) {}
+      await api('/user/public-key', { method: 'POST', body: { publicKey: pub } });
+      _publishedOnce = true;
+      if (State.user) State.user.publicKey = pub;
+    } catch (e) {
+      console.warn('[E2E] publishPublicKey failed', e && e.message);
+    }
+  }
+
+  // ---- Fetch peer's public key (cached) ----
+  async function getPeerPublicKey(userId) {
+    if (_peerKeyCache.has(userId)) return _peerKeyCache.get(userId);
+    // Try members list first
+    let b64 = null;
+    const m = (State.members || []).find(u => u.id === userId);
+    if (m && m.publicKey) b64 = m.publicKey;
+    if (!b64) {
+      try {
+        const r = await api('/user/public-key?userId=' + encodeURIComponent(userId));
+        b64 = r && r.publicKey;
+      } catch (_) {}
+    }
+    if (!b64) return null;
+    // Same b64? reuse imported key
+    if (_peerKeyB64Cache.get(userId) === b64 && _peerKeyCache.has(userId)) {
+      return _peerKeyCache.get(userId);
+    }
+    try {
+      const raw = b64uDecode(b64);
+      const key = await crypto.subtle.importKey(
+        'raw', raw, { name: 'ECDH', namedCurve: 'P-256' }, false, []
+      );
+      _peerKeyCache.set(userId, key);
+      _peerKeyB64Cache.set(userId, b64);
+      _aesKeyCache.delete(userId); // force re-derive
+      return key;
+    } catch (e) {
+      console.warn('[E2E] importKey peer failed', e && e.message);
+      return null;
+    }
+  }
+
+  // ---- Derive AES-GCM key with peer (cached per peer) ----
+  async function deriveAesKey(peerId) {
+    if (_aesKeyCache.has(peerId)) return _aesKeyCache.get(peerId);
+    const peerPub = await getPeerPublicKey(peerId);
+    if (!peerPub) return null;
+    const { privateKey } = await getOrCreateKeypair();
+    // ECDH shared secret (256 bits)
+    const shared = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: 'ECDH', public: peerPub }, privateKey, 256
+    ));
+    // HKDF → 32-byte AES key (use sorted-pair as salt info so both sides match)
+    const myId = (State.user && State.user.id) || '';
+    const info = new TextEncoder().encode('PRIV-SPACA-E2E|' + [myId, peerId].sort().join('|'));
+    const baseKey = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveBits']);
+    const aesRaw = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info }, baseKey, 256
+    ));
+    const aesKey = await crypto.subtle.importKey(
+      'raw', aesRaw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
+    );
+    _aesKeyCache.set(peerId, aesKey);
+    return aesKey;
+  }
+
+  async function encryptFor(peerId, plaintext) {
+    const aes = await deriveAesKey(peerId);
+    if (!aes) throw new Error('No public key for peer — ask them to open the app once.');
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv }, aes, new TextEncoder().encode(plaintext)
+    ));
+    return { cipher: b64uEncode(ct), iv: b64uEncode(iv) };
+  }
+
+  async function decryptFrom(peerId, cipherB64, ivB64) {
+    const aes = await deriveAesKey(peerId);
+    if (!aes) throw new Error('no key');
+    const ct = b64uDecode(cipherB64);
+    const iv = b64uDecode(ivB64);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aes, ct);
+    return new TextDecoder().decode(pt);
+  }
+
+  // Clear caches when keys change (e.g. peer rotated key)
+  function clearPeerCache(userId) {
+    if (userId) {
+      _peerKeyCache.delete(userId);
+      _peerKeyB64Cache.delete(userId);
+      _aesKeyCache.delete(userId);
+    } else {
+      _peerKeyCache.clear();
+      _peerKeyB64Cache.clear();
+      _aesKeyCache.clear();
+    }
+  }
+
+  return {
+    getOrCreateKeypair, getMyPublicKeyB64, publishPublicKey,
+    encryptFor, decryptFrom, clearPeerCache,
+  };
+})();
+
+// ---- Secret Chat per-DM toggle (persisted in localStorage) ----
+function _secretSettings() {
+  try { return JSON.parse(localStorage.getItem('ps_secret') || '{}'); }
+  catch (_) { return {}; }
+}
+function _saveSecretSettings(s) { localStorage.setItem('ps_secret', JSON.stringify(s)); }
+function isSecretChatOn(roomId) {
+  if (!roomId || !roomId.startsWith('dm:')) return false;
+  return !!_secretSettings()[roomId];
+}
+function setSecretChat(roomId, on) {
+  const s = _secretSettings();
+  if (on) s[roomId] = { on: true, since: Date.now() };
+  else delete s[roomId];
+  _saveSecretSettings(s);
+}
+function getDisappearMs(roomId) {
+  const s = _secretSettings();
+  return (s[roomId] && s[roomId].disappearMs) || 0;
+}
+function setDisappearMs(roomId, ms) {
+  const s = _secretSettings();
+  if (!s[roomId]) s[roomId] = { on: true, since: Date.now() };
+  s[roomId].disappearMs = Number(ms) || 0;
+  _saveSecretSettings(s);
+}
+
+// Decrypt-or-fallback for an incoming message (called from renderMessages).
+// Async — when decryption completes we re-trigger a render so the bubble updates.
+const _e2eDecryptCache = new Map(); // msgId -> decrypted text or '__ERR__'
+async function _e2eDecryptInPlace(m, peerId) {
+  if (!m || !m.encrypted || !m.cipher || !m.iv) return;
+  if (_e2eDecryptCache.has(m.id)) {
+    m._decrypted = _e2eDecryptCache.get(m.id);
+    return;
+  }
+  try {
+    const pt = await E2E.decryptFrom(peerId, m.cipher, m.iv);
+    m._decrypted = pt;
+    _e2eDecryptCache.set(m.id, pt);
+  } catch (e) {
+    m._decrypted = '__ERR__';
+    _e2eDecryptCache.set(m.id, '__ERR__');
+  }
+  // Re-render after decryption completes
+  lastMessagesSignature = '';
+  renderMessages(false);
 }
 
 // ====== Messages ======
@@ -857,11 +1193,67 @@ function renderMessage(m, meId, grouped) {
     bubble.appendChild(q);
   }
 
-  if (m.text) {
+  // === Encrypted (E2E) message rendering ===
+  if (m.encrypted) {
+    const t = document.createElement('div');
+    t.className = 'text';
+    if (typeof m._decrypted === 'string' && m._decrypted !== '__ERR__') {
+      t.textContent = m._decrypted;
+    } else if (m._decrypted === '__ERR__') {
+      t.textContent = '🔒 (Can\'t decrypt — sent before you set up Secret Chat on this device)';
+      bubble.classList.add('decrypt-error');
+    } else {
+      t.textContent = '🔒 Decrypting…';
+      // Trigger async decrypt (peer = other DM participant)
+      if (State.currentRoom && State.currentRoom.kind === 'dm' && State.currentRoom.target) {
+        const peerId = (m.userId === (State.user && State.user.id))
+          ? State.currentRoom.target.id   // I sent it → decrypt against peer
+          : m.userId;                     // peer sent it → decrypt against peer
+        _e2eDecryptInPlace(m, peerId);
+      }
+    }
+    bubble.appendChild(t);
+    // E2E badge
+    const badge = document.createElement('div');
+    badge.className = 'e2e-badge';
+    badge.innerHTML = '<i data-lucide="shield-check"></i> End-to-end encrypted';
+    bubble.appendChild(badge);
+  } else if (m.text) {
     const t = document.createElement('div');
     t.className = 'text';
     t.textContent = m.text;
     bubble.appendChild(t);
+  }
+  // Disappearing-message badge + countdown bar
+  if (m.disappearAt) {
+    const remain = m.disappearAt - Date.now();
+    if (remain > 0) {
+      bubble.classList.add('disappearing');
+      // Set animation duration = remaining ms
+      bubble.style.setProperty('animation-duration', remain + 'ms');
+      const db = document.createElement('div');
+      db.className = 'disappear-badge';
+      const sec = Math.ceil(remain / 1000);
+      const human = sec < 60 ? sec + 's' : Math.ceil(sec / 60) + 'm';
+      db.innerHTML = '<i data-lucide="timer"></i> Disappears in ' + human;
+      bubble.appendChild(db);
+      // The CSS animation runs on ::after, but we need to set its duration on the bubble.
+      // Use inline style on the ::after via a CSS custom property:
+      const styleId = 'disappear-style-' + m.id;
+      if (!document.getElementById(styleId)) {
+        const st = document.createElement('style');
+        st.id = styleId;
+        st.textContent = `.bubble[data-mid="${m.id}"]::after{animation-duration:${remain}ms}`;
+        document.head.appendChild(st);
+      }
+      bubble.setAttribute('data-mid', m.id);
+      // Schedule local removal when it expires
+      setTimeout(() => {
+        State.messages = State.messages.filter(x => x.id !== m.id);
+        lastMessagesSignature = '';
+        renderMessages(false);
+      }, remain + 500);
+    }
   }
   if (m.imageUrl) {
     const img = document.createElement('img');
@@ -958,12 +1350,30 @@ function bindComposer() {
     e.preventDefault();
     const text = input.value.trim();
     if (!text && !State.attach) return;
-    const payload = {
-      roomId: State.currentRoom.id,
+    const room = State.currentRoom;
+    const secretOn = isSecretChatOn(room.id);
+    const disappearMs = secretOn ? getDisappearMs(room.id) : 0;
+    let payload = {
+      roomId: room.id,
       text,
       imageUrl: State.attach ? State.attach.url : null,
-      replyTo: State.replyTo
+      replyTo: State.replyTo,
     };
+    // Encrypt text if Secret Chat is enabled for this DM
+    if (secretOn && room.kind === 'dm' && room.target && text) {
+      try {
+        const enc = await E2E.encryptFor(room.target.id, text);
+        payload.text = '';
+        payload.encrypted = true;
+        payload.cipher = enc.cipher;
+        payload.iv = enc.iv;
+      } catch (err) {
+        toast(err.message || 'Encryption failed — turn off Secret Chat or wait for peer.', 'error');
+        return;
+      }
+    }
+    if (disappearMs > 0) payload.disappearAfterMs = disappearMs;
+
     input.value = ''; input.style.height = 'auto';
     const sentAttach = State.attach;
     const sentReply = State.replyTo;
@@ -971,6 +1381,11 @@ function bindComposer() {
     clearReply();
     try {
       const data = await api('/messages/send', { method: 'POST', body: payload });
+      // Preload local cache so our own encrypted bubble shows plaintext immediately
+      if (payload.encrypted && data.message && data.message.id) {
+        _e2eDecryptCache.set(data.message.id, text);
+        data.message._decrypted = text;
+      }
       State.messages.push(data.message);
       lastMessagesSignature = '';
       renderMessages(true);
@@ -1224,6 +1639,16 @@ function handleRealtimeEvent(type, evt) {
     // Refresh badge counts + show OS push notification if granted+inactive tab
     pollNotifications();
     maybeNativeNotify(data);
+    // If it's a like/comment on a post, refresh feed so new counts/comments appear live
+    if ((data.kind === 'like' || data.kind === 'comment') && data.postId) {
+      if (_apiCache) {
+        for (const k of [..._apiCache.keys()]) {
+          if (k.startsWith('/posts')) _apiCache.delete(k);
+        }
+      }
+      boostPolling(15000);
+      if (State.currentTab === 'feed') loadPosts && loadPosts();
+    }
   } else if (type === 'presence' || type === 'typing') {
     // Refresh members
     loadMembers();
@@ -1732,7 +2157,8 @@ function renderPost(p) {
       const a = document.createElement('span'); a.className = 'author';
       a.textContent = cAuth.username || cAuth.displayName;
       row.appendChild(a);
-      row.appendChild(document.createTextNode(c.text));
+      // Space between author and text (bug fix: was missing → "Anushkahi there")
+      row.appendChild(document.createTextNode(' ' + (c.text || '')));
       pv.appendChild(row);
     });
     card.appendChild(pv);
@@ -1768,8 +2194,16 @@ function renderPost(p) {
       p.comments = p.comments || [];
       p.comments.push(data.comment);
       p.commentCount = (p.commentCount || 0) + 1;
-      lastPostsSignature = '';
-      renderPosts();
+      // Update the cached signature so the diff-renderer doesn't rebuild this card
+      // and destroy the focused composer mid-typing on the next refresh.
+      const cached = _postCardCache.get(p.id);
+      if (cached) cached.sig = _postCardSignature(p);
+      // Patch just the comment-related UI in place (no full rebuild)
+      patchCommentUI(card, p);
+      // If a comments sheet is open for this post, refresh it too
+      if (activeCommentsPost && activeCommentsPost.id === p.id) openCommentsSheet(p);
+      // Bump polling cadence so other clients see it quickly
+      boostPolling(20000);
     } catch (e) { toast(e.message || 'Failed', 'error'); }
     finally { sb.disabled = !inp.value.trim(); }
   };
@@ -1856,6 +2290,51 @@ function patchLikeUI(card, p, meId) {
 
 function _computePostsSignature(posts) {
   return (posts || []).map(p => p.id + ':' + (p.likeCount||0) + ':' + (p.commentCount||0)).join('|');
+}
+
+/** Update only the comments preview + "View all N comments" inside a post card; no full re-render. */
+function patchCommentUI(card, p) {
+  if (!card) return;
+  const cc = (p.comments || []).length;
+  // 1) "View all N comments" button
+  let vc = card.querySelector('.view-comments');
+  if (cc > 2) {
+    if (!vc) {
+      vc = document.createElement('button');
+      vc.className = 'view-comments';
+      vc.addEventListener('click', () => openCommentsSheet(p));
+      const timeEl = card.querySelector('.post-time');
+      if (timeEl) timeEl.insertAdjacentElement('beforebegin', vc);
+      else card.appendChild(vc);
+    }
+    vc.textContent = `View all ${cc} comments`;
+  } else if (vc) {
+    vc.remove();
+  }
+  // 2) Preview comments (last 2)
+  let pv = card.querySelector('.preview-comments');
+  if (cc > 0) {
+    if (!pv) {
+      pv = document.createElement('div');
+      pv.className = 'preview-comments';
+      const timeEl = card.querySelector('.post-time');
+      if (timeEl) timeEl.insertAdjacentElement('beforebegin', pv);
+      else card.appendChild(pv);
+    }
+    pv.innerHTML = '';
+    (p.comments || []).slice(-2).forEach(c => {
+      const cAuth = resolveAuthor(c.author, c.userId);
+      const row = document.createElement('div');
+      row.className = 'preview-comment';
+      const a = document.createElement('span'); a.className = 'author';
+      a.textContent = cAuth.username || cAuth.displayName;
+      row.appendChild(a);
+      row.appendChild(document.createTextNode(' ' + (c.text || '')));
+      pv.appendChild(row);
+    });
+  } else if (pv) {
+    pv.remove();
+  }
 }
 
 function getSaved() {
@@ -1952,7 +2431,8 @@ function openCommentsSheet(p) {
     const author = document.createElement('span'); author.className = 'author';
     author.textContent = cAuth.username || cAuth.displayName;
     txt.appendChild(author);
-    txt.appendChild(document.createTextNode(c.text));
+    // Space between author and text (bug fix)
+    txt.appendChild(document.createTextNode(' ' + (c.text || '')));
     const meta = document.createElement('div'); meta.className = 'meta-row';
     meta.innerHTML = `<span>${escapeHtml(timeAgo(c.createdAt))}</span><span>Reply</span>`;
     b.appendChild(txt); b.appendChild(meta);
@@ -1996,9 +2476,15 @@ function bindCommentsSheet() {
       activeCommentsPost.comments = activeCommentsPost.comments || [];
       activeCommentsPost.comments.push(data.comment);
       activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1;
+      // Re-render the sheet's comment list (keeps the composer focused)
       openCommentsSheet(activeCommentsPost);
-      lastPostsSignature = '';
-      renderPosts();
+      // Patch the original post card in-place (no flicker / no full feed rebuild)
+      const cached = _postCardCache.get(activeCommentsPost.id);
+      if (cached) {
+        cached.sig = _postCardSignature(activeCommentsPost);
+        patchCommentUI(cached.card, activeCommentsPost);
+      }
+      boostPolling(20000);
     } catch (e) { toast(e.message || 'Failed', 'error'); }
     finally { sb.disabled = false; }
   });
@@ -3141,6 +3627,7 @@ function boot() {
   bindSchedule();
   bindLightbox();
   bindCommentsSheet();
+  bindSecretChat();
   bindStoryViewer();
   bindSearch();
   bindNotifSheet();

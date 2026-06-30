@@ -361,6 +361,14 @@ function runScheduler(db) {
   db.posts = (db.posts || []).filter(p => !p.deletedAt || (now - p.deletedAt) < PURGE_AFTER);
   if (db.posts.length !== beforePosts) changed = true;
   const beforeMsgs = (db.messages || []).length;
+  // Soft-delete disappearing messages whose TTL elapsed
+  for (const m of db.messages || []) {
+    if (m.disappearAt && m.disappearAt <= now && !m.deletedAt) {
+      m.deletedAt = now;
+      m.disappeared = true;
+      changed = true;
+    }
+  }
   db.messages = (db.messages || []).filter(m => !m.deletedAt || (now - m.deletedAt) < PURGE_AFTER);
   if (db.messages.length !== beforeMsgs) changed = true;
 
@@ -466,6 +474,7 @@ function sanitizeUser(u) {
     bio: u.bio || '',
     photoUrl: u.photoUrl || '',
     createdAt: u.createdAt,
+    publicKey: u.publicKey || null,
   };
 }
 
@@ -990,6 +999,33 @@ app.get('/api/users', authMiddleware, async (req, res) => {
   res.json({ users: list });
 });
 
+// ---------- E2E public key (Part 3) ----------
+app.post('/api/user/public-key', authMiddleware, async (req, res) => {
+  try {
+    const { publicKey } = req.body || {};
+    if (typeof publicKey !== 'string' || publicKey.length < 32 || publicKey.length > 256) {
+      return res.status(400).json({ error: 'Invalid key' });
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(publicKey)) return res.status(400).json({ error: 'Invalid key format' });
+    const db = await fetchDatabase();
+    const u = db.users.find(x => x.id === req.userId);
+    if (!u) return res.status(404).json({ error: 'Not found' });
+    u.publicKey = publicKey;
+    u.publicKeyUpdatedAt = nowMs();
+    await saveDatabase(db, false);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Save failed' }); }
+});
+
+app.get('/api/user/public-key', authMiddleware, async (req, res) => {
+  const userId = req.query.userId;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === userId);
+  if (!u) return res.status(404).json({ error: 'Not found' });
+  res.json({ userId: u.id, publicKey: u.publicKey || null });
+});
+
 app.post('/api/user/heartbeat', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
   db.heartbeat[req.userId] = nowMs();
@@ -1049,8 +1085,9 @@ app.get('/api/messages', authMiddleware, async (req, res) => {
     if (!parts.includes(req.userId)) return res.status(403).json({ error: 'Forbidden' });
   }
   const db = await fetchDatabase();
+  const now = nowMs();
   const list = db.messages
-    .filter(m => m.roomId === roomId && !m.deletedAt)
+    .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-200);
   // Enrich with author profile; if user record is gone, fall back to embedded snapshot
@@ -1065,7 +1102,10 @@ app.get('/api/messages', authMiddleware, async (req, res) => {
 
 app.post('/api/messages/send', authMiddleware, async (req, res) => {
   try {
-    const { roomId: rawRoom, text, imageUrl, replyTo, targetUserId } = req.body || {};
+    const {
+      roomId: rawRoom, text, imageUrl, replyTo, targetUserId,
+      encrypted, cipher, iv, disappearAfterMs,
+    } = req.body || {};
     let roomId = rawRoom;
     if (!roomId && targetUserId) {
       roomId = dmRoomFor(req.userId, targetUserId);
@@ -1075,9 +1115,19 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       const parts = roomId.slice(3).split(':');
       if (!parts.includes(req.userId)) return res.status(403).json({ error: 'Forbidden' });
     }
-    const cleanText = sanitizeText(text, 4000);
+    const isEncrypted = !!encrypted && typeof cipher === 'string' && typeof iv === 'string';
+    if (isEncrypted && !roomId.startsWith('dm:')) return res.status(400).json({ error: 'E2E only supported in DMs' });
+    if (isEncrypted && (cipher.length > 12000 || iv.length > 64)) return res.status(413).json({ error: 'Payload too large' });
+
+    const cleanText = isEncrypted ? '' : sanitizeText(text, 4000);
     const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
-    if (!cleanText && !cleanImage) return res.status(400).json({ error: 'Empty message' });
+    if (!cleanText && !cleanImage && !isEncrypted) return res.status(400).json({ error: 'Empty message' });
+
+    let disappearAt = null;
+    if (typeof disappearAfterMs === 'number' && disappearAfterMs > 0) {
+      const ms = Math.max(10_000, Math.min(24 * 60 * 60 * 1000, disappearAfterMs));
+      disappearAt = nowMs() + ms;
+    }
     const db = await fetchDatabase();
     let replyRef = null;
     if (replyTo && typeof replyTo === 'object' && replyTo.id) {
@@ -1102,6 +1152,8 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       authorSnapshot: snapshot,
       createdAt: nowMs(),
     };
+    if (isEncrypted) { msg.encrypted = true; msg.cipher = cipher; msg.iv = iv; }
+    if (disappearAt) { msg.disappearAt = disappearAt; msg.disappearAfterMs = disappearAfterMs; }
     db.messages.push(msg);
     const enrichedMsg = { ...msg, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } };
     // Real-time fan-out
@@ -1111,7 +1163,8 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
         // SSE: push the actual message to recipient instantly
         _pushEvent(recip, 'new_message', { roomId, message: enrichedMsg });
         // Also create a notification (which itself pushes an SSE 'notification' event)
-        pushNotification(db, recip, 'message', req.userId, { text: (cleanText || (cleanImage ? '📷 Photo' : '')).slice(0, 80) });
+        const previewText = isEncrypted ? '🔒 Encrypted message' : (cleanText || (cleanImage ? '📷 Photo' : ''));
+        pushNotification(db, recip, 'message', req.userId, { text: previewText.slice(0, 80) });
       });
     } else {
       // Group message — broadcast to ALL other users so they get it live (no notification, just SSE)

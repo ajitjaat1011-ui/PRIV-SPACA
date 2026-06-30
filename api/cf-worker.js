@@ -70,7 +70,8 @@ function sanitizeText(s, max = 4000) {
 function sanitizeUser(u) {
   if (!u) return null;
   return { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
-           bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt };
+           bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt,
+           publicKey: u.publicKey || null };
 }
 
 // ---------- GitHub repo persistence ----------
@@ -126,6 +127,14 @@ function runScheduler(db) {
   db.posts = (db.posts || []).filter(p => !p.deletedAt || (now - p.deletedAt) < PURGE);
   if (db.posts.length !== bp) changed = true;
   const bm = (db.messages || []).length;
+  // Soft-delete disappearing messages whose TTL elapsed (so they no longer ship to GET /messages)
+  for (const m of db.messages || []) {
+    if (m.disappearAt && m.disappearAt <= now && !m.deletedAt) {
+      m.deletedAt = now;
+      m.disappeared = true;
+      changed = true;
+    }
+  }
   db.messages = (db.messages || []).filter(m => !m.deletedAt || (now - m.deletedAt) < PURGE);
   if (db.messages.length !== bm) changed = true;
   if (db.typing && typeof db.typing === 'object') {
@@ -372,12 +381,215 @@ function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
   return notif;
 }
 
-// Web Push using fetch directly (web-push lib isn't Workers-friendly)
-// For now we send a no-op (push notifications via VAPID need crypto signing - punt to next iteration)
+// ============================================================
+// Web Push via VAPID — native WebCrypto implementation
+// Implements:
+//   - VAPID JWT (ES256) signing using the existing P-256 keys
+//   - aes128gcm payload encryption per RFC 8291
+//   - HTTP POST to the subscription endpoint (FCM/Mozilla/etc.)
+// No npm deps; runs on Cloudflare Workers.
+// ============================================================
+
+// ---- Base64URL helpers (work on Uint8Array or string) ----
+function _b64urlEncode(buf) {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function _b64urlDecode(str) {
+  str = String(str).replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  const bin = atob(str);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function _concatBytes(...parts) {
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  return out;
+}
+
+// ---- VAPID ES256 JWT signing using the configured P-256 private key ----
+// VAPID_PRIVATE is the raw 32-byte d (base64url). Public is uncompressed 65-byte point.
+async function _importVapidKey() {
+  const d = _b64urlDecode(VAPID_PRIVATE);
+  const pub = _b64urlDecode(VAPID_PUBLIC); // 0x04 || X(32) || Y(32)
+  if (pub.length !== 65 || pub[0] !== 0x04) throw new Error('Bad VAPID public key');
+  const jwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    d: _b64urlEncode(d),
+    x: _b64urlEncode(pub.slice(1, 33)),
+    y: _b64urlEncode(pub.slice(33, 65)),
+    ext: true,
+  };
+  return crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign']
+  );
+}
+
+async function _signVapidJwt(audience, expSeconds) {
+  const header = { typ: 'JWT', alg: 'ES256' };
+  const payload = { aud: audience, exp: expSeconds, sub: VAPID_SUBJECT };
+  const enc = new TextEncoder();
+  const headerB64 = _b64urlEncode(enc.encode(JSON.stringify(header)));
+  const payloadB64 = _b64urlEncode(enc.encode(JSON.stringify(payload)));
+  const data = enc.encode(headerB64 + '.' + payloadB64);
+  const key = await _importVapidKey();
+  // WebCrypto ECDSA produces raw r||s (64 bytes), which is what VAPID expects.
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, data);
+  return headerB64 + '.' + payloadB64 + '.' + _b64urlEncode(new Uint8Array(sig));
+}
+
+// ---- aes128gcm Web Push encryption per RFC 8291 ----
+async function _hkdf(salt, ikm, info, length) {
+  const baseKey = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info },
+    baseKey,
+    length * 8
+  ));
+}
+
+async function _encryptPushPayload(subscription, payloadBytes) {
+  // Receiver keys from the subscription
+  const ua_public = _b64urlDecode(subscription.keys.p256dh); // 65 bytes uncompressed
+  const auth_secret = _b64urlDecode(subscription.keys.auth); // 16 bytes
+
+  // Ephemeral sender keypair (ES = sender)
+  const esKeypair = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits']
+  );
+  const esPublicRaw = new Uint8Array(await crypto.subtle.exportKey('raw', esKeypair.publicKey)); // 65 bytes
+
+  // Import receiver public key for ECDH
+  const uaPubKey = await crypto.subtle.importKey(
+    'raw',
+    ua_public,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    []
+  );
+  const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: uaPubKey },
+    esKeypair.privateKey,
+    256
+  ));
+
+  // RFC 8291 §3.4: IKM = HKDF(auth_secret, ecdh_secret, "WebPush: info\0" || ua_public || es_public, 32)
+  const enc = new TextEncoder();
+  const keyInfo = _concatBytes(
+    enc.encode('WebPush: info\0'),
+    ua_public,
+    esPublicRaw
+  );
+  const ikm = await _hkdf(auth_secret, sharedSecret, keyInfo, 32);
+
+  // Random 16-byte salt
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  // CEK = HKDF(salt, IKM, "Content-Encoding: aes128gcm\0", 16)
+  const cek = await _hkdf(salt, ikm, enc.encode('Content-Encoding: aes128gcm\0'), 16);
+  // Nonce = HKDF(salt, IKM, "Content-Encoding: nonce\0", 12)
+  const nonce = await _hkdf(salt, ikm, enc.encode('Content-Encoding: nonce\0'), 12);
+
+  // Padded plaintext: payload || 0x02 (delimiter for last record) + zero pad to record size
+  // (We send a single record; the 0x02 byte marks "last").
+  const padded = _concatBytes(payloadBytes, new Uint8Array([0x02]));
+
+  // AES-128-GCM encrypt
+  const cekKey = await crypto.subtle.importKey('raw', cek, { name: 'AES-GCM' }, false, ['encrypt']);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
+    cekKey,
+    padded
+  ));
+
+  // Build aes128gcm content-coding header:
+  //   salt(16) || rs(4 big-endian) || idlen(1) || keyid(idlen) || ciphertext
+  // For Web Push, keyid = es_public_raw (65 bytes), so idlen = 65.
+  const rs = 4096;
+  const header = new Uint8Array(16 + 4 + 1 + 65);
+  header.set(salt, 0);
+  // record size as 4-byte big-endian uint32
+  header[16] = (rs >>> 24) & 0xff;
+  header[17] = (rs >>> 16) & 0xff;
+  header[18] = (rs >>>  8) & 0xff;
+  header[19] = (rs       ) & 0xff;
+  header[20] = 65;
+  header.set(esPublicRaw, 21);
+
+  return _concatBytes(header, ciphertext);
+}
+
 async function sendWebPush(db, recipientId, payload) {
-  // TODO: implement Web Push protocol natively with WebCrypto VAPID JWT signing
-  // For now this is a no-op so the call doesn't crash. SSE still works.
-  return;
+  try {
+    if (!VAPID_PRIVATE || !VAPID_PUBLIC) return;
+    const user = (db && db.users || []).find(u => u.id === recipientId);
+    if (!user || !user.pushSubs || user.pushSubs.length === 0) return;
+
+    const bodyStr = JSON.stringify(payload || {});
+    const bodyBytes = new TextEncoder().encode(bodyStr);
+
+    // Process each subscription in parallel; prune expired ones (404/410)
+    const dead = [];
+    await Promise.all(user.pushSubs.map(async (sub) => {
+      try {
+        if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) return;
+        const url = new URL(sub.endpoint);
+        const audience = url.origin;
+        const exp = Math.floor(Date.now() / 1000) + 12 * 60 * 60; // 12h
+        const jwt = await _signVapidJwt(audience, exp);
+
+        const cipher = await _encryptPushPayload(sub, bodyBytes);
+
+        const res = await fetch(sub.endpoint, {
+          method: 'POST',
+          headers: {
+            'TTL': '86400',
+            'Content-Type': 'application/octet-stream',
+            'Content-Encoding': 'aes128gcm',
+            'Authorization': `vapid t=${jwt}, k=${VAPID_PUBLIC}`,
+            'Urgency': 'normal',
+          },
+          body: cipher,
+        });
+        if (res.status === 404 || res.status === 410) {
+          dead.push(sub.endpoint);
+        } else if (!res.ok && res.status >= 400) {
+          // Log but don't fail
+          console.warn('[push] non-OK', res.status, sub.endpoint.slice(0, 60));
+        }
+      } catch (e) {
+        console.warn('[push] err', e && e.message);
+      }
+    }));
+
+    // Prune expired subscriptions (best-effort write; don't block)
+    if (dead.length) {
+      try {
+        const fresh = await fetchDatabase();
+        const u = fresh.users.find(x => x.id === recipientId);
+        if (u && u.pushSubs) {
+          u.pushSubs = u.pushSubs.filter(s => !dead.includes(s.endpoint));
+          await saveDatabase(fresh, false);
+        }
+      } catch (_) {}
+    }
+  } catch (e) {
+    console.warn('[sendWebPush] outer err', e && e.message);
+  }
 }
 
 // ---------- Rooms ----------
@@ -637,6 +849,36 @@ app.get('/api/users', requireAuth, async (c) => {
   return c.json({ users: list });
 });
 
+// ---------- E2E public key (Part 3) ----------
+// Each user uploads their ECDH P-256 public key (base64url, raw 65 bytes uncompressed)
+// once on first login. Private key stays in the browser's IndexedDB.
+app.post('/api/user/public-key', requireAuth, async (c) => {
+  try {
+    const { publicKey } = await c.req.json().catch(() => ({}));
+    if (typeof publicKey !== 'string' || publicKey.length < 32 || publicKey.length > 256) {
+      return c.json({ error: 'Invalid key' }, 400);
+    }
+    // Basic charset check (base64url)
+    if (!/^[A-Za-z0-9_-]+$/.test(publicKey)) return c.json({ error: 'Invalid key format' }, 400);
+    const db = await fetchDatabase();
+    const u = db.users.find(x => x.id === c.get('userId'));
+    if (!u) return c.json({ error: 'Not found' }, 404);
+    u.publicKey = publicKey;
+    u.publicKeyUpdatedAt = nowMs();
+    await saveDatabase(db, false);
+    return c.json({ ok: true });
+  } catch (e) { console.error('[public-key]', e); return c.json({ error: 'Save failed' }, 500); }
+});
+
+app.get('/api/user/public-key', requireAuth, async (c) => {
+  const userId = c.req.query('userId');
+  if (!userId) return c.json({ error: 'userId required' }, 400);
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === userId);
+  if (!u) return c.json({ error: 'Not found' }, 404);
+  return c.json({ userId: u.id, publicKey: u.publicKey || null });
+});
+
 // ---------- Heartbeat & typing ----------
 app.post('/api/user/heartbeat', requireAuth, async (c) => {
   const db = await fetchDatabase();
@@ -676,8 +918,9 @@ app.get('/api/messages', requireAuth, async (c) => {
     if (!parts.includes(c.get('userId'))) return c.json({ error: 'Forbidden' }, 403);
   }
   const db = await fetchDatabase();
+  const now = nowMs();
   const list = db.messages
-    .filter(m => m.roomId === roomId && !m.deletedAt)
+    .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-200);
   const enriched = list.map(m => {
@@ -692,7 +935,11 @@ app.get('/api/messages', requireAuth, async (c) => {
 app.post('/api/messages/send', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { roomId: raw, text, imageUrl, replyTo, targetUserId } = body;
+    const {
+      roomId: raw, text, imageUrl, replyTo, targetUserId,
+      encrypted, cipher, iv,                  // E2E payload (Part 3)
+      disappearAfterMs,                       // disappearing messages (Part 3)
+    } = body;
     const myId = c.get('userId');
     let roomId = raw;
     if (!roomId && targetUserId) roomId = dmRoomFor(myId, targetUserId);
@@ -701,9 +948,30 @@ app.post('/api/messages/send', requireAuth, async (c) => {
       const parts = roomId.slice(3).split(':');
       if (!parts.includes(myId)) return c.json({ error: 'Forbidden' }, 403);
     }
-    const ct = sanitizeText(text, 4000);
+
+    // ---- Encrypted (E2E) path ----
+    const isEncrypted = !!encrypted && typeof cipher === 'string' && typeof iv === 'string';
+    if (isEncrypted && !roomId.startsWith('dm:')) {
+      return c.json({ error: 'E2E only supported in DMs' }, 400);
+    }
+    if (isEncrypted) {
+      // Safety bounds on encrypted blobs (base64 of ~4KB plaintext)
+      if (cipher.length > 12000 || iv.length > 64) {
+        return c.json({ error: 'Payload too large' }, 413);
+      }
+    }
+
+    const ct = isEncrypted ? '' : sanitizeText(text, 4000);
     const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
-    if (!ct && !ci) return c.json({ error: 'Empty message' }, 400);
+    if (!ct && !ci && !isEncrypted) return c.json({ error: 'Empty message' }, 400);
+
+    // Disappearing TTL (clamp to 10s..24h)
+    let disappearAt = null;
+    if (typeof disappearAfterMs === 'number' && disappearAfterMs > 0) {
+      const ms = Math.max(10_000, Math.min(24 * 60 * 60 * 1000, disappearAfterMs));
+      disappearAt = nowMs() + ms;
+    }
+
     const db = await fetchDatabase();
     let replyRef = null;
     if (replyTo && typeof replyTo === 'object' && replyTo.id) {
@@ -716,14 +984,22 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     }
     const author = db.users.find(u => u.id === myId);
     const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
-    const msg = { id: uid('msg'), roomId, userId: myId, text: ct, imageUrl: ci, replyTo: replyRef, authorSnapshot: snap, createdAt: nowMs() };
+    const msg = {
+      id: uid('msg'), roomId, userId: myId,
+      text: ct, imageUrl: ci, replyTo: replyRef, authorSnapshot: snap, createdAt: nowMs(),
+    };
+    if (isEncrypted) { msg.encrypted = true; msg.cipher = cipher; msg.iv = iv; }
+    if (disappearAt) { msg.disappearAt = disappearAt; msg.disappearAfterMs = disappearAfterMs; }
     db.messages.push(msg);
+
     const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
     if (roomId.startsWith('dm:')) {
       const parts = roomId.slice(3).split(':');
       parts.filter(uid2 => uid2 !== myId).forEach(recip => {
         _pushEvent(recip, 'new_message', { roomId, message: enriched });
-        pushNotification(db, recip, 'message', myId, { text: (ct || (ci ? '📷 Photo' : '')).slice(0, 80) });
+        // For E2E messages, server never sees plaintext → push preview is generic
+        const previewText = isEncrypted ? '🔒 Encrypted message' : (ct || (ci ? '📷 Photo' : ''));
+        pushNotification(db, recip, 'message', myId, { text: previewText.slice(0, 80) });
       });
     } else {
       _broadcastEvent('new_message', { roomId, message: enriched }, myId);
