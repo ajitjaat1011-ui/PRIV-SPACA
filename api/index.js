@@ -499,6 +499,87 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 });
 
 // ---------- User Routes ----------
+
+/**
+ * Permanent image upload to GitHub repo (raw.githubusercontent.com as CDN).
+ * POST /api/upload-photo  { dataUrl: "data:image/jpeg;base64,..." , kind: "avatar"|"post" }
+ * Returns: { url: "https://raw.githubusercontent.com/.../media/avatars/<id>.jpg" }
+ *
+ * Requires GITHUB_PAT with repo scope. Falls back to returning the data URL itself
+ * (which works but bloats DB) if upload fails.
+ */
+app.post('/api/upload-photo', authMiddleware, async (req, res) => {
+  try {
+    const { dataUrl, kind } = req.body || {};
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+      return res.status(400).json({ error: 'Send a data URL: data:image/...' });
+    }
+    const match = dataUrl.match(/^data:image\/(jpeg|jpg|png|webp|gif);base64,(.+)$/);
+    if (!match) return res.status(400).json({ error: 'Unsupported image type' });
+    const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+    const b64 = match[2];
+    const sizeBytes = Math.floor(b64.length * 3 / 4);
+    if (sizeBytes > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Image too large (max 5 MB after compression)' });
+    }
+    const safeKind = (kind === 'post' || kind === 'avatar') ? kind : 'media';
+    const folder = safeKind === 'avatar' ? 'avatars' : (safeKind === 'post' ? 'posts' : 'media');
+    const id = (safeKind === 'avatar' ? req.userId : uid('img'));
+    const path = `media/${folder}/${id}.${ext}`;
+
+    if (!isRepoConfigured()) {
+      // Fallback: return the data URL itself (works but stores image inline)
+      return res.json({ url: dataUrl, persisted: false });
+    }
+
+    // For avatars: replace any existing file (PUT with prior sha if exists)
+    let priorSha = null;
+    try {
+      const headRes = await fetchFn(
+        `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(GH_BRANCH)}`,
+        { headers: { 'Authorization': `token ${GITHUB_PAT}`, 'User-Agent': 'PRIV-SPACA', 'Accept': 'application/vnd.github+json' } }
+      );
+      if (headRes.ok) {
+        const j = await headRes.json();
+        priorSha = j.sha || null;
+      }
+    } catch (_) {}
+
+    const body = {
+      message: `upload ${safeKind} ${id}`,
+      content: b64,
+      branch: GH_BRANCH,
+    };
+    if (priorSha) body.sha = priorSha;
+
+    const putRes = await fetchFn(
+      `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(path)}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${GITHUB_PAT}`,
+          'User-Agent': 'PRIV-SPACA',
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      }
+    );
+    if (!putRes.ok) {
+      const txt = await putRes.text().catch(() => '');
+      console.error('[upload-photo] HTTP', putRes.status, txt.slice(0, 200));
+      // Fallback to data URL so user still sees their image
+      return res.json({ url: dataUrl, persisted: false, warning: 'GitHub upload failed; using inline data URL.' });
+    }
+    const url = `https://raw.githubusercontent.com/${GH_REPO}/${encodeURIComponent(GH_BRANCH)}/${path}`;
+    // Bust raw.githubusercontent.com cache by appending a tiny query string
+    const cdnUrl = url + '?t=' + Date.now();
+    res.json({ url: cdnUrl, persisted: true });
+  } catch (e) {
+    console.error('[upload-photo] exception', e.message);
+    res.status(500).json({ error: 'Upload failed: ' + (e.message || 'unknown') });
+  }
+});
 app.post('/api/user/update', authMiddleware, async (req, res) => {
   try {
     const { displayName, username, bio, photoUrl } = req.body || {};
