@@ -237,12 +237,44 @@ img{user-select:none;-webkit-user-drag:none}
   height:100%;background:var(--bg);animation:fade-in .3s ease;
 }
 .topbar{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:0 16px;background:var(--bg-2);border-bottom:1px solid var(--line);
+  display:grid;grid-template-columns:44px 1fr 44px;align-items:center;
+  padding:0 10px;background:var(--bg-2);border-bottom:1px solid var(--line);
   z-index:5;height:54px;
 }
+.topbar-left-icon{justify-self:start}
+.topbar > .ghost-btn:last-child{justify-self:end}
 .brand-row{display:flex;align-items:center;gap:10px}
 .top-actions{display:flex;align-items:center;gap:4px}
+
+/* IG-style cursive wordmark, centered */
+.brand-wordmark{
+  font-family:'Dancing Script', 'Inter', cursive;
+  font-weight:700;font-size:30px;line-height:1;
+  color:var(--text);letter-spacing:.2px;
+  text-align:center;justify-self:center;
+  background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+  /* fallback if gradient text not supported */
+  text-shadow:none;
+  user-select:none;
+  padding:0 4px;
+}
+.topbar .ghost-btn{padding:8px;color:var(--text)}
+.topbar .ghost-btn i{width:24px;height:24px;stroke-width:1.8}
+.topbar .ghost-btn:hover{background:transparent;color:var(--accent)}
+
+/* Profile sub-header (IG-style "@username  ☰") */
+.profile-titlebar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 16px 4px;
+}
+.profile-titlebar-name{
+  font-size:18px;font-weight:800;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;
+}
+.profile-titlebar .ghost-btn{padding:6px;color:var(--text)}
+.profile-titlebar .ghost-btn i{width:24px;height:24px;stroke-width:2}
+.profile-titlebar .ghost-btn:hover{background:var(--bg-soft);color:var(--text)}
 
 /* ===== Bottom Navigation (IG-style) ===== */
 .bottom-nav{
@@ -273,8 +305,8 @@ img{user-select:none;-webkit-user-drag:none}
   transition:border .15s;
 }
 .bn-btn.active .bn-avatar{border-color:var(--text)}
-#bnLogoutBtn{flex:0.7}
-#bnLogoutBtn i{width:22px;height:22px;color:var(--muted)}
+/* Reels button is a placeholder for now */
+#bnReelsBtn i{color:var(--text)}
 
 /* Notification dot */
 .bn-btn .dot{
@@ -770,6 +802,42 @@ img{user-select:none;-webkit-user-drag:none}
   position:relative;background:#000;display:flex;align-items:center;justify-content:center;
   max-height:75vh;overflow:hidden;
 }
+
+/* ===== IG-style overlay header (used when post has an image) ===== */
+.post-overlay-head{
+  position:absolute;top:0;left:0;right:0;z-index:2;
+  display:flex;align-items:center;gap:10px;
+  padding:10px 12px 36px;
+  background:linear-gradient(to bottom, rgba(0,0,0,.55) 0%, rgba(0,0,0,.20) 60%, rgba(0,0,0,0) 100%);
+  color:#fff;pointer-events:none;
+}
+.post-overlay-head > *{pointer-events:auto}
+.post-overlay-head .avatar-ring{
+  padding:1.5px;background:var(--pink-grad);border-radius:50%;
+  display:inline-flex;flex-shrink:0;
+}
+.post-overlay-head .avatar{width:32px;height:32px;font-size:12px;border:1.5px solid #000}
+.post-overlay-head .meta{flex:1;min-width:0;line-height:1.2}
+.post-overlay-head .nm{
+  display:flex;align-items:center;gap:6px;
+  font-size:13.5px;font-weight:700;color:#fff;
+  text-shadow:0 1px 3px rgba(0,0,0,.55);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.post-overlay-head .nm .dot-sep{opacity:.7;font-weight:400}
+.post-overlay-head .nm .ago{opacity:.85;font-weight:500;font-size:12px}
+.post-overlay-head .un{
+  font-size:11.5px;color:rgba(255,255,255,.85);
+  text-shadow:0 1px 3px rgba(0,0,0,.55);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.post-overlay-head .more-btn{
+  background:transparent;border:0;color:#fff;cursor:pointer;
+  padding:6px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+  filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));
+}
+.post-overlay-head .more-btn:hover{background:rgba(255,255,255,.15)}
+.post-overlay-head .more-btn i{width:20px;height:20px;stroke-width:2.2}
 .post-img{
   display:block;width:100%;max-height:75vh;object-fit:contain;cursor:pointer;
   background:#000;

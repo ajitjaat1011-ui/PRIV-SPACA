@@ -608,12 +608,25 @@ function acceptSession(data) {
 // ====== Tabs ======
 function bindTabs() {
   $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
-  const lo = $('#bnLogoutBtn');
-  if (lo) lo.addEventListener('click', () => { if (confirm('Sign out?')) logout(false); });
+  // Legacy top-chat button is gone; keep guard in case markup is cached
   const tc = $('#topChatBtn');
   if (tc) tc.addEventListener('click', () => switchTab('chat'));
   const tn = $('#topNotifBtn');
   if (tn) tn.addEventListener('click', openNotifications);
+  // New IG-style top "+" — jump to feed, focus composer, open photo picker
+  const ta = $('#topAddBtn');
+  if (ta) ta.addEventListener('click', () => {
+    switchTab('feed');
+    setTimeout(() => {
+      const fc = $('#postInput');
+      if (fc) { fc.focus(); fc.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    }, 250);
+  });
+  // Reels = placeholder for now (Part 4 will bring multi-photo carousel / voice notes)
+  const reels = $('#bnReelsBtn');
+  if (reels) reels.addEventListener('click', () => {
+    toast('Reels coming soon ✨ (planned in Part 4)', 'info');
+  });
 }
 
 function switchTab(tab) {
@@ -1977,43 +1990,47 @@ function renderPost(p) {
   const liked = Array.isArray(p.likes) && p.likes.includes(meId);
   const saved = !!getSaved()[p.id];
 
-  // Header
-  const head = document.createElement('div');
-  head.className = 'post-head';
-  const avRing = document.createElement('span');
-  avRing.className = 'avatar-ring';
-  const av = document.createElement('span');
-  av.className = 'avatar md';
-  renderAvatar(av, author);
-  avRing.appendChild(av);
-  const meta = document.createElement('div');
-  meta.className = 'meta';
-  meta.innerHTML = `
-    <div class="nm">
-      <span>${escapeHtml(author.username || author.displayName)}</span>
-      <span class="dot-sep">•</span>
-      <span class="ago">${escapeHtml(timeAgo(p.createdAt))}</span>
-    </div>
-    <div class="un">${escapeHtml(author.displayName || '')}</div>
-  `;
-  const moreBtn = document.createElement('button');
-  moreBtn.className = 'more-btn';
-  moreBtn.setAttribute('aria-label', 'More');
-  moreBtn.innerHTML = '<i data-lucide="more-horizontal"></i>';
-  moreBtn.addEventListener('click', (e) => { e.stopPropagation(); openMoreMenu(p, isMine); });
-  head.appendChild(avRing); head.appendChild(meta); head.appendChild(moreBtn);
-  // Tap on avatar or name → open user profile
-  const openProfile = () => { if (p.userId !== (State.user && State.user.id)) openUserProfile(p.userId); else switchTab('profile'); };
-  avRing.style.cursor = 'pointer';
-  meta.style.cursor = 'pointer';
-  avRing.addEventListener('click', openProfile);
-  meta.addEventListener('click', openProfile);
-  card.appendChild(head);
+  // Build the header DOM once; we'll attach it either above the media
+  // (text-only posts) or overlaid ON the media (image posts, IG-style).
+  const buildHead = (overlayMode) => {
+    const head = document.createElement('div');
+    head.className = overlayMode ? 'post-overlay-head' : 'post-head';
+    const avRing = document.createElement('span');
+    avRing.className = 'avatar-ring';
+    const av = document.createElement('span');
+    av.className = 'avatar md';
+    renderAvatar(av, author);
+    avRing.appendChild(av);
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = `
+      <div class="nm">
+        <span>${escapeHtml(author.username || author.displayName)}</span>
+        <span class="dot-sep">•</span>
+        <span class="ago">${escapeHtml(timeAgo(p.createdAt))}</span>
+      </div>
+      <div class="un">${escapeHtml(author.displayName || '')}</div>
+    `;
+    const moreBtn = document.createElement('button');
+    moreBtn.className = 'more-btn';
+    moreBtn.setAttribute('aria-label', 'More');
+    moreBtn.innerHTML = '<i data-lucide="more-horizontal"></i>';
+    moreBtn.addEventListener('click', (e) => { e.stopPropagation(); openMoreMenu(p, isMine); });
+    head.appendChild(avRing); head.appendChild(meta); head.appendChild(moreBtn);
+    const openProfile = () => { if (p.userId !== (State.user && State.user.id)) openUserProfile(p.userId); else switchTab('profile'); };
+    avRing.style.cursor = 'pointer';
+    meta.style.cursor = 'pointer';
+    avRing.addEventListener('click', (e) => { e.stopPropagation(); openProfile(); });
+    meta.addEventListener('click', (e) => { e.stopPropagation(); openProfile(); });
+    return head;
+  };
 
-  // Image with double-tap to like
+  // Image with double-tap to like — header is overlaid on top of the media
   if (p.imageUrl) {
     const wrap = document.createElement('div');
     wrap.className = 'post-img-wrap';
+    // IG-style overlay header sits ON the image
+    wrap.appendChild(buildHead(true));
     const img = lazyImg(p.imageUrl, 'post image', p.id);
     img.className = 'post-img';
     img.addEventListener('error', () => { wrap.style.display = 'none'; });
@@ -2046,6 +2063,9 @@ function renderPost(p) {
     wrap.appendChild(img);
     wrap.appendChild(burst);
     card.appendChild(wrap);
+  } else {
+    // Text-only post — no media to overlay onto, so put a classic header at top
+    card.appendChild(buildHead(false));
   }
 
   // Action toolbar
@@ -3029,6 +3049,9 @@ function updateRealtimeStatus() {
 function bindSettingsSheet() {
   const open = $('#topSettingsBtn');
   if (open) open.addEventListener('click', openSettings);
+  // Profile-page gear (moved here when we removed the top-bar gear, IG-style)
+  const pset = $('#profileSettingsBtn');
+  if (pset) pset.addEventListener('click', openSettings);
   $$('[data-close-settings]').forEach(b => b.addEventListener('click', closeSettings));
   const push = $('#enablePushBtn');
   if (push) push.addEventListener('click', togglePushSubscription);
@@ -3249,6 +3272,8 @@ async function renderOwnProfile() {
     const u = data.user;
     $('#profileDisplayName').textContent = u.displayName || '';
     $('#profileUsername').textContent = '@' + u.username + (u.bio ? '' : '');
+    const titleU = $('#profileTitleUsername');
+    if (titleU) titleU.textContent = '@' + (u.username || 'me');
     $('#profileBio').textContent = u.bio || '';
     $('#statPosts').textContent = String(u.postsCount || 0);
     $('#statFollowers').textContent = String(u.followers || 0);

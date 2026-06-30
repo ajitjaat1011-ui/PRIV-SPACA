@@ -13,7 +13,7 @@
 <title>PRIV SPACA — Private Chat & Community</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet" />
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 <!-- Motion One v10 - lightweight (~3 KB gz) Framer-Motion-style animations for vanilla JS -->
 <script src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.min.js"></script>
@@ -137,23 +137,14 @@
 <!-- ====== APP SHELL ====== -->
 <section id="appShell" class="app-shell hidden">
   <header class="topbar">
-    <div class="brand-row">
-      <div class="logo-badge sm"><svg viewBox="0 0 64 64" width="22" height="22"><path fill="#fff" d="M14 32 50 14 42 50 32 36 14 32z"/></svg></div>
-      <strong class="brand-name sm">PRIV SPACA</strong>
-    </div>
-    <div class="top-actions">
-      <button id="topNotifBtn" class="ghost-btn icon-with-dot" title="Notifications">
-        <i data-lucide="heart"></i>
-        <span class="dot hidden" data-dot="feed-top"></span>
-      </button>
-      <button id="topChatBtn" class="ghost-btn icon-with-dot" title="Messages">
-        <i data-lucide="send"></i>
-        <span class="dot hidden" data-dot="chat-top"></span>
-      </button>
-      <button id="topSettingsBtn" class="ghost-btn" title="Settings" aria-label="Settings">
-        <i data-lucide="settings"></i>
-      </button>
-    </div>
+    <button id="topAddBtn" class="ghost-btn topbar-left-icon" title="New post" aria-label="New post">
+      <i data-lucide="plus-square"></i>
+    </button>
+    <div class="brand-wordmark" aria-label="PRIV SPACA">PRIV SPACA</div>
+    <button id="topNotifBtn" class="ghost-btn icon-with-dot" title="Notifications" aria-label="Notifications">
+      <i data-lucide="heart"></i>
+      <span class="dot hidden" data-dot="feed-top"></span>
+    </button>
   </header>
 
   <!-- ====== CHAT TAB ====== -->
@@ -294,6 +285,12 @@
 
       <!-- VIEW MODE: IG-style profile -->
       <div id="profileViewMode" class="profile-mode">
+        <div class="profile-titlebar">
+          <strong id="profileTitleUsername" class="profile-titlebar-name">@me</strong>
+          <button id="profileSettingsBtn" class="ghost-btn" title="Settings" aria-label="Settings">
+            <i data-lucide="menu"></i>
+          </button>
+        </div>
         <div class="ig-profile-head">
           <span id="profileAvatarPreview" class="avatar xxl"></span>
           <div class="ig-profile-stats">
@@ -397,27 +394,28 @@
     </div>
   </main>
 
-  <!-- ====== BOTTOM NAV ====== -->
+  <!-- ====== BOTTOM NAV (IG-style: Home / Reels / Send / Search / Profile) ====== -->
   <nav class="bottom-nav" role="navigation">
     <button data-tab="feed" class="bn-btn active" aria-label="Home">
       <i data-lucide="home" class="i-outline"></i>
       <i data-lucide="home" class="i-filled"></i>
       <span class="dot hidden" data-dot="feed"></span>
     </button>
+    <button id="bnReelsBtn" class="bn-btn" aria-label="Reels">
+      <i data-lucide="play-square" class="i-outline"></i>
+      <i data-lucide="play-square" class="i-filled"></i>
+    </button>
+    <button data-tab="chat" class="bn-btn" aria-label="Send">
+      <i data-lucide="send" class="i-outline"></i>
+      <i data-lucide="send" class="i-filled"></i>
+      <span class="dot hidden" data-dot="chat"></span>
+    </button>
     <button data-tab="search" class="bn-btn" aria-label="Search">
       <i data-lucide="search" class="i-outline"></i>
       <i data-lucide="search" class="i-filled"></i>
     </button>
-    <button data-tab="chat" class="bn-btn" aria-label="Chat">
-      <i data-lucide="message-circle" class="i-outline"></i>
-      <i data-lucide="message-circle" class="i-filled"></i>
-      <span class="dot hidden" data-dot="chat"></span>
-    </button>
     <button data-tab="profile" class="bn-btn" aria-label="Profile">
       <span id="bnMeAvatar" class="bn-avatar"></span>
-    </button>
-    <button id="bnLogoutBtn" class="bn-btn" aria-label="Sign out">
-      <i data-lucide="log-out" class="i-outline"></i>
     </button>
   </nav>
 </section>
