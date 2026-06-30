@@ -254,8 +254,8 @@
         <!-- Populated by JS -->
       </div>
 
-      <!-- Composer -->
-      <div class="composer-card">
+      <!-- Composer (opened by + button) -->
+      <div id="inlineComposerCard" class="composer-card ig-compose-inline hidden">
         <div class="composer-card-head">
           <span id="feedMeAvatar" class="avatar md"></span>
           <div class="composer-card-meta">
@@ -399,6 +399,34 @@
     </div>
   </main>
 
+  <!-- ====== ADMIN TAB ====== -->
+  <main id="adminView" class="view admin-view">
+    <div class="admin-wrap">
+      <div class="admin-hero">
+        <div>
+          <h2>Administrator Panel</h2>
+          <p>Manage users, posts, messages, and check app health.</p>
+        </div>
+        <button id="adminRefreshBtn" class="primary-btn sm"><i data-lucide="refresh-cw"></i> Refresh</button>
+      </div>
+      <div id="adminStats" class="admin-stats"></div>
+      <div class="admin-grid">
+        <section class="admin-card">
+          <h3>Users</h3>
+          <div id="adminUsers" class="admin-list"></div>
+        </section>
+        <section class="admin-card">
+          <h3>Recent posts</h3>
+          <div id="adminPosts" class="admin-list"></div>
+        </section>
+        <section class="admin-card">
+          <h3>Recent messages</h3>
+          <div id="adminMessages" class="admin-list"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
   <!-- ====== BOTTOM NAV (IG-style: Home / Reels / Send / Search / Profile) ====== -->
   <nav class="bottom-nav" role="navigation">
     <button data-tab="feed" class="bn-btn active" aria-label="Home">
@@ -421,6 +449,10 @@
     </button>
     <button data-tab="profile" class="bn-btn" aria-label="Profile">
       <span id="bnMeAvatar" class="bn-avatar"></span>
+    </button>
+    <button data-tab="admin" id="adminNavBtn" class="bn-btn hidden" aria-label="Admin">
+      <i data-lucide="shield" class="i-outline"></i>
+      <i data-lucide="shield-check" class="i-filled"></i>
     </button>
   </nav>
 </section>
@@ -583,6 +615,18 @@
       <input id="commentsInput" type="text" placeholder="Add a comment…" maxlength="600" autocomplete="off" />
       <button type="submit" class="post-btn">Post</button>
     </form>
+  </div>
+</div>
+
+<div id="postComposerModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card post-modal-card">
+    <div class="modal-head">
+      <h3><i data-lucide="plus-square"></i> Create post</h3>
+      <button id="postModalClose" class="ghost-btn"><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body">
+      <div id="postModalMount"></div>
+    </div>
   </div>
 </div>
 
