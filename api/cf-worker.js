@@ -87,7 +87,7 @@ function isAdminUser(u) {
 async function requireAdmin(c, next) {
   const auth = await requireAuth(c, async () => {});
   if (auth instanceof Response) return auth;
-  const db = await fetchDatabase();
+  const db = await fetchDatabase({ fresh: true });
   const u = db.users.find(x => x.id === c.get('userId'));
   if (!isAdminUser(u)) return c.json({ error: 'Admin only' }, 403);
   c.set('adminUser', u);
@@ -211,24 +211,29 @@ function runScheduler(db) {
   return true;
 }
 
-async function fetchDatabase() {
+function normalizeDb(remote) {
+  const r = remote && typeof remote === 'object' ? remote : {};
+  return {
+    users: Array.isArray(r.users) ? r.users : [],
+    messages: Array.isArray(r.messages) ? r.messages : [],
+    scheduledMessages: Array.isArray(r.scheduledMessages) ? r.scheduledMessages : [],
+    posts: Array.isArray(r.posts) ? r.posts : [],
+    notifications: Array.isArray(r.notifications) ? r.notifications : [],
+    typing: r.typing && typeof r.typing === 'object' ? r.typing : {},
+    heartbeat: r.heartbeat && typeof r.heartbeat === 'object' ? r.heartbeat : {},
+    rtcSignals: Array.isArray(r.rtcSignals) ? r.rtcSignals : [],
+    meta: r.meta && typeof r.meta === 'object' ? r.meta : {},
+  };
+}
+async function fetchDatabase({ fresh = false } = {}) {
   const now = nowMs();
-  if (now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
+  if (!fresh && now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
     runScheduler(localCache);
     return localCache;
   }
   const remote = await repoRead();
-  if (remote && typeof remote === 'object') {
-    localCache = {
-      users: Array.isArray(remote.users) ? remote.users : [],
-      messages: Array.isArray(remote.messages) ? remote.messages : [],
-      scheduledMessages: Array.isArray(remote.scheduledMessages) ? remote.scheduledMessages : [],
-      posts: Array.isArray(remote.posts) ? remote.posts : [],
-      notifications: Array.isArray(remote.notifications) ? remote.notifications : [],
-      typing: remote.typing && typeof remote.typing === 'object' ? remote.typing : {},
-      heartbeat: remote.heartbeat && typeof remote.heartbeat === 'object' ? remote.heartbeat : {},
-      rtcSignals: Array.isArray(remote.rtcSignals) ? remote.rtcSignals : [],
-    };
+  if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
+    localCache = normalizeDb(remote);
   }
   cacheTimestamp = now;
   const changed = runScheduler(localCache);
@@ -247,7 +252,14 @@ async function saveDatabase(data, isEphemeral = false) {
     repoWrite(data).catch(() => {});
     return true;
   }
-  return await repoWrite(data);
+  let ok = await repoWrite(data);
+  if (!ok) {
+    // One forced SHA refresh + retry. This protects login/signup/posts from transient GitHub content conflicts.
+    ghFileSha = null;
+    await repoRead();
+    ok = await repoWrite(data);
+  }
+  return ok;
 }
 
 // ---------- Bcrypt + JWT (using pure-JS for Workers compat) ----------
@@ -670,7 +682,7 @@ app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
   persistence: isRepo() ? 'github-repo' : 'in-memory',
   runtime: 'cloudflare-workers',
-  time: nowMs(),
+  time: nowMs(), version: 'auth-storage-v2',
 }));
 
 app.get('/api/diag', async (c) => {
@@ -711,7 +723,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     if (weak.has(pin)) return c.json({ error: 'Please choose a less obvious PIN' }, 400);
     if (termsAccepted !== true) return c.json({ error: 'You must accept the Terms & Community Guidelines.' }, 400);
 
-    const db = await fetchDatabase();
+    const db = await fetchDatabase({ fresh: true });
     const emailLower = email.toLowerCase();
     const usernameLower = username.toLowerCase();
     if (db.users.some(u => u.email.toLowerCase() === emailLower)) return c.json({ error: 'Email already registered' }, 409);
@@ -749,12 +761,12 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     const { identifier, password } = body;
     if (!identifier || !password) return c.json({ error: 'Missing credentials' }, 400);
     if (typeof password !== 'string' || password.length > 128) return c.json({ error: 'Invalid credentials' }, 400);
-    const db = await fetchDatabase();
+    const db = await fetchDatabase({ fresh: true });
     const idLower = String(identifier).toLowerCase().trim();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) {
       await new Promise(r => setTimeout(r, 200 + Math.random() * 100));
-      return c.json({ error: 'Invalid credentials' }, 401);
+      return c.json({ error: 'Account not found. Check username/email or sign up again.' }, 404);
     }
     const lock = checkAccountLock(user.id);
     if (lock.locked) {
@@ -762,7 +774,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       return c.json({ error: `Account temporarily locked due to failed attempts. Try again in ${mins} minute(s).` }, 423);
     }
     const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) { recordLoginFail(user.id); return c.json({ error: 'Invalid credentials' }, 401); }
+    if (!ok) { recordLoginFail(user.id); return c.json({ error: 'Wrong password. Use Forgot with your 4-digit PIN to reset it.' }, 401); }
     clearLoginFails(user.id);
     const token = await signToken(user);
     return c.json({ token, user: sanitizeUser(user) });
@@ -780,7 +792,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     if (!identifier || !isPin(pin) || !newPassword || newPassword.length < 6) {
       return c.json({ error: 'Invalid reset payload' }, 400);
     }
-    const db = await fetchDatabase();
+    const db = await fetchDatabase({ fresh: true });
     const idLower = String(identifier).toLowerCase().trim();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) return c.json({ error: 'Account not found' }, 404);
