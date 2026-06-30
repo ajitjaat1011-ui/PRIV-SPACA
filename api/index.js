@@ -24,9 +24,14 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 // ---------- Configuration ----------
 const JWT_SECRET = process.env.JWT_SECRET || 'priv-spaca-dev-secret-change-me-in-production';
 const JWT_EXPIRES = '7d';
-const GIST_ID = process.env.GIST_ID || '';
+// GitHub repo-file persistence (Contents API). Requires `repo` scope.
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
-const GIST_FILE = 'db.json';
+const GH_REPO    = process.env.GH_REPO    || 'ajitjaat1011-ui/PRIV-SPACA';
+const GH_BRANCH  = process.env.GH_BRANCH  || 'data';
+const GH_FILE    = process.env.GH_FILE    || 'db.json';
+// Legacy gist support (still works if configured)
+const GIST_ID    = process.env.GIST_ID || '';
+const GIST_FILE  = 'db.json';
 const CACHE_TTL_MS = 2000;
 const EPHEMERAL_WRITE_INTERVAL_MS = 30000;
 
@@ -43,6 +48,7 @@ let localCache = {
 let cacheTimestamp = 0;
 let lastEphemeralWrite = 0;
 let pendingEphemeral = false;
+let ghFileSha = null; // current sha of db.json on GH_BRANCH
 
 // ---------- Helpers ----------
 function uid(prefix = 'id') {
@@ -57,10 +63,104 @@ function safeJson(str, fallback) {
   try { return JSON.parse(str); } catch (_) { return fallback; }
 }
 
+function isRepoConfigured() {
+  return !!(GITHUB_PAT && GH_REPO && GH_BRANCH);
+}
 function isGistConfigured() {
   return !!(GIST_ID && GITHUB_PAT);
 }
+function isPersistConfigured() {
+  return isRepoConfigured() || isGistConfigured();
+}
 
+// ---- GitHub Contents API (primary, uses `repo` scope) ----
+async function repoRead() {
+  if (!isRepoConfigured()) return null;
+  try {
+    const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}?ref=${encodeURIComponent(GH_BRANCH)}`;
+    const res = await fetchFn(url, {
+      headers: {
+        'Authorization': `token ${GITHUB_PAT}`,
+        'User-Agent': 'PRIV-SPACA',
+        'Accept': 'application/vnd.github+json'
+      }
+    });
+    if (!res.ok) {
+      console.error('repoRead HTTP', res.status);
+      return null;
+    }
+    const data = await res.json();
+    ghFileSha = data.sha || null;
+    if (!data.content) return null;
+    const buf = Buffer.from(data.content, data.encoding || 'base64');
+    return safeJson(buf.toString('utf8'), null);
+  } catch (e) {
+    console.error('repoRead error', e.message);
+    return null;
+  }
+}
+
+async function repoWrite(dbObj) {
+  if (!isRepoConfigured()) return false;
+  try {
+    // Ensure we have a current sha (refresh if cached one is missing)
+    if (!ghFileSha) await repoRead();
+    const content = Buffer.from(JSON.stringify(dbObj)).toString('base64');
+    const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}`;
+    const body = {
+      message: 'priv-spaca sync ' + new Date().toISOString(),
+      content,
+      branch: GH_BRANCH,
+    };
+    if (ghFileSha) body.sha = ghFileSha;
+    const res = await fetchFn(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${GITHUB_PAT}`,
+        'User-Agent': 'PRIV-SPACA',
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    if (res.status === 409 || res.status === 422) {
+      // sha conflict — refresh and retry once
+      ghFileSha = null;
+      await repoRead();
+      if (ghFileSha) {
+        body.sha = ghFileSha;
+        const r2 = await fetchFn(url, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${GITHUB_PAT}`,
+            'User-Agent': 'PRIV-SPACA',
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+        if (r2.ok) {
+          const j = await r2.json();
+          if (j && j.content && j.content.sha) ghFileSha = j.content.sha;
+          return true;
+        }
+        return false;
+      }
+    }
+    if (!res.ok) {
+      console.error('repoWrite HTTP', res.status);
+      return false;
+    }
+    const j = await res.json();
+    if (j && j.content && j.content.sha) ghFileSha = j.content.sha;
+    return true;
+  } catch (e) {
+    console.error('repoWrite error', e.message);
+    return false;
+  }
+}
+
+// ---- Legacy Gist support (only if configured) ----
 async function gistRead() {
   if (!isGistConfigured()) return null;
   try {
@@ -106,6 +206,18 @@ async function gistWrite(dbObj) {
   }
 }
 
+// Unified read/write — prefers repo, falls back to gist
+async function persistRead() {
+  if (isRepoConfigured()) return repoRead();
+  if (isGistConfigured()) return gistRead();
+  return null;
+}
+async function persistWrite(dbObj) {
+  if (isRepoConfigured()) return repoWrite(dbObj);
+  if (isGistConfigured()) return gistWrite(dbObj);
+  return false;
+}
+
 /**
  * Fetch the database with cache TTL. Also auto-flushes scheduled messages
  * whose deliverAt timestamp has elapsed into the messages collection.
@@ -116,7 +228,7 @@ async function fetchDatabase() {
     runScheduler(localCache);
     return localCache;
   }
-  const remote = await gistRead();
+  const remote = await persistRead();
   if (remote && typeof remote === 'object') {
     localCache = {
       users: Array.isArray(remote.users) ? remote.users : [],
@@ -154,6 +266,10 @@ function runScheduler(db) {
   }
   if (due.length === 0) return false;
   for (const sm of due) {
+    const author = db.users.find(u => u.id === sm.userId);
+    const snapshot = author ? {
+      id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || ''
+    } : (sm.authorSnapshot || null);
     db.messages.push({
       id: sm.id || uid('msg'),
       roomId: sm.roomId,
@@ -161,6 +277,7 @@ function runScheduler(db) {
       text: sm.text || '',
       imageUrl: sm.imageUrl || null,
       replyTo: sm.replyTo || null,
+      authorSnapshot: snapshot,
       createdAt: now,
       scheduledOriginally: true,
     });
@@ -176,7 +293,7 @@ function runScheduler(db) {
 async function saveDatabase(data, isEphemeral = false) {
   localCache = data;
   cacheTimestamp = nowMs();
-  if (!isGistConfigured()) return true; // in-memory only
+  if (!isPersistConfigured()) return true; // in-memory only
   if (isEphemeral) {
     const now = nowMs();
     if (now - lastEphemeralWrite < EPHEMERAL_WRITE_INTERVAL_MS) {
@@ -186,11 +303,11 @@ async function saveDatabase(data, isEphemeral = false) {
     lastEphemeralWrite = now;
     pendingEphemeral = false;
     // Fire and forget
-    gistWrite(data).catch(() => {});
+    persistWrite(data).catch(() => {});
     return true;
   }
   // Durable write
-  const ok = await gistWrite(data);
+  const ok = await persistWrite(data);
   return ok;
 }
 
@@ -245,7 +362,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     ok: true,
     name: 'PRIV SPACA',
-    persistence: isGistConfigured() ? 'gist' : 'in-memory',
+    persistence: isRepoConfigured() ? 'github-repo' : (isGistConfigured() ? 'gist' : 'in-memory'),
     time: nowMs(),
   });
 });
@@ -450,13 +567,12 @@ app.get('/api/messages', authMiddleware, async (req, res) => {
     .filter(m => m.roomId === roomId)
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-200);
-  // Enrich with author profile
+  // Enrich with author profile; if user record is gone, fall back to embedded snapshot
   const enriched = list.map(m => {
     const author = db.users.find(u => u.id === m.userId);
-    return {
-      ...m,
-      author: author ? sanitizeUser(author) : { id: m.userId, displayName: 'Unknown', username: 'unknown' }
-    };
+    if (author) return { ...m, author: sanitizeUser(author) };
+    if (m.authorSnapshot) return { ...m, author: m.authorSnapshot };
+    return { ...m, author: { id: m.userId, displayName: 'Member', username: (m.userId || 'member').slice(-6) } };
   });
   res.json({ messages: enriched, roomId });
 });
@@ -486,6 +602,10 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
         imageUrl: typeof replyTo.imageUrl === 'string' ? replyTo.imageUrl.slice(0, 2048) : null,
       };
     }
+    const author = db.users.find(u => u.id === req.userId);
+    const snapshot = author ? {
+      id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || ''
+    } : null;
     const msg = {
       id: uid('msg'),
       roomId,
@@ -493,12 +613,12 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       text: cleanText,
       imageUrl: cleanImage,
       replyTo: replyRef,
+      authorSnapshot: snapshot,
       createdAt: nowMs(),
     };
     db.messages.push(msg);
     await saveDatabase(db, false);
-    const author = db.users.find(u => u.id === req.userId);
-    res.json({ message: { ...msg, author: sanitizeUser(author) } });
+    res.json({ message: { ...msg, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } } });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Send failed' });
@@ -548,6 +668,10 @@ app.post('/api/messages/schedule', authMiddleware, async (req, res) => {
         imageUrl: typeof replyTo.imageUrl === 'string' ? replyTo.imageUrl.slice(0, 2048) : null,
       };
     }
+    const author = db.users.find(u => u.id === req.userId);
+    const snapshot = author ? {
+      id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || ''
+    } : null;
     const sm = {
       id: uid('sched'),
       roomId,
@@ -555,6 +679,7 @@ app.post('/api/messages/schedule', authMiddleware, async (req, res) => {
       text: cleanText,
       imageUrl: cleanImage,
       replyTo: replyRef,
+      authorSnapshot: snapshot,
       deliverAt: ts,
       createdAt: nowMs(),
     };
@@ -595,15 +720,17 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
       const author = db.users.find(u => u.id === p.userId);
       const comments = (p.comments || []).map(c => {
         const cu = db.users.find(u => u.id === c.userId);
-        return { ...c, author: cu ? sanitizeUser(cu) : { id: c.userId, displayName: 'Unknown', username: 'unknown' } };
+        const cAuth = cu ? sanitizeUser(cu) : (c.authorSnapshot || { id: c.userId, displayName: 'Member', username: (c.userId || 'm').slice(-6) });
+        return { ...c, author: cAuth };
       });
+      const pAuth = author ? sanitizeUser(author) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
       return {
         ...p,
         likes: p.likes || [],
         likeCount: (p.likes || []).length,
         comments,
         commentCount: comments.length,
-        author: author ? sanitizeUser(author) : { id: p.userId, displayName: 'Unknown', username: 'unknown' }
+        author: pAuth
       };
     });
   res.json({ posts: list });
@@ -616,6 +743,10 @@ app.post('/api/posts/create', authMiddleware, async (req, res) => {
     const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
     if (!cleanText && !cleanImage) return res.status(400).json({ error: 'Empty post' });
     const db = await fetchDatabase();
+    const author = db.users.find(u => u.id === req.userId);
+    const snapshot = author ? {
+      id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || ''
+    } : null;
     const post = {
       id: uid('post'),
       userId: req.userId,
@@ -623,12 +754,12 @@ app.post('/api/posts/create', authMiddleware, async (req, res) => {
       imageUrl: cleanImage,
       likes: [],
       comments: [],
+      authorSnapshot: snapshot,
       createdAt: nowMs(),
     };
     db.posts.push(post);
     await saveDatabase(db, false);
-    const author = db.users.find(u => u.id === req.userId);
-    res.json({ post: { ...post, likeCount: 0, commentCount: 0, author: sanitizeUser(author) } });
+    res.json({ post: { ...post, likeCount: 0, commentCount: 0, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } } });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Create post failed' });
@@ -659,16 +790,20 @@ app.post('/api/posts/comment', authMiddleware, async (req, res) => {
   const post = db.posts.find(p => p.id === postId);
   if (!post) return res.status(404).json({ error: 'Not found' });
   if (!Array.isArray(post.comments)) post.comments = [];
+  const author = db.users.find(u => u.id === req.userId);
+  const snapshot = author ? {
+    id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || ''
+  } : null;
   const comment = {
     id: uid('cmt'),
     userId: req.userId,
     text: cleanText,
+    authorSnapshot: snapshot,
     createdAt: nowMs(),
   };
   post.comments.push(comment);
   await saveDatabase(db, false);
-  const author = db.users.find(u => u.id === req.userId);
-  res.json({ comment: { ...comment, author: sanitizeUser(author) } });
+  res.json({ comment: { ...comment, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } } });
 });
 
 app.post('/api/posts/delete', authMiddleware, async (req, res) => {

@@ -2,21 +2,29 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#00a2ff" />
-<title>PRIV SPACA — Private Group Chat & Community</title>
+<title>PRIV SPACA — Private Chat & Community</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
-<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 <link rel="stylesheet" href="style.css" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2300a2ff'/%3E%3Cpath fill='%23fff' d='M14 32 50 14 42 50 32 36 14 32z'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300c6ff'/%3E%3Cstop offset='1' stop-color='%230072ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Cpath fill='%23fff' d='M14 32 50 14 42 50 32 36 14 32z'/%3E%3C/svg%3E" />
 </head>
-<body class="font-sans antialiased">
+<body>
+
+<!-- ====== SPLASH ====== -->
+<div id="splash" class="splash">
+  <div class="splash-logo">
+    <svg viewBox="0 0 64 64" width="44" height="44" class="plane-anim"><path fill="#fff" d="M14 32 50 14 42 50 32 36 14 32z"/></svg>
+  </div>
+  <div class="splash-name">PRIV SPACA</div>
+  <div class="spinner"></div>
+</div>
 
 <!-- ====== AUTH SHELL ====== -->
-<section id="authShell" class="auth-shell">
+<section id="authShell" class="auth-shell hidden">
   <div class="auth-card">
     <div class="auth-brand">
       <div class="logo-badge logo-pulse">
@@ -26,78 +34,82 @@
       </div>
       <div>
         <h1 class="brand-name text-anim">PRIV SPACA</h1>
-        <p class="brand-tag">Private chat. Real community.</p>
+        <p class="brand-tag">Private chat · Real community</p>
       </div>
     </div>
 
-    <!-- Tabs -->
     <div class="auth-tabs">
       <button data-auth-tab="login" class="auth-tab active">Sign in</button>
-      <button data-auth-tab="signup" class="auth-tab">Create account</button>
+      <button data-auth-tab="signup" class="auth-tab">Sign up</button>
       <button data-auth-tab="reset" class="auth-tab">Forgot</button>
     </div>
 
-    <!-- Sign in -->
     <form id="loginForm" class="auth-form active" autocomplete="on">
       <label class="field">
         <span>Email or username</span>
-        <input name="identifier" type="text" required minlength="3" />
+        <input name="identifier" type="text" required minlength="3" placeholder="you@example.com" />
       </label>
       <label class="field">
         <span>Password</span>
-        <input name="password" type="password" required minlength="6" />
+        <input name="password" type="password" required minlength="6" placeholder="Your password" />
       </label>
       <button type="submit" class="primary-btn">Sign in</button>
       <div class="auth-error" data-error></div>
     </form>
 
-    <!-- Sign up -->
     <form id="signupForm" class="auth-form" autocomplete="on">
       <div class="row-2">
         <label class="field">
           <span>Display name</span>
-          <input name="displayName" type="text" required minlength="1" maxlength="60" />
+          <input name="displayName" type="text" required minlength="1" maxlength="60" placeholder="Your name" />
         </label>
         <label class="field">
           <span>Username</span>
-          <input name="username" type="text" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9_]{3,24}" />
+          <input name="username" type="text" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9_]{3,24}" placeholder="username" />
         </label>
       </div>
       <label class="field">
         <span>Email</span>
-        <input name="email" type="email" required />
+        <input name="email" type="email" required placeholder="you@example.com" />
       </label>
-      <div class="row-2">
-        <label class="field">
-          <span>Password (min 6)</span>
-          <input name="password" type="password" required minlength="6" />
-        </label>
-        <label class="field">
-          <span>4-digit Security PIN</span>
-          <input name="pin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required />
-        </label>
+      <label class="field">
+        <span>Password</span>
+        <input name="password" type="password" required minlength="6" placeholder="At least 6 characters" />
+      </label>
+      <div class="field">
+        <span>4-digit Security PIN</span>
+        <div class="pin-input" data-pin-group="signup">
+          <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="0" />
+          <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="1" />
+          <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="2" />
+          <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="3" />
+        </div>
+        <input name="pin" type="hidden" required pattern="[0-9]{4}" />
       </div>
       <button type="submit" class="primary-btn">Create account</button>
-      <p class="auth-hint">Your PIN unlocks password recovery. Keep it secret.</p>
+      <p class="auth-hint">Your PIN is the only way to recover a forgotten password. Memorize it.</p>
       <div class="auth-error" data-error></div>
     </form>
 
-    <!-- Reset -->
     <form id="resetForm" class="auth-form" autocomplete="off">
       <label class="field">
         <span>Email or username</span>
-        <input name="identifier" type="text" required minlength="3" />
+        <input name="identifier" type="text" required minlength="3" placeholder="Your account" />
       </label>
-      <div class="row-2">
-        <label class="field">
-          <span>4-digit PIN</span>
-          <input name="pin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required />
-        </label>
-        <label class="field">
-          <span>New password</span>
-          <input name="newPassword" type="password" required minlength="6" />
-        </label>
+      <div class="field">
+        <span>4-digit PIN</span>
+        <div class="pin-input" data-pin-group="reset">
+          <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="0" />
+          <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="1" />
+          <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="2" />
+          <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="3" />
+        </div>
+        <input name="pin" type="hidden" required pattern="[0-9]{4}" />
       </div>
+      <label class="field">
+        <span>New password</span>
+        <input name="newPassword" type="password" required minlength="6" placeholder="At least 6 characters" />
+      </label>
       <button type="submit" class="primary-btn">Reset password</button>
       <div class="auth-error" data-error></div>
     </form>
@@ -107,16 +119,15 @@
 
 <!-- ====== APP SHELL ====== -->
 <section id="appShell" class="app-shell hidden">
-  <!-- Top bar -->
   <header class="topbar">
     <div class="brand-row">
       <div class="logo-badge sm"><svg viewBox="0 0 64 64" width="22" height="22"><path fill="#fff" d="M14 32 50 14 42 50 32 36 14 32z"/></svg></div>
       <strong class="brand-name sm">PRIV SPACA</strong>
     </div>
     <nav class="tab-nav">
-      <button data-tab="chat" class="tab-btn active"><i data-lucide="message-circle"></i><span>Chat</span></button>
-      <button data-tab="feed" class="tab-btn"><i data-lucide="newspaper"></i><span>Feed</span></button>
-      <button data-tab="profile" class="tab-btn"><i data-lucide="user"></i><span>Profile</span></button>
+      <button data-tab="chat" class="tab-btn active" title="Chat"><i data-lucide="message-circle"></i><span>Chat</span></button>
+      <button data-tab="feed" class="tab-btn" title="Feed"><i data-lucide="newspaper"></i><span>Feed</span></button>
+      <button data-tab="profile" class="tab-btn" title="Profile"><i data-lucide="user"></i><span>Profile</span></button>
     </nav>
     <div class="me-chip">
       <span id="meAvatar" class="avatar sm"></span>
@@ -141,9 +152,13 @@
 
     <section class="chat-pane">
       <div class="chat-header">
-        <div>
-          <div id="chatTitle" class="chat-title">#general-group</div>
-          <div id="chatSubtitle" class="chat-subtitle muted">The main lounge for everyone in PRIV SPACA.</div>
+        <div class="chat-header-left">
+          <button id="backToRoomsBtn" class="ghost-btn back-btn" title="Back"><i data-lucide="menu"></i></button>
+          <span id="chatAvatar" class="avatar md" style="display:none"></span>
+          <div style="min-width:0">
+            <div id="chatTitle" class="chat-title">#general-group</div>
+            <div id="chatSubtitle" class="chat-subtitle muted">The main lounge for everyone in PRIV SPACA.</div>
+          </div>
         </div>
         <div class="chat-header-actions">
           <button id="scheduleBtn" class="ghost-btn" title="Scheduled messages"><i data-lucide="clock"></i></button>
@@ -152,11 +167,13 @@
 
       <div id="messagesScroll" class="messages-scroll">
         <div id="messagesList" class="messages-list"></div>
-        <button id="scrollBottomBtn" class="scroll-bottom-btn hidden"><i data-lucide="arrow-down"></i> New messages</button>
+        <button id="scrollBottomBtn" class="scroll-bottom-btn hidden"><i data-lucide="arrow-down"></i> New</button>
       </div>
 
       <div id="typingIndicator" class="typing-indicator hidden">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="typing-bubble">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>
         <span id="typingText"></span>
       </div>
 
@@ -182,7 +199,7 @@
         <button type="button" id="attachBtn" class="icon-btn" title="Attach image"><i data-lucide="image"></i></button>
         <input type="file" id="fileInput" accept="image/*" hidden />
         <button type="button" id="scheduleOpenBtn" class="icon-btn" title="Schedule"><i data-lucide="calendar-clock"></i></button>
-        <textarea id="composerInput" placeholder="Write a message…" rows="1" maxlength="4000"></textarea>
+        <textarea id="composerInput" placeholder="Message…" rows="1" maxlength="4000"></textarea>
         <button type="submit" id="sendBtn" class="send-btn" title="Send"><i data-lucide="send"></i></button>
       </form>
     </section>
