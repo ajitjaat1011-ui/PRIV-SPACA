@@ -1,1 +1,35 @@
-{"users":[],"messages":[{"id":"msg_mr1awgeh_hh5ie6e","roomId":"general-group","userId":"usr_mr1aw33g_wk4oix9","text":"Hi","imageUrl":null,"replyTo":null,"authorSnapshot":null,"createdAt":1782863509769}],"scheduledMessages":[],"posts":[],"notifications":[],"rtcSignals":[],"typing":{},"heartbeat":{},"meta":{"updatedAt":1782863510557,"storage":"github-merge-v3"}}
+{
+  "users": [
+    {
+      "id": "usr_admin_arvind_1011",
+      "email": "ajitjaat1011@gmail.com",
+      "username": "Arvindjaat1011",
+      "displayName": "Arvindjaat",
+      "bio": "",
+      "photoUrl": "",
+      "passwordHash": "$2a$12$oxxSPZgT5TIR6PruEOrh7.GD1OtnrA3rr2JMNeyqJCPxwoaRoP6GS",
+      "pinHash": "$2a$12$E38Y065TP3PH7qVx25SL0uVOaQlUHN.y412RgbxIzMBdeihLacjjq",
+      "followers": [],
+      "following": [],
+      "blocked": [],
+      "termsAccepted": true,
+      "termsVersion": "1.0",
+      "termsAcceptedAt": 1782863975391,
+      "createdAt": 1782863975391,
+      "role": "owner",
+      "protected": true
+    }
+  ],
+  "messages": [],
+  "scheduledMessages": [],
+  "posts": [],
+  "notifications": [],
+  "typing": {},
+  "heartbeat": {},
+  "rtcSignals": [],
+  "meta": {
+    "resetAt": 1782863975391,
+    "resetReason": "fresh no-admin owner-protected reset",
+    "storage": "github-merge-v7"
+  }
+}
