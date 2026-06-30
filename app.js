@@ -195,15 +195,84 @@ function toast(msg, kind = '') {
   t.textContent = msg;
   t.className = 'toast ' + kind;
   t.classList.remove('hidden');
+  // Motion One pop animation
+  if (window.Motion && window.Motion.animate) {
+    try {
+      window.Motion.animate(t,
+        { opacity: [0, 1], transform: ['translate(-50%, 14px) scale(.94)', 'translate(-50%, 0) scale(1)'] },
+        { duration: 0.32, easing: [0.34, 1.4, 0.64, 1] }
+      );
+    } catch (_) {}
+  }
   void t.offsetWidth;
   clearTimeout(toast._tm);
-  toast._tm = setTimeout(() => t.classList.add('hidden'), 3200);
+  toast._tm = setTimeout(() => {
+    if (window.Motion && window.Motion.animate) {
+      try {
+        window.Motion.animate(t,
+          { opacity: [1, 0], transform: ['translate(-50%, 0) scale(1)', 'translate(-50%, 8px) scale(.96)'] },
+          { duration: 0.22, easing: 'ease-in' }
+        ).finished.then(() => t.classList.add('hidden')).catch(() => t.classList.add('hidden'));
+      } catch (_) { t.classList.add('hidden'); }
+    } else {
+      t.classList.add('hidden');
+    }
+  }, 3200);
 }
 
 function refreshIcons() {
   if (window.lucide && typeof window.lucide.createIcons === 'function') {
     try { window.lucide.createIcons(); } catch (_) {}
   }
+}
+
+/* ====== Motion One animation helpers ====== */
+// Motion One exposes a global `Motion` object (UMD build). Falls back silently to CSS if unavailable.
+const M = (window.Motion && (window.Motion.animate || (window.Motion.default && window.Motion.default.animate)))
+  ? window.Motion
+  : null;
+const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function motionAnimate(el, keyframes, opts) {
+  if (!el || prefersReducedMotion) return;
+  if (!M) return; // graceful fallback to CSS animations
+  try {
+    const animate = M.animate;
+    return animate(el, keyframes, opts);
+  } catch (_) { /* swallow */ }
+}
+
+function springIn(el, opts = {}) {
+  motionAnimate(el,
+    { opacity: [0, 1], transform: ['translateY(8px) scale(.96)', 'translateY(0) scale(1)'] },
+    Object.assign({ duration: 0.32, easing: [0.2, 0.8, 0.2, 1] }, opts)
+  );
+}
+
+function popIn(el, opts = {}) {
+  motionAnimate(el,
+    { transform: ['scale(.5)', 'scale(1.12)', 'scale(1)'], opacity: [0, 1, 1] },
+    Object.assign({ duration: 0.36, easing: [0.34, 1.56, 0.64, 1] }, opts)
+  );
+}
+
+function slideUp(el, opts = {}) {
+  motionAnimate(el,
+    { opacity: [0, 1], transform: ['translateY(28px)', 'translateY(0)'] },
+    Object.assign({ duration: 0.34, easing: [0.2, 0.85, 0.15, 1] }, opts)
+  );
+}
+
+function staggerIn(els, opts = {}) {
+  if (!els || !els.length) return;
+  els.forEach((el, i) => springIn(el, { delay: (opts.delayPer || 0.04) * i }));
+}
+
+function pulseEl(el, opts = {}) {
+  motionAnimate(el,
+    { transform: ['scale(1)', 'scale(1.18)', 'scale(1)'] },
+    Object.assign({ duration: 0.5, easing: 'ease-out' }, opts)
+  );
 }
 
 // Resolve any author-like object into a renderable display object (no "Unknown")
@@ -347,6 +416,9 @@ function logout(silent) {
   State.messages = [];
   State.members = [];
   State.posts = [];
+  _previousMessageIds = new Set();
+  _previousPostIds = new Set();
+  _storiesRendered = false;
   localStorage.removeItem('ps_token');
   localStorage.removeItem('ps_user');
   showAuth();
@@ -510,14 +582,19 @@ function bindTabs() {
 
 function switchTab(tab) {
   State.currentTab = tab;
-  $$('.bn-btn[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $$('.bn-btn[data-tab]').forEach(b => {
+    const active = b.dataset.tab === tab;
+    b.classList.toggle('active', active);
+    if (active) popIn(b, { duration: 0.25 });
+  });
   $$('.view').forEach(v => v.classList.remove('active'));
-  if (tab === 'feed') { $('#feedView').classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
-  if (tab === 'search') { $('#searchView').classList.add('active'); loadMembers(); renderSearch(''); $('#searchInput').focus(); }
-  if (tab === 'chat') { $('#chatView').classList.add('active'); markTabSeen('chat'); }
-  if (tab === 'profile') $('#profileView').classList.add('active');
+  let activeView = null;
+  if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
+  if (tab === 'search') { activeView = $('#searchView'); activeView.classList.add('active'); loadMembers(); renderSearch(''); setTimeout(() => $('#searchInput').focus(), 100); }
+  if (tab === 'chat') { activeView = $('#chatView'); activeView.classList.add('active'); markTabSeen('chat'); }
+  if (tab === 'profile') { activeView = $('#profileView'); activeView.classList.add('active'); }
+  if (activeView) springIn(activeView, { duration: 0.28 });
   refreshIcons();
-  // Refresh dots after switch (the just-opened tab loses its dot)
   if (typeof updateNotifDots === 'function') updateNotifDots();
 }
 
@@ -575,6 +652,8 @@ function openDM(user) {
   renderAvatar(ca, user, { showStatus: true, online: !!user.online });
   $$('#roomsList .room-item').forEach(r => r.classList.remove('active'));
   $('#chatView').classList.remove('show-rooms');
+  // Reset message-id memo so all messages in the new room animate-in once
+  _previousMessageIds = new Set();
   renderMembers();
   loadMessages(true);
 }
@@ -588,9 +667,10 @@ function bindRooms() {
       State.currentRoom = { id, kind: 'group', target: null, label: '#' + id };
       $$('#roomsList .room-item').forEach(x => x.classList.toggle('active', x === r));
       $('#chatTitle').textContent = '#' + id;
-      $('#chatSubtitle').textContent = 'The main lounge for everyone in PRIV SPACA.';
+      $('#chatSubtitle').textContent = 'Tap members to start a private chat';
       $('#chatAvatar').style.display = 'none';
       $('#chatView').classList.remove('show-rooms');
+      _previousMessageIds = new Set();
       renderMembers();
       loadMessages(true);
     });
@@ -617,10 +697,15 @@ async function loadMessages(scrollEnd) {
   }
 }
 
+let _previousMessageIds = new Set();
 function renderMessages(forceScroll) {
   const list = $('#messagesList');
   const scroller = $('#messagesScroll');
   const wasAtBottom = lastMessagesScrollAtBottom;
+  const currentIds = new Set(State.messages.map(m => m.id));
+  const newOnes = new Set();
+  currentIds.forEach(id => { if (!_previousMessageIds.has(id)) newOnes.add(id); });
+  _previousMessageIds = currentIds;
   list.innerHTML = '';
   if (State.messages.length === 0) {
     const empty = document.createElement('div');
@@ -646,7 +731,16 @@ function renderMessages(forceScroll) {
       lastSender = null;
     }
     const grouped = (lastSender === m.userId);
-    list.appendChild(renderMessage(m, meId, grouped));
+    const node = renderMessage(m, meId, grouped);
+    list.appendChild(node);
+    // Only animate truly new messages (not the entire list on every poll)
+    if (newOnes.has(m.id)) {
+      const fromX = (m.userId === meId) ? 16 : -12;
+      motionAnimate(node,
+        { opacity: [0, 1], transform: [`translate(${fromX}px, 6px) scale(.96)`, 'translate(0,0) scale(1)'] },
+        { duration: 0.32, easing: [0.2, 0.85, 0.2, 1] }
+      );
+    }
     lastSender = m.userId;
   });
   refreshIcons();
@@ -1042,8 +1136,16 @@ async function pollNotifications() {
 function updateNotifDots() {
   const showChat = (_lastNotif.chatUnread > 0) && (State.currentTab !== 'chat');
   const showFeed = (_lastNotif.feedUnread > 0) && (State.currentTab !== 'feed');
-  $$('[data-dot="chat"], [data-dot="chat-top"]').forEach(d => d.classList.toggle('hidden', !showChat));
-  $$('[data-dot="feed"], [data-dot="feed-top"]').forEach(d => d.classList.toggle('hidden', !showFeed));
+  $$('[data-dot="chat"], [data-dot="chat-top"]').forEach(d => {
+    const wasHidden = d.classList.contains('hidden');
+    d.classList.toggle('hidden', !showChat);
+    if (wasHidden && showChat) popIn(d, { duration: 0.32 });
+  });
+  $$('[data-dot="feed"], [data-dot="feed-top"]').forEach(d => {
+    const wasHidden = d.classList.contains('hidden');
+    d.classList.toggle('hidden', !showFeed);
+    if (wasHidden && showFeed) popIn(d, { duration: 0.32 });
+  });
 }
 
 // ====== Feed ======
@@ -1062,6 +1164,7 @@ async function loadPosts() {
 
 // "Stories" — synthesized from the active members directory.
 // Each member gets a story cell; clicking opens a story viewer.
+let _storiesRendered = false;
 function renderStoriesRail() {
   const rail = $('#storiesRail');
   if (!rail) return;
@@ -1078,6 +1181,10 @@ function renderStoriesRail() {
     .filter(m => m.id !== meId)
     .sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
   others.forEach(m => rail.appendChild(buildStoryCell(m, false)));
+  if (!_storiesRendered) {
+    _storiesRendered = true;
+    staggerIn([...rail.children], { delayPer: 0.05 });
+  }
 }
 
 function buildStoryCell(user, isMe) {
@@ -1149,9 +1256,15 @@ function postDateLabel(ts) {
   return new Date(ts).toLocaleDateString([], { month: 'long', day: 'numeric' }).toUpperCase();
 }
 
+let _previousPostIds = new Set();
 function renderPosts() {
   renderStoriesRail();
   const list = $('#feedList');
+  const currentIds = new Set(State.posts.map(p => p.id));
+  const newOnes = new Set();
+  currentIds.forEach(id => { if (!_previousPostIds.has(id)) newOnes.add(id); });
+  const isFirstRender = _previousPostIds.size === 0;
+  _previousPostIds = currentIds;
   list.innerHTML = '';
   if (State.posts.length === 0) {
     const e = document.createElement('div');
@@ -1162,8 +1275,18 @@ function renderPosts() {
       <div class="sub">Share the first post with the community!</div>
     `;
     list.appendChild(e);
+    springIn(e);
   }
-  State.posts.forEach(p => list.appendChild(renderPost(p)));
+  State.posts.forEach((p, idx) => {
+    const card = renderPost(p);
+    list.appendChild(card);
+    if (isFirstRender) {
+      // Stagger the initial render
+      springIn(card, { delay: 0.04 * Math.min(idx, 6) });
+    } else if (newOnes.has(p.id)) {
+      slideUp(card);
+    }
+  });
   refreshIcons();
 }
 
@@ -1227,6 +1350,10 @@ function renderPost(p) {
         burst.classList.remove('show');
         void burst.offsetWidth;
         burst.classList.add('show');
+        motionAnimate(burst,
+          { opacity: [0, 1, 1, 0], transform: ['translate(-50%, -50%) scale(.4)', 'translate(-50%, -50%) scale(1.15)', 'translate(-50%, -50%) scale(1.0)', 'translate(-50%, -50%) scale(1.25)'] },
+          { duration: 0.85, easing: [0.2, 0.85, 0.2, 1] }
+        );
         if (!Array.isArray(p.likes) || !p.likes.includes(meId)) {
           toggleLike(p, card);
         }
@@ -1508,9 +1635,18 @@ function openCommentsSheet(p) {
   });
   renderAvatar($('#commentsMeAvatar'), State.user);
   $('#commentsInput').value = '';
-  $('#commentsSheet').classList.remove('hidden');
+  const sheet = $('#commentsSheet');
+  sheet.classList.remove('hidden');
+  const card = sheet.querySelector('.sheet-card');
+  if (card) motionAnimate(card,
+    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
+    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
+  );
+  // Stagger the comments in
+  const items = sheet.querySelectorAll('.comments-sheet-list li');
+  if (items.length) staggerIn([...items].slice(0, 8), { delayPer: 0.03 });
   refreshIcons();
-  setTimeout(() => $('#commentsInput').focus(), 200);
+  setTimeout(() => $('#commentsInput').focus(), 220);
 }
 
 function closeCommentsSheet() {
@@ -1601,6 +1737,11 @@ function openStoryFor(user) {
     content.appendChild(div);
   }
   v.classList.remove('hidden');
+  const contentEl = $('#storyContent');
+  if (contentEl) motionAnimate(contentEl,
+    { opacity: [0, 1], transform: ['scale(.94)', 'scale(1)'] },
+    { duration: 0.32, easing: [0.2, 0.85, 0.2, 1] }
+  );
   refreshIcons();
   clearTimeout(storyTimer);
   storyTimer = setTimeout(closeStory, 5100);
@@ -1844,7 +1985,13 @@ function openLightbox(url, uploaderName) {
   $('#lightboxImg').src = url;
   $('#lightboxUploader').textContent = uploaderName ? ('Shared by ' + uploaderName) : '';
   $('#lightboxDownload').href = url;
-  $('#lightbox').classList.remove('hidden');
+  const lb = $('#lightbox');
+  lb.classList.remove('hidden');
+  const inner = lb.querySelector('.lightbox-inner');
+  if (inner) motionAnimate(inner,
+    { opacity: [0, 1], transform: ['scale(.92)', 'scale(1)'] },
+    { duration: 0.28, easing: [0.2, 0.85, 0.2, 1] }
+  );
   refreshIcons();
 }
 
