@@ -93,7 +93,7 @@ async function repoRead() {
     if (!r.ok) { const txt = await r.text(); console.error('[repoRead]', r.status, txt); return { _httpError: r.status, txt }; }
     const d = await r.json();
     ghFileSha = d.sha || null;
-    if (!d.content) return null;
+    if (!d.content) return { _err: 'No content in response', _d: JSON.stringify(d).slice(0, 200) };
     const cleanB64 = d.content.replace(/\n/g, ''); const binStr = atob(cleanB64); const bytes = new Uint8Array(binStr.length); for(let i=0; i<binStr.length; i++) bytes[i] = binStr.charCodeAt(i); const dec = new TextDecoder('utf8').decode(bytes);
     return safeJson(dec, null);
   } catch (e) { console.error('[repoRead]', e.message); return { _err: e.message, _stack: e.stack }; }
