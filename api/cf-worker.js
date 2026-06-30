@@ -965,6 +965,7 @@ app.get('/api/user/typing', requireAuth, async (c) => {
 
 // ---------- Messages ----------
 app.get('/api/messages', requireAuth, async (c) => {
+  cacheTimestamp = 0; // force fresh GitHub read for chat reliability across Cloudflare isolates
   const roomId = normalizeRoomId(c.req.query('roomId') || 'general-group', c.get('userId'));
   if (roomId.startsWith('dm:')) {
     const parts = roomId.slice(3).split(':');
@@ -1138,6 +1139,7 @@ app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
 
 // ---------- Notifications ----------
 app.get('/api/notifications', requireAuth, async (c) => {
+  cacheTimestamp = 0; // force fresh read so badges/notifications appear immediately
   const db = await fetchDatabase();
   const myId = c.get('userId');
   const mine = (db.notifications || []).filter(n => n.userId === myId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
@@ -1249,6 +1251,7 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
 
 // ---------- Posts ----------
 app.get('/api/posts', requireAuth, async (c) => {
+  cacheTimestamp = 0; // force fresh feed read after posts/likes/comments
   const db = await fetchDatabase();
   const myId = c.get('userId');
   const me = db.users.find(u => u.id === myId);
@@ -1331,6 +1334,7 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
 });
 
 app.get('/api/rtc/signals', requireAuth, async (c) => {
+  cacheTimestamp = 0; // call signaling must be immediate
   const since = Number(c.req.query('since') || 0) || 0;
   const myId = c.get('userId');
   const db = await fetchDatabase();
