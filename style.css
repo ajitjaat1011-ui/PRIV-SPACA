@@ -1,13 +1,14 @@
 /* ===== PRIV SPACA — Instagram-grade Sky Blue UI ===== */
-:root{
+:root, [data-theme="light"] {
   --bg:#fafbfd;
   --bg-2:#ffffff;
   --bg-soft:#f0f6fa;
   --accent:#00a2ff;
   --accent-2:#0089d9;
-  --accent-grad:linear-gradient(135deg,#00c6ff 0%,#0072ff 100%);
-  --accent-soft:rgba(0,162,255,.10);
-  --accent-softer:rgba(0,162,255,.05);
+  --accent-rgb:0,162,255;
+  --accent-grad:linear-gradient(135deg, color-mix(in srgb, var(--accent) 60%, #ffffff 0%) 0%, color-mix(in srgb, var(--accent) 100%, #003a66 25%) 100%);
+  --accent-soft:rgba(var(--accent-rgb),.10);
+  --accent-softer:rgba(var(--accent-rgb),.05);
   --text:#1a2733;
   --text-2:#3a4d5c;
   --muted:#8696a3;
@@ -25,6 +26,48 @@
   --radius-sm:12px;
   --radius-xs:10px;
   --bubble-radius:18px;
+  --bubble-mine-bg: var(--accent-grad);
+  --bubble-mine-fg: #ffffff;
+}
+
+[data-theme="dark"] {
+  --bg:#0b1620;
+  --bg-2:#152030;
+  --bg-soft:#1c2839;
+  --text:#e8edf2;
+  --text-2:#a9b4c0;
+  --muted:#7a8896;
+  --muted-2:#4d5c6c;
+  --line:#243245;
+  --line-2:#2e3e54;
+  --shadow-xs:0 1px 2px rgba(0,0,0,.4);
+  --shadow-sm:0 1px 3px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.3);
+  --shadow:0 4px 16px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+  --shadow-lg:0 24px 60px rgba(0,0,0,.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#0b1620;
+    --bg-2:#152030;
+    --bg-soft:#1c2839;
+    --text:#e8edf2;
+    --text-2:#a9b4c0;
+    --muted:#7a8896;
+    --muted-2:#4d5c6c;
+    --line:#243245;
+    --line-2:#2e3e54;
+    --shadow-xs:0 1px 2px rgba(0,0,0,.4);
+    --shadow-sm:0 1px 3px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.3);
+    --shadow:0 4px 16px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+    --shadow-lg:0 24px 60px rgba(0,0,0,.6);
+  }
+}
+
+/* Smooth transitions when switching themes */
+body, .post-card, .composer-card, .topbar, .bottom-nav, .chat-pane, .sheet-card, .modal-card,
+.ig-action-btn, .search-bar, .composer textarea {
+  transition: background-color .25s ease, color .25s ease, border-color .25s ease;
 }
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -906,6 +949,38 @@ img{user-select:none;-webkit-user-drag:none}
 .more-menu .item.danger{color:var(--red);font-weight:700}
 .more-menu .item.cancel{font-weight:700;color:var(--text)}
 
+/* ===== Settings strip (in profile) ===== */
+.settings-strip{
+  display:flex;flex-direction:column;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  background:var(--bg-2);margin-top:8px;
+}
+.settings-row{
+  display:flex;align-items:center;gap:12px;padding:14px 18px;
+  background:transparent;border:0;color:var(--text);font:inherit;cursor:pointer;
+  border-bottom:1px solid var(--line);width:100%;text-align:left;
+  font-weight:600;font-size:14px;
+}
+.settings-row:last-child{border-bottom:0}
+.settings-row:hover{background:var(--bg-soft)}
+.settings-row i{width:20px;height:20px;color:var(--text-2);flex-shrink:0}
+.settings-row .chev{margin-left:auto;color:var(--muted)}
+.settings-row > span{flex:1}
+.theme-toggle{display:flex;background:var(--bg-soft);border-radius:8px;padding:3px;gap:2px}
+.theme-toggle .theme-opt{
+  background:transparent;border:0;cursor:pointer;color:var(--muted);
+  width:32px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:11px;
+}
+.theme-toggle .theme-opt i{width:14px;height:14px}
+.theme-toggle .theme-opt.active{background:var(--bg-2);color:var(--accent);box-shadow:var(--shadow-xs)}
+.color-picker{display:flex;gap:8px}
+.color-swatch{
+  width:24px;height:24px;border-radius:50%;border:2px solid transparent;cursor:pointer;
+  transition:transform .15s, border-color .15s;
+}
+.color-swatch:hover{transform:scale(1.15)}
+.color-swatch.active{border-color:var(--text);transform:scale(1.1)}
+
 /* ===== Profile view (Instagram-style) ===== */
 .profile-view{background:var(--bg)}
 .profile-wrap{
@@ -1135,6 +1210,16 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .toast.error{background:var(--red)}
 .toast.success{background:var(--green)}
+.toast.with-undo{
+  display:flex;align-items:center;gap:14px;padding:10px 14px 10px 18px;
+  bottom:78px; /* keep above the bottom-nav */
+}
+.toast .toast-undo{
+  background:transparent;border:0;color:#7ed5ff;font-weight:800;font-size:13px;
+  letter-spacing:.6px;cursor:pointer;padding:6px 10px;border-radius:8px;
+  font-family:inherit;
+}
+.toast .toast-undo:hover{background:rgba(255,255,255,.1);color:#fff}
 
 /* ===== Splash / loader ===== */
 .splash{
