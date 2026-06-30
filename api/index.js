@@ -21,6 +21,99 @@ app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
+// ---------- Security headers (lightweight, no external deps) ----------
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
+// ---------- Rate limiting (in-memory, per IP) ----------
+const _rateBuckets = new Map(); // key -> { count, resetAt }
+function rateLimit({ key, limit, windowMs }) {
+  const now = Date.now();
+  let b = _rateBuckets.get(key);
+  if (!b || b.resetAt < now) {
+    b = { count: 0, resetAt: now + windowMs };
+    _rateBuckets.set(key, b);
+  }
+  b.count++;
+  return { allowed: b.count <= limit, remaining: Math.max(0, limit - b.count), resetAt: b.resetAt };
+}
+function clientIp(req) {
+  return (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim()
+      || req.headers['x-real-ip']
+      || req.socket.remoteAddress
+      || 'unknown';
+}
+// Periodically prune expired buckets
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _rateBuckets) if (v.resetAt < now) _rateBuckets.delete(k);
+}, 60000).unref?.();
+
+// Global throttle: 120 req/min per IP for all /api/* routes
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api')) return next();
+  const ip = clientIp(req);
+  const r = rateLimit({ key: 'global:' + ip, limit: 120, windowMs: 60_000 });
+  res.setHeader('X-RateLimit-Limit', '120');
+  res.setHeader('X-RateLimit-Remaining', String(r.remaining));
+  if (!r.allowed) {
+    res.setHeader('Retry-After', String(Math.ceil((r.resetAt - Date.now())/1000)));
+    return res.status(429).json({ error: 'Too many requests. Please slow down.' });
+  }
+  next();
+});
+
+// Auth-specific rate limit: 10 attempts / 15 min per IP for signup, login, reset
+function authRateLimit(req, res, next) {
+  const ip = clientIp(req);
+  const key = 'auth:' + ip + ':' + req.path;
+  const r = rateLimit({ key, limit: 10, windowMs: 15 * 60_000 });
+  if (!r.allowed) {
+    res.setHeader('Retry-After', String(Math.ceil((r.resetAt - Date.now())/1000)));
+    return res.status(429).json({ error: 'Too many auth attempts. Try again in 15 minutes.' });
+  }
+  next();
+}
+
+// Per-account brute-force tracker: 5 wrong passwords in 5 min → 15 min lockout
+const _loginFails = new Map(); // userId -> { count, firstAt, lockedUntil }
+function checkAccountLock(userId) {
+  const rec = _loginFails.get(userId);
+  if (!rec) return { locked: false };
+  const now = Date.now();
+  if (rec.lockedUntil && rec.lockedUntil > now) {
+    return { locked: true, remaining: rec.lockedUntil - now };
+  }
+  return { locked: false };
+}
+function recordLoginFail(userId) {
+  const now = Date.now();
+  let rec = _loginFails.get(userId);
+  if (!rec || (now - rec.firstAt) > 5 * 60_000) {
+    rec = { count: 0, firstAt: now };
+    _loginFails.set(userId, rec);
+  }
+  rec.count++;
+  if (rec.count >= 5) {
+    rec.lockedUntil = now + 15 * 60_000;
+  }
+}
+function clearLoginFails(userId) { _loginFails.delete(userId); }
+
+// Sanitize text inputs (strip control chars, collapse excessive whitespace)
+function sanitizeText(s, maxLen = 4000) {
+  if (typeof s !== 'string') return '';
+  return s
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')  // strip control chars
+    .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '')        // strip zero-width chars (anti-impersonation)
+    .slice(0, maxLen);
+}
+
 // ---------- Configuration ----------
 const JWT_SECRET = process.env.JWT_SECRET || 'priv-spaca-dev-secret-change-me-in-production';
 const JWT_EXPIRES = '7d';
@@ -396,14 +489,27 @@ app.get('/api/diag', async (req, res) => {
 });
 
 // ---------- Auth Routes ----------
-app.post('/api/auth/signup', async (req, res) => {
+app.post('/api/auth/signup', authRateLimit, async (req, res) => {
   try {
-    const { email, username, displayName, password, pin } = req.body || {};
+    const { email, username, displayName, password, pin, termsAccepted, termsVersion } = req.body || {};
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Invalid email' });
     if (!isValidUsername(username)) return res.status(400).json({ error: 'Username must be 3-24 chars (letters, numbers, _)' });
-    if (!displayName || displayName.length < 1 || displayName.length > 60) return res.status(400).json({ error: 'Display name required (1-60 chars)' });
+    const cleanDN = sanitizeText(displayName || '', 60).trim();
+    if (!cleanDN || cleanDN.length < 1) return res.status(400).json({ error: 'Display name required' });
     if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (password.length > 128) return res.status(400).json({ error: 'Password too long (max 128)' });
     if (!isValidPin(pin)) return res.status(400).json({ error: 'PIN must be 4 digits' });
+    // Reject super-weak PINs that account for huge brute-force surface (0000, 1234, 1111, etc.)
+    const weakPins = new Set([
+      '0000','1111','2222','3333','4444','5555','6666','7777','8888','9999',
+      '1234','4321','0123','2580','1212','1313','1010','0101','1122','1221',
+      '2024','2025','2026','2027','0007','1357','2468','9876','6789',
+    ]);
+    if (weakPins.has(pin)) return res.status(400).json({ error: 'Please choose a less obvious PIN' });
+    // Require terms acceptance
+    if (termsAccepted !== true) {
+      return res.status(400).json({ error: 'You must accept the Terms & Community Guidelines.' });
+    }
 
     const db = await fetchDatabase();
     const emailLower = email.toLowerCase();
@@ -415,25 +521,33 @@ app.post('/api/auth/signup', async (req, res) => {
     if (db.users.some(u => u.username.toLowerCase() === usernameLower)) {
       return res.status(409).json({ error: 'Username already taken' });
     }
+    // Reserve some usernames to prevent impersonation of system roles
+    const reserved = new Set(['admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root']);
+    if (reserved.has(usernameLower)) return res.status(403).json({ error: 'That username is reserved' });
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    const pinHash = await bcrypt.hash(pin, 10);
+    const passwordHash = await bcrypt.hash(password, 12);  // bumped from 10 → 12 rounds
+    const pinHash = await bcrypt.hash(pin, 12);
 
     const newUser = {
       id: uid('usr'),
-      email,
+      email: emailLower,                            // normalize stored email
       username,
-      displayName,
+      displayName: cleanDN,
       bio: '',
       photoUrl: '',
       passwordHash,
       pinHash,
+      followers: [],
+      following: [],
+      blocked: [],
+      termsAccepted: true,
+      termsVersion: String(termsVersion || '1.0'),
+      termsAcceptedAt: nowMs(),
       createdAt: nowMs(),
     };
     db.users.push(newUser);
     const persisted = await saveDatabase(db, false);
     if (isPersistConfigured() && !persisted) {
-      // Roll back the in-memory addition to keep state consistent
       const idx = db.users.findIndex(u => u.id === newUser.id);
       if (idx !== -1) db.users.splice(idx, 1);
       console.error('[signup] persistence failed for', newUser.username);
@@ -448,16 +562,31 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authRateLimit, async (req, res) => {
   try {
     const { identifier, password } = req.body || {};
     if (!identifier || !password) return res.status(400).json({ error: 'Missing credentials' });
+    if (typeof password !== 'string' || password.length > 128) return res.status(400).json({ error: 'Invalid credentials' });
     const db = await fetchDatabase();
-    const idLower = String(identifier).toLowerCase();
+    const idLower = String(identifier).toLowerCase().trim();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!user) {
+      // constant-time-ish wait to slow user enumeration
+      await new Promise(r => setTimeout(r, 200 + Math.random() * 100));
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    // Brute-force lock check
+    const lock = checkAccountLock(user.id);
+    if (lock.locked) {
+      const mins = Math.ceil(lock.remaining / 60_000);
+      return res.status(423).json({ error: `Account temporarily locked due to failed attempts. Try again in ${mins} minute(s).` });
+    }
     const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!ok) {
+      recordLoginFail(user.id);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    clearLoginFails(user.id);
     const token = signToken(user);
     return res.json({ token, user: sanitizeUser(user) });
   } catch (e) {
@@ -466,7 +595,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/reset-by-pin', async (req, res) => {
+app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
   try {
     const { identifier, pin, newPassword } = req.body || {};
     if (!identifier || !isValidPin(pin) || !newPassword || newPassword.length < 6) {
@@ -595,14 +724,18 @@ app.post('/api/user/update', authMiddleware, async (req, res) => {
       }
       user.username = username;
     }
-    if (typeof displayName === 'string' && displayName.length >= 1 && displayName.length <= 60) {
-      user.displayName = displayName;
+    if (typeof displayName === 'string') {
+      const cleanDN = sanitizeText(displayName, 60).trim();
+      if (cleanDN.length >= 1) user.displayName = cleanDN;
     }
-    if (typeof bio === 'string' && bio.length <= 280) {
-      user.bio = bio;
+    if (typeof bio === 'string') {
+      user.bio = sanitizeText(bio, 280);
     }
-    if (typeof photoUrl === 'string' && photoUrl.length <= 2048) {
-      user.photoUrl = photoUrl;
+    if (typeof photoUrl === 'string' && photoUrl.length <= 4096) {
+      // Allow https URLs + data URLs only
+      if (photoUrl === '' || /^(https?:|data:image\/)/i.test(photoUrl)) {
+        user.photoUrl = photoUrl;
+      }
     }
     await saveDatabase(db, false);
     res.json({ user: sanitizeUser(user) });
@@ -722,7 +855,7 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       const parts = roomId.slice(3).split(':');
       if (!parts.includes(req.userId)) return res.status(403).json({ error: 'Forbidden' });
     }
-    const cleanText = typeof text === 'string' ? text.slice(0, 4000) : '';
+    const cleanText = sanitizeText(text, 4000);
     const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
     if (!cleanText && !cleanImage) return res.status(400).json({ error: 'Empty message' });
     const db = await fetchDatabase();
@@ -792,7 +925,7 @@ app.post('/api/messages/schedule', authMiddleware, async (req, res) => {
     roomId = normalizeRoomId(roomId || 'general-group', req.userId);
     const ts = Number(deliverAt);
     if (!ts || isNaN(ts) || ts < nowMs() + 5000) return res.status(400).json({ error: 'deliverAt must be at least 5 seconds in the future' });
-    const cleanText = typeof text === 'string' ? text.slice(0, 4000) : '';
+    const cleanText = sanitizeText(text, 4000);
     const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
     if (!cleanText && !cleanImage) return res.status(400).json({ error: 'Empty message' });
     if (roomId.startsWith('dm:')) {
@@ -1088,7 +1221,7 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
 app.post('/api/posts/create', authMiddleware, async (req, res) => {
   try {
     const { text, imageUrl } = req.body || {};
-    const cleanText = typeof text === 'string' ? text.slice(0, 2000) : '';
+    const cleanText = sanitizeText(text, 2000);
     const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
     if (!cleanText && !cleanImage) return res.status(400).json({ error: 'Empty post' });
     const db = await fetchDatabase();
@@ -1137,7 +1270,7 @@ app.post('/api/posts/like', authMiddleware, async (req, res) => {
 app.post('/api/posts/comment', authMiddleware, async (req, res) => {
   const { postId, text } = req.body || {};
   if (!postId) return res.status(400).json({ error: 'postId required' });
-  const cleanText = typeof text === 'string' ? text.slice(0, 600).trim() : '';
+  const cleanText = sanitizeText(text, 600).trim();
   if (!cleanText) return res.status(400).json({ error: 'Empty comment' });
   const db = await fetchDatabase();
   const post = db.posts.find(p => p.id === postId);

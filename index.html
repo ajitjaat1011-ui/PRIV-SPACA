@@ -88,6 +88,15 @@
         </div>
         <input name="pin" type="hidden" required pattern="[0-9]{4}" />
       </div>
+
+      <!-- Terms & Conditions (pre-checked, required) -->
+      <label class="terms-row">
+        <input type="checkbox" id="termsCheckbox" name="terms" checked />
+        <span class="terms-text">
+          I agree to the <button type="button" class="terms-link" id="openTermsBtn">Terms &amp; Community Guidelines</button>.
+        </span>
+      </label>
+
       <button type="submit" class="primary-btn">Create account</button>
       <p class="auth-hint">Your PIN is the only way to recover a forgotten password. Memorize it.</p>
       <div class="auth-error" data-error></div>
@@ -380,6 +389,35 @@
 </section>
 
 <!-- ====== SCHEDULE MODAL ====== -->
+<!-- ====== TERMS & CONDITIONS MODAL ====== -->
+<div id="termsModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card terms-modal-card">
+    <div class="modal-head">
+      <h3><i data-lucide="shield-check"></i> Terms &amp; Community Guidelines</h3>
+      <button class="ghost-btn" data-close-terms><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body terms-body">
+      <p class="terms-version">Version 1.0 · Effective 30 Jun 2026</p>
+      <ol class="terms-list">
+        <li><strong>Private community.</strong> PRIV SPACA is a small invite-style space. Be kind, be real, and treat every member with respect.</li>
+        <li><strong>No harassment, hate, or doxxing.</strong> Personal attacks, slurs, threats, or sharing someone's private info will result in account removal.</li>
+        <li><strong>No illegal content.</strong> Don't share or solicit anything illegal — drugs, weapons, CSAM, malware, stolen accounts, etc.</li>
+        <li><strong>You own what you post.</strong> Don't upload media you don't have the right to share. You grant PRIV SPACA permission to display your content to other members of this community.</li>
+        <li><strong>One person, real accounts.</strong> No bots, no scraping, no automated mass-DMs. Don't impersonate another person.</li>
+        <li><strong>Security &amp; data.</strong> Your password is hashed (bcrypt). Your 4-digit PIN is hashed too and is the only password-recovery key. Don't share your PIN. We never ask for it via DM.</li>
+        <li><strong>Image uploads.</strong> Profile photos &amp; post images are stored on our GitHub-backed CDN. Posts/messages are stored in plain-text JSON for the community to read. Don't share secrets in chat.</li>
+        <li><strong>Free service, no warranty.</strong> PRIV SPACA is provided as-is. We may go offline, reset data, or change features without notice.</li>
+        <li><strong>Account actions.</strong> Use the Block button to silence anyone who's bothering you. Reports go to the community admin (Arvindjaat).</li>
+        <li><strong>Age.</strong> You must be at least 13 years old to use PRIV SPACA.</li>
+      </ol>
+      <p class="terms-foot">By creating an account, you confirm you have read and agree to these terms. You can withdraw consent at any time by deleting your account &mdash; just ask the admin.</p>
+    </div>
+    <div class="modal-foot">
+      <button class="primary-btn sm" data-close-terms>I understand</button>
+    </div>
+  </div>
+</div>
+
 <div id="scheduleModal" class="modal hidden" role="dialog" aria-modal="true">
   <div class="modal-card">
     <div class="modal-head">
