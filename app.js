@@ -410,7 +410,7 @@ function switchTab(tab) {
   $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $$('.view').forEach(v => v.classList.remove('active'));
   if (tab === 'chat') $('#chatView').classList.add('active');
-  if (tab === 'feed') { $('#feedView').classList.add('active'); loadPosts(); }
+  if (tab === 'feed') { $('#feedView').classList.add('active'); loadMembers(); loadPosts(); }
   if (tab === 'profile') $('#profileView').classList.add('active');
   refreshIcons();
 }
@@ -829,7 +829,88 @@ async function loadPosts() {
   } catch (_) {}
 }
 
+// "Stories" — synthesized from the active members directory.
+// Each member gets a story cell; clicking opens a story viewer.
+function renderStoriesRail() {
+  const rail = $('#storiesRail');
+  if (!rail) return;
+  rail.innerHTML = '';
+  if (!State.members || State.members.length === 0) {
+    rail.style.display = 'none';
+    return;
+  }
+  rail.style.display = '';
+  const meId = State.user && State.user.id;
+  const me = State.members.find(m => m.id === meId) || State.user;
+  rail.appendChild(buildStoryCell(me, true));
+  const others = State.members
+    .filter(m => m.id !== meId)
+    .sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+  others.forEach(m => rail.appendChild(buildStoryCell(m, false)));
+}
+
+function buildStoryCell(user, isMe) {
+  const cell = document.createElement('button');
+  cell.type = 'button';
+  cell.className = 'story-cell' + (isMe ? ' me' : '');
+  const ring = document.createElement('div');
+  ring.className = 'story-ring' + (isMe ? ' is-me' : '');
+  const inner = document.createElement('div');
+  inner.className = 'avatar-inner';
+  if (user && user.photoUrl) {
+    inner.style.backgroundImage = `url("${String(user.photoUrl).replace(/"/g, '%22')}")`;
+  } else {
+    const seed = user ? (user.username || user.displayName || user.id || '?') : '?';
+    inner.style.backgroundColor = colorOf(seed);
+    inner.textContent = initialsOf(user ? (user.displayName || user.username) : '?');
+  }
+  ring.appendChild(inner);
+  if (isMe) {
+    const badge = document.createElement('span');
+    badge.className = 'add-badge';
+    badge.textContent = '+';
+    ring.appendChild(badge);
+  }
+  cell.appendChild(ring);
+  const lbl = document.createElement('span');
+  lbl.className = 'lbl';
+  lbl.textContent = isMe ? 'Your story' : (user.username || user.displayName || '');
+  cell.appendChild(lbl);
+  cell.addEventListener('click', () => {
+    if (isMe) {
+      const ta = $('#postInput');
+      if (ta) { ta.focus(); ta.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    } else {
+      openStoryFor(user);
+    }
+  });
+  return cell;
+}
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const diff = Math.max(0, Date.now() - ts);
+  const s = Math.floor(diff / 1000);
+  if (s < 30) return 'now';
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h';
+  const d = Math.floor(h / 24);
+  if (d < 7) return d + 'd';
+  const w = Math.floor(d / 7);
+  if (w < 5) return w + 'w';
+  return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function postDateLabel(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString([], { month: 'long', day: 'numeric' }).toUpperCase();
+}
+
 function renderPosts() {
+  renderStoriesRail();
   const list = $('#feedList');
   list.innerHTML = '';
   if (State.posts.length === 0) {
@@ -847,130 +928,427 @@ function renderPosts() {
 }
 
 function renderPost(p) {
-  const card = document.createElement('div');
+  const card = document.createElement('article');
   card.className = 'post-card';
   card.dataset.id = p.id;
 
   const author = resolveAuthor(p.author, p.userId);
+  const meId = State.user && State.user.id;
+  const isMine = p.userId === meId;
+  const liked = Array.isArray(p.likes) && p.likes.includes(meId);
+  const saved = !!getSaved()[p.id];
 
+  // Header
   const head = document.createElement('div');
   head.className = 'post-head';
+  const avRing = document.createElement('span');
+  avRing.className = 'avatar-ring';
   const av = document.createElement('span');
   av.className = 'avatar md';
   renderAvatar(av, author);
+  avRing.appendChild(av);
   const meta = document.createElement('div');
   meta.className = 'meta';
-  meta.innerHTML = `<div class="nm">${escapeHtml(author.displayName || author.username)}</div><div class="un">@${escapeHtml(author.username)} · ${escapeHtml(timeFmt(p.createdAt))}</div>`;
-  head.appendChild(av); head.appendChild(meta);
-  if (p.userId === (State.user && State.user.id)) {
-    const del = document.createElement('button');
-    del.className = 'ghost-btn';
-    del.innerHTML = '<i data-lucide="trash-2"></i>';
-    del.title = 'Delete post';
-    del.addEventListener('click', async () => {
-      if (!confirm('Delete this post?')) return;
-      try { await api('/posts/delete', { method: 'POST', body: { postId: p.id } }); lastPostsSignature = ''; loadPosts(); }
-      catch (e) { toast(e.message || 'Delete failed', 'error'); }
-    });
-    head.appendChild(del);
-  }
+  meta.innerHTML = `
+    <div class="nm">
+      <span>${escapeHtml(author.username || author.displayName)}</span>
+      <span class="dot-sep">•</span>
+      <span class="ago">${escapeHtml(timeAgo(p.createdAt))}</span>
+    </div>
+    <div class="un">${escapeHtml(author.displayName || '')}</div>
+  `;
+  const moreBtn = document.createElement('button');
+  moreBtn.className = 'more-btn';
+  moreBtn.setAttribute('aria-label', 'More');
+  moreBtn.innerHTML = '<i data-lucide="more-horizontal"></i>';
+  moreBtn.addEventListener('click', (e) => { e.stopPropagation(); openMoreMenu(p, isMine); });
+  head.appendChild(avRing); head.appendChild(meta); head.appendChild(moreBtn);
   card.appendChild(head);
 
-  if (p.text) {
-    const body = document.createElement('div');
-    body.className = 'post-body';
-    body.textContent = p.text;
-    card.appendChild(body);
-  }
+  // Image with double-tap to like
   if (p.imageUrl) {
+    const wrap = document.createElement('div');
+    wrap.className = 'post-img-wrap';
     const img = document.createElement('img');
-    img.className = 'post-img'; img.src = p.imageUrl; img.alt = 'post image'; img.loading = 'lazy';
-    img.addEventListener('click', () => openLightbox(p.imageUrl, author.displayName));
-    img.addEventListener('error', () => { img.style.display = 'none'; });
-    card.appendChild(img);
+    img.className = 'post-img';
+    img.src = p.imageUrl;
+    img.alt = 'post image';
+    img.loading = 'lazy';
+    img.addEventListener('error', () => { wrap.style.display = 'none'; });
+    const burst = document.createElement('div');
+    burst.className = 'heart-burst';
+    burst.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 21s-7-4.35-7-10a4.5 4.5 0 0 1 8-2.83A4.5 4.5 0 0 1 21 11c0 5.65-9 10-9 10z"/></svg>';
+    let lastTap = 0;
+    let tapTimer = null;
+    img.addEventListener('click', () => {
+      const now = Date.now();
+      if (now - lastTap < 300) {
+        if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
+        burst.classList.remove('show');
+        void burst.offsetWidth;
+        burst.classList.add('show');
+        if (!Array.isArray(p.likes) || !p.likes.includes(meId)) {
+          toggleLike(p, card);
+        }
+        lastTap = 0;
+      } else {
+        lastTap = now;
+        if (tapTimer) clearTimeout(tapTimer);
+        tapTimer = setTimeout(() => { openLightbox(p.imageUrl, author.displayName); }, 290);
+      }
+    });
+    wrap.appendChild(img);
+    wrap.appendChild(burst);
+    card.appendChild(wrap);
   }
 
+  // Action toolbar
   const actions = document.createElement('div');
   actions.className = 'post-actions';
+  const left = document.createElement('div'); left.className = 'action-grp';
+  const right = document.createElement('div'); right.className = 'action-grp';
+
   const likeBtn = document.createElement('button');
-  likeBtn.className = 'like-btn';
-  const liked = Array.isArray(p.likes) && p.likes.includes(State.user && State.user.id);
-  if (liked) likeBtn.classList.add('liked');
-  likeBtn.innerHTML = `<i data-lucide="heart"></i>`;
-  likeBtn.addEventListener('click', async () => {
-    try {
-      const data = await api('/posts/like', { method: 'POST', body: { postId: p.id } });
-      p.likes = p.likes || [];
-      if (data.liked && !p.likes.includes(State.user.id)) p.likes.push(State.user.id);
-      if (!data.liked) p.likes = p.likes.filter(x => x !== State.user.id);
-      p.likeCount = data.likeCount;
-      lastPostsSignature = '';
-      renderPosts();
-    } catch (e) { toast(e.message || 'Failed', 'error'); }
-  });
+  likeBtn.className = 'act-btn' + (liked ? ' liked' : '');
+  likeBtn.setAttribute('aria-label', liked ? 'Unlike' : 'Like');
+  likeBtn.innerHTML = '<i data-lucide="heart"></i>';
+  likeBtn.addEventListener('click', () => toggleLike(p, card));
+
   const commentBtn = document.createElement('button');
-  commentBtn.innerHTML = `<i data-lucide="message-circle"></i>`;
-  commentBtn.addEventListener('click', () => {
-    const inp = card.querySelector('.comment-add input');
-    if (inp) inp.focus();
-  });
-  actions.appendChild(likeBtn); actions.appendChild(commentBtn);
+  commentBtn.className = 'act-btn';
+  commentBtn.setAttribute('aria-label', 'Comment');
+  commentBtn.innerHTML = '<i data-lucide="message-circle"></i>';
+  commentBtn.addEventListener('click', () => openCommentsSheet(p));
+
+  const shareBtn = document.createElement('button');
+  shareBtn.className = 'act-btn';
+  shareBtn.setAttribute('aria-label', 'Share');
+  shareBtn.innerHTML = '<i data-lucide="send"></i>';
+  shareBtn.addEventListener('click', () => sharePost(p));
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'act-btn' + (saved ? ' saved' : '');
+  saveBtn.setAttribute('aria-label', saved ? 'Unsave' : 'Save');
+  saveBtn.innerHTML = '<i data-lucide="bookmark"></i>';
+  saveBtn.addEventListener('click', () => toggleSaved(p, saveBtn));
+
+  left.appendChild(likeBtn); left.appendChild(commentBtn); left.appendChild(shareBtn);
+  const spacer = document.createElement('div'); spacer.className = 'spacer';
+  right.appendChild(saveBtn);
+  actions.appendChild(left); actions.appendChild(spacer); actions.appendChild(right);
   card.appendChild(actions);
 
-  // Likes count
+  // Liked-by row
   if (p.likeCount > 0) {
-    const lc = document.createElement('div');
-    lc.className = 'likes-count';
-    lc.textContent = p.likeCount === 1 ? '1 like' : (p.likeCount + ' likes');
-    card.appendChild(lc);
-  }
-
-  // Comments
-  if ((p.comments || []).length > 0) {
-    const cl = document.createElement('div');
-    cl.className = 'comments-list';
-    (p.comments || []).forEach(c => {
-      const cAuth = resolveAuthor(c.author, c.userId);
-      const ci = document.createElement('div');
-      ci.className = 'comment-item';
+    const lb = document.createElement('div');
+    lb.className = 'liked-by';
+    const liker = State.members.find(m => p.likes && p.likes.includes(m.id));
+    if (liker) {
+      const stack = document.createElement('span');
+      stack.className = 'stack';
       const a = document.createElement('span');
-      a.className = 'avatar sm';
-      renderAvatar(a, cAuth);
-      const b = document.createElement('div');
-      b.className = 'body';
-      b.innerHTML = `<div class="head">${escapeHtml(cAuth.displayName || cAuth.username)}<span>${escapeHtml(timeFmt(c.createdAt))}</span></div><div class="text"></div>`;
-      b.querySelector('.text').textContent = c.text;
-      ci.appendChild(a); ci.appendChild(b);
-      cl.appendChild(ci);
-    });
-    card.appendChild(cl);
+      a.className = 'avatar';
+      renderAvatar(a, liker);
+      stack.appendChild(a);
+      lb.appendChild(stack);
+    }
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    if (liker && p.likeCount === 1) {
+      txt.innerHTML = `Liked by <strong>${escapeHtml(liker.username)}</strong>`;
+    } else if (liker && p.likeCount > 1) {
+      const others = p.likeCount - 1;
+      txt.innerHTML = `Liked by <strong>${escapeHtml(liker.username)}</strong> and <strong>${others} other${others === 1 ? '' : 's'}</strong>`;
+    } else {
+      txt.innerHTML = `<strong>${p.likeCount}</strong> ${p.likeCount === 1 ? 'like' : 'likes'}`;
+    }
+    lb.appendChild(txt);
+    card.appendChild(lb);
   }
 
-  // Add comment
-  const addRow = document.createElement('div');
-  addRow.className = 'comment-add';
-  addRow.innerHTML = `<input type="text" placeholder="Add a comment…" maxlength="600" /><button>Post</button>`;
-  const inp = addRow.querySelector('input'); const sb = addRow.querySelector('button');
-  sb.disabled = true;
+  // Caption
+  if (p.text) {
+    const cap = document.createElement('div');
+    cap.className = 'post-caption';
+    const isLong = p.text.length > 140;
+    const visible = isLong ? p.text.slice(0, 140) : p.text;
+    const authorSpan = document.createElement('span');
+    authorSpan.className = 'author';
+    authorSpan.textContent = author.username || author.displayName;
+    cap.appendChild(authorSpan);
+    const txtNode = document.createTextNode(visible);
+    cap.appendChild(txtNode);
+    if (isLong) {
+      cap.appendChild(document.createTextNode('… '));
+      const more = document.createElement('button');
+      more.className = 'more-link';
+      more.textContent = 'more';
+      more.addEventListener('click', () => {
+        cap.removeChild(more);
+        txtNode.nodeValue = p.text;
+      });
+      cap.appendChild(more);
+    }
+    card.appendChild(cap);
+  }
+
+  // View all comments + preview
+  const cc = (p.comments || []).length;
+  if (cc > 2) {
+    const vc = document.createElement('button');
+    vc.className = 'view-comments';
+    vc.textContent = `View all ${cc} comments`;
+    vc.addEventListener('click', () => openCommentsSheet(p));
+    card.appendChild(vc);
+  }
+  if (cc > 0) {
+    const pv = document.createElement('div');
+    pv.className = 'preview-comments';
+    p.comments.slice(-2).forEach(c => {
+      const cAuth = resolveAuthor(c.author, c.userId);
+      const row = document.createElement('div');
+      row.className = 'preview-comment';
+      const a = document.createElement('span'); a.className = 'author';
+      a.textContent = cAuth.username || cAuth.displayName;
+      row.appendChild(a);
+      row.appendChild(document.createTextNode(c.text));
+      pv.appendChild(row);
+    });
+    card.appendChild(pv);
+  }
+
+  // Time stamp
+  const t = document.createElement('div');
+  t.className = 'post-time';
+  t.textContent = postDateLabel(p.createdAt);
+  card.appendChild(t);
+
+  // Inline comment composer
+  const addRow = document.createElement('form');
+  addRow.className = 'post-add-comment';
+  addRow.addEventListener('submit', (e) => e.preventDefault());
+  const emoji = document.createElement('button');
+  emoji.type = 'button';
+  emoji.className = 'emoji-btn';
+  emoji.textContent = '😊';
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.placeholder = 'Add a comment…'; inp.maxLength = 600;
+  const sb = document.createElement('button');
+  sb.type = 'submit'; sb.className = 'post-btn'; sb.textContent = 'Post'; sb.disabled = true;
+  emoji.addEventListener('click', () => { inp.value += '😊'; inp.focus(); sb.disabled = !inp.value.trim(); });
   inp.addEventListener('input', () => { sb.disabled = !inp.value.trim(); });
   const submit = async () => {
-    const t = inp.value.trim();
-    if (!t) return;
+    const text = inp.value.trim();
+    if (!text) return;
     sb.disabled = true;
     try {
-      await api('/posts/comment', { method: 'POST', body: { postId: p.id, text: t } });
+      const data = await api('/posts/comment', { method: 'POST', body: { postId: p.id, text } });
       inp.value = '';
+      p.comments = p.comments || [];
+      p.comments.push(data.comment);
+      p.commentCount = (p.commentCount || 0) + 1;
       lastPostsSignature = '';
-      loadPosts();
+      renderPosts();
     } catch (e) { toast(e.message || 'Failed', 'error'); }
     finally { sb.disabled = !inp.value.trim(); }
   };
   sb.addEventListener('click', submit);
   inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  addRow.appendChild(emoji); addRow.appendChild(inp); addRow.appendChild(sb);
   card.appendChild(addRow);
 
   return card;
 }
+
+async function toggleLike(p, card) {
+  const meId = State.user && State.user.id;
+  try {
+    const data = await api('/posts/like', { method: 'POST', body: { postId: p.id } });
+    p.likes = p.likes || [];
+    if (data.liked && !p.likes.includes(meId)) p.likes.push(meId);
+    if (!data.liked) p.likes = p.likes.filter(x => x !== meId);
+    p.likeCount = data.likeCount;
+    lastPostsSignature = '';
+    renderPosts();
+  } catch (e) { toast(e.message || 'Failed', 'error'); }
+}
+
+function getSaved() {
+  try { return JSON.parse(localStorage.getItem('ps_saved') || '{}'); }
+  catch (_) { return {}; }
+}
+function toggleSaved(p, btn) {
+  const all = getSaved();
+  if (all[p.id]) { delete all[p.id]; btn.classList.remove('saved'); btn.setAttribute('aria-label', 'Save'); toast('Removed from saved'); }
+  else { all[p.id] = true; btn.classList.add('saved'); btn.setAttribute('aria-label', 'Unsave'); toast('Saved', 'success'); }
+  localStorage.setItem('ps_saved', JSON.stringify(all));
+}
+
+async function sharePost(p) {
+  const url = location.origin + '/#post=' + encodeURIComponent(p.id);
+  const text = p.text ? (p.text.slice(0, 80) + (p.text.length > 80 ? '…' : '')) : 'Check out this post on PRIV SPACA';
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'PRIV SPACA', text, url });
+      return;
+    }
+  } catch (_) {}
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('Link copied', 'success');
+  } catch (_) {
+    toast('Share unavailable', 'error');
+  }
+}
+
+function openMoreMenu(p, isMine) {
+  const wrap = document.createElement('div');
+  wrap.className = 'more-menu';
+  const close = () => wrap.remove();
+  wrap.innerHTML = '<div class="bd"></div>';
+  wrap.querySelector('.bd').addEventListener('click', close);
+  const card = document.createElement('div');
+  card.className = 'card';
+  const items = [];
+  if (isMine) {
+    items.push({ label: 'Delete', danger: true, action: async () => {
+      close();
+      if (!confirm('Delete this post?')) return;
+      try { await api('/posts/delete', { method: 'POST', body: { postId: p.id } }); lastPostsSignature = ''; loadPosts(); toast('Post deleted'); }
+      catch (e) { toast(e.message || 'Delete failed', 'error'); }
+    }});
+  }
+  items.push({ label: 'Share to…', action: () => { close(); sharePost(p); }});
+  items.push({ label: 'Copy link', action: async () => {
+    close();
+    try { await navigator.clipboard.writeText(location.origin + '/#post=' + encodeURIComponent(p.id)); toast('Link copied', 'success'); }
+    catch (_) { toast('Copy failed', 'error'); }
+  }});
+  if (!isMine) items.push({ label: 'Report', danger: true, action: () => { close(); toast('Reported. Thanks for keeping the community safe.'); }});
+  items.push({ label: 'Cancel', cancel: true, action: close });
+  items.forEach(it => {
+    const b = document.createElement('button');
+    b.className = 'item' + (it.danger ? ' danger' : '') + (it.cancel ? ' cancel' : '');
+    b.textContent = it.label;
+    b.addEventListener('click', it.action);
+    card.appendChild(b);
+  });
+  wrap.appendChild(card);
+  document.body.appendChild(wrap);
+}
+
+let activeCommentsPost = null;
+function openCommentsSheet(p) {
+  activeCommentsPost = p;
+  const list = $('#commentsList');
+  list.innerHTML = '';
+  const cms = p.comments || [];
+  if (cms.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'No comments yet. Be the first!';
+    list.appendChild(li);
+  }
+  cms.forEach(c => {
+    const cAuth = resolveAuthor(c.author, c.userId);
+    const li = document.createElement('li');
+    const a = document.createElement('span'); a.className = 'avatar sm';
+    renderAvatar(a, cAuth);
+    const b = document.createElement('div'); b.className = 'body';
+    const txt = document.createElement('div'); txt.className = 'text';
+    const author = document.createElement('span'); author.className = 'author';
+    author.textContent = cAuth.username || cAuth.displayName;
+    txt.appendChild(author);
+    txt.appendChild(document.createTextNode(c.text));
+    const meta = document.createElement('div'); meta.className = 'meta-row';
+    meta.innerHTML = `<span>${escapeHtml(timeAgo(c.createdAt))}</span><span>Reply</span>`;
+    b.appendChild(txt); b.appendChild(meta);
+    li.appendChild(a); li.appendChild(b);
+    list.appendChild(li);
+  });
+  renderAvatar($('#commentsMeAvatar'), State.user);
+  $('#commentsInput').value = '';
+  $('#commentsSheet').classList.remove('hidden');
+  refreshIcons();
+  setTimeout(() => $('#commentsInput').focus(), 200);
+}
+
+function closeCommentsSheet() {
+  $('#commentsSheet').classList.add('hidden');
+  activeCommentsPost = null;
+}
+
+function bindCommentsSheet() {
+  $$('[data-close-sheet]').forEach(b => b.addEventListener('click', closeCommentsSheet));
+  $('#commentsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!activeCommentsPost) return;
+    const inp = $('#commentsInput');
+    const text = inp.value.trim();
+    if (!text) return;
+    const sb = e.target.querySelector('.post-btn');
+    sb.disabled = true;
+    try {
+      const data = await api('/posts/comment', { method: 'POST', body: { postId: activeCommentsPost.id, text } });
+      inp.value = '';
+      activeCommentsPost.comments = activeCommentsPost.comments || [];
+      activeCommentsPost.comments.push(data.comment);
+      activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1;
+      openCommentsSheet(activeCommentsPost);
+      lastPostsSignature = '';
+      renderPosts();
+    } catch (e) { toast(e.message || 'Failed', 'error'); }
+    finally { sb.disabled = false; }
+  });
+}
+
+let storyTimer = null;
+function openStoryFor(user) {
+  const theirPosts = (State.posts || []).filter(p => p.userId === user.id).sort((a, b) => b.createdAt - a.createdAt);
+  const recent = theirPosts[0];
+  const v = $('#storyViewer');
+  const content = $('#storyContent');
+  const progress = $('#storyProgress');
+  content.innerHTML = '';
+  progress.innerHTML = '<div class="bar active"><div class="fill"></div></div>';
+  renderAvatar($('#storyAvatar'), user);
+  $('#storyName').textContent = user.displayName || user.username;
+  $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
+  if (recent && recent.imageUrl) {
+    const img = document.createElement('img');
+    img.src = recent.imageUrl;
+    img.alt = 'story';
+    content.appendChild(img);
+  } else if (recent && recent.text) {
+    const div = document.createElement('div');
+    div.className = 'text-story';
+    div.textContent = recent.text.slice(0, 280);
+    content.appendChild(div);
+  } else {
+    const div = document.createElement('div');
+    div.className = 'text-story';
+    div.textContent = (user.bio && user.bio.trim()) || `👋 Hi from ${user.displayName || user.username}!`;
+    content.appendChild(div);
+  }
+  v.classList.remove('hidden');
+  refreshIcons();
+  clearTimeout(storyTimer);
+  storyTimer = setTimeout(closeStory, 5100);
+}
+function closeStory() {
+  clearTimeout(storyTimer);
+  storyTimer = null;
+  $('#storyViewer').classList.add('hidden');
+}
+function bindStoryViewer() {
+  $('#storyClose').addEventListener('click', closeStory);
+  $('#storyPrev').addEventListener('click', closeStory);
+  $('#storyNext').addEventListener('click', closeStory);
+  $('#storyViewer').addEventListener('click', (e) => {
+    if (e.target.id === 'storyViewer') closeStory();
+  });
+}
+
 
 function bindFeedComposer() {
   $('#postAttachBtn').addEventListener('click', () => $('#postFileInput').click());
@@ -1145,6 +1523,9 @@ function bindLightbox() {
     if (e.key === 'Escape') {
       if (!$('#lightbox').classList.contains('hidden')) closeLightbox();
       if (!$('#scheduleModal').classList.contains('hidden')) $('#scheduleModal').classList.add('hidden');
+      if (!$('#commentsSheet').classList.contains('hidden')) closeCommentsSheet();
+      if (!$('#storyViewer').classList.contains('hidden')) closeStory();
+      const mm = document.querySelector('.more-menu'); if (mm) mm.remove();
     }
   });
 }
@@ -1170,6 +1551,8 @@ function boot() {
   bindProfile();
   bindSchedule();
   bindLightbox();
+  bindCommentsSheet();
+  bindStoryViewer();
   refreshIcons();
 
   if (State.token && State.user) {

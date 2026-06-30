@@ -208,12 +208,22 @@
   <!-- ====== FEED TAB ====== -->
   <main id="feedView" class="view feed-view">
     <div class="feed-wrap">
+
+      <!-- Stories rail -->
+      <div class="stories-rail" id="storiesRail">
+        <!-- Populated by JS -->
+      </div>
+
+      <!-- Composer -->
       <div class="composer-card">
         <div class="composer-card-head">
           <span id="feedMeAvatar" class="avatar md"></span>
-          <strong id="feedMeName"></strong>
+          <div class="composer-card-meta">
+            <strong id="feedMeName"></strong>
+            <span class="muted small">Share with the community</span>
+          </div>
         </div>
-        <textarea id="postInput" placeholder="Share something with the community…" maxlength="2000" rows="3"></textarea>
+        <textarea id="postInput" placeholder="What's on your mind?" maxlength="2000" rows="3"></textarea>
         <div id="postAttachPreview" class="attach-preview small hidden">
           <img id="postAttachThumb" alt="" />
           <div class="attach-info">
@@ -228,6 +238,8 @@
           <button id="postSubmitBtn" type="button" class="primary-btn sm">Publish</button>
         </div>
       </div>
+
+      <!-- Feed -->
       <div id="feedList" class="feed-list"></div>
     </div>
   </main>
@@ -291,6 +303,42 @@
       <ul id="scheduleList" class="schedule-list"><li class="muted small">Loading…</li></ul>
     </div>
   </div>
+</div>
+
+<!-- ====== COMMENTS SHEET ====== -->
+<div id="commentsSheet" class="comments-sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-backdrop" data-close-sheet></div>
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h3>Comments</h3>
+      <button class="ghost-btn" data-close-sheet><i data-lucide="x"></i></button>
+    </div>
+    <div class="sheet-body">
+      <ul id="commentsList" class="comments-sheet-list"></ul>
+    </div>
+    <form id="commentsForm" class="sheet-composer">
+      <span id="commentsMeAvatar" class="avatar sm"></span>
+      <input id="commentsInput" type="text" placeholder="Add a comment…" maxlength="600" autocomplete="off" />
+      <button type="submit" class="post-btn">Post</button>
+    </form>
+  </div>
+</div>
+
+<!-- ====== STORY VIEWER ====== -->
+<div id="storyViewer" class="story-viewer hidden" role="dialog" aria-modal="true">
+  <div class="story-progress" id="storyProgress"></div>
+  <button class="story-close ghost-btn" id="storyClose" aria-label="Close"><i data-lucide="x"></i></button>
+  <div class="story-author">
+    <span id="storyAvatar" class="avatar md"></span>
+    <div>
+      <div id="storyName" class="story-name"></div>
+      <div id="storyMeta" class="story-meta"></div>
+    </div>
+  </div>
+  <div class="story-content" id="storyContent"></div>
+  <button class="story-prev" id="storyPrev" aria-label="Previous"></button>
+  <button class="story-next" id="storyNext" aria-label="Next"></button>
 </div>
 
 <!-- ====== LIGHTBOX ====== -->
