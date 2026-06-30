@@ -1386,3 +1386,13 @@ img{user-select:none;-webkit-user-drag:none}
 /* Chat view: ensure proper inner scrolling within the middle row */
 .chat-view{height:100%;min-height:0}
 .chat-pane{height:100%;min-height:0}
+
+.icon-btn.recording {
+  animation: pulse-red 1s infinite;
+  color: red !important;
+}
+@keyframes pulse-red {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 1; }
+}
