@@ -886,13 +886,157 @@ img{user-select:none;-webkit-user-drag:none}
 .more-menu .item.danger{color:var(--red);font-weight:700}
 .more-menu .item.cancel{font-weight:700;color:var(--text)}
 
-/* Profile view */
+/* ===== Profile view (Instagram-style) ===== */
 .profile-view{overflow-y:auto;background:var(--bg)}
-.profile-wrap{max-width:600px;margin:32px auto;padding:0 16px}
+.profile-wrap{max-width:600px;margin:0 auto;padding:0}
+.profile-mode{animation:fade-in .25s ease}
 .section-title{font-size:24px;font-weight:800;margin:0 0 18px;letter-spacing:-.3px}
-.profile-form{display:flex;flex-direction:column;gap:16px;background:var(--bg-2);border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:var(--shadow-xs)}
+
+/* IG-style profile header */
+.ig-profile-head{display:flex;align-items:center;gap:24px;padding:18px 18px 12px}
+.avatar.xxl{width:96px;height:96px;font-size:34px;flex-shrink:0}
+.ig-profile-stats{display:flex;flex:1;justify-content:space-around;align-items:center;gap:4px}
+.stat-btn{
+  background:transparent;border:0;cursor:pointer;color:var(--text);
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:6px 10px;border-radius:10px;font-family:inherit;
+}
+.stat-btn:active{background:var(--bg-soft)}
+.stat-btn strong{font-size:18px;font-weight:700}
+.stat-btn span{font-size:13px;color:var(--text-2)}
+
+.ig-profile-meta{padding:0 18px 12px;display:flex;flex-direction:column;gap:2px;line-height:1.4}
+.ig-name{font-weight:700;font-size:15px;color:var(--text)}
+.ig-handle{font-size:13px;color:var(--muted)}
+.ig-bio{font-size:14px;color:var(--text);white-space:pre-wrap;word-break:break-word;margin-top:4px}
+
+.ig-profile-actions{display:flex;gap:8px;padding:4px 18px 16px}
+.ig-action-btn{
+  flex:1;background:var(--bg-soft);color:var(--text);border:0;
+  padding:8px 14px;border-radius:10px;font-weight:700;font-size:14px;
+  cursor:pointer;font-family:inherit;transition:all .15s;
+}
+.ig-action-btn:hover{background:#e3eaf0}
+.ig-action-btn:active{transform:scale(.97)}
+.ig-action-btn.primary{background:var(--accent-grad);color:#fff;box-shadow:0 4px 12px rgba(0,162,255,.28)}
+.ig-action-btn.primary:hover{filter:brightness(1.05)}
+.ig-action-btn.following{background:var(--bg-soft);color:var(--text)}
+.ig-action-btn.danger{background:transparent;color:var(--red);border:1px solid var(--red)}
+
+/* Tabs (posts / saved) */
+.ig-tabs{
+  display:flex;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  margin-top:8px;
+}
+.ig-tab{
+  flex:1;display:flex;align-items:center;justify-content:center;
+  background:transparent;border:0;padding:12px 0;cursor:pointer;
+  color:var(--muted);transition:color .15s;
+}
+.ig-tab i{width:22px;height:22px}
+.ig-tab.active{color:var(--text);box-shadow:inset 0 -2px 0 var(--text)}
+
+/* Posts grid (3-col, square crops) */
+.ig-posts-grid{
+  display:grid;grid-template-columns:repeat(3, 1fr);gap:3px;padding:3px;
+  margin-bottom:20px;
+}
+.ig-grid-cell{
+  position:relative;width:100%;aspect-ratio:1/1;
+  background:var(--bg-soft);overflow:hidden;cursor:pointer;
+  border-radius:2px;
+}
+.ig-grid-cell img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s}
+.ig-grid-cell:hover img{transform:scale(1.03)}
+.ig-grid-cell .text-only{
+  width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  padding:8px;font-size:11px;color:var(--text-2);text-align:center;line-height:1.3;
+  overflow:hidden;word-break:break-word;
+}
+.ig-grid-cell .badge{
+  position:absolute;top:6px;right:6px;color:#fff;font-size:11px;font-weight:600;
+  background:rgba(0,0,0,.45);padding:2px 7px;border-radius:8px;display:flex;align-items:center;gap:3px;
+  backdrop-filter:blur(4px);
+}
+.ig-grid-cell .badge i{width:11px;height:11px}
+.ig-grid-empty{
+  grid-column:1/-1;padding:48px 20px;text-align:center;color:var(--muted);font-size:13.5px;
+}
+
+/* Edit-profile sub-view */
+.profile-edit-header{
+  display:grid;grid-template-columns:36px 1fr 36px;align-items:center;gap:8px;
+  padding:10px 14px;border-bottom:1px solid var(--line);background:var(--bg-2);
+  position:sticky;top:0;z-index:2;
+}
+.profile-edit-header strong{text-align:center;font-size:15px}
+.profile-form{display:flex;flex-direction:column;gap:14px;background:transparent;border:0;padding:18px;box-shadow:none}
 .profile-head{display:flex;align-items:center;gap:22px;padding-bottom:8px}
 .profile-photo-actions{display:flex;flex-direction:column;gap:6px}
+
+/* ===== Other-user profile sheet (full-screen) ===== */
+.user-profile-sheet{
+  position:fixed;inset:0;background:var(--bg);z-index:55;
+  display:flex;flex-direction:column;overflow:hidden;
+  animation:fade-in .2s ease both;
+}
+.user-profile-sheet.hidden{display:none}
+.up-header{
+  display:grid;grid-template-columns:36px 1fr 36px;align-items:center;gap:8px;
+  padding:10px 14px;background:var(--bg-2);border-bottom:1px solid var(--line);
+}
+.up-header-username{
+  font-size:15.5px;font-weight:700;text-align:center;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.up-body{flex:1;overflow-y:auto}
+
+/* ===== Notifications list ===== */
+.notif-list{
+  list-style:none;padding:0;margin:0;
+  display:flex;flex-direction:column;
+}
+.notif-list li{
+  display:flex;align-items:center;gap:12px;padding:11px 4px;cursor:pointer;
+  border-bottom:1px solid var(--line);transition:background .12s;
+  position:relative;
+}
+.notif-list li:hover{background:var(--bg-soft)}
+.notif-list li.unread{background:rgba(0,162,255,.04)}
+.notif-list li.unread::before{
+  content:"";position:absolute;left:-4px;top:50%;transform:translateY(-50%);
+  width:6px;height:6px;border-radius:50%;background:var(--accent);
+}
+.notif-list .body{flex:1;min-width:0;font-size:14px;line-height:1.4;color:var(--text)}
+.notif-list .body strong{font-weight:700}
+.notif-list .body .nm{font-size:12px;color:var(--muted);margin-top:2px}
+.notif-list .body .preview{color:var(--text-2);font-style:italic;margin-top:2px;
+  font-size:12.5px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.notif-list .thumb{
+  width:42px;height:42px;border-radius:6px;background-size:cover;background-position:center;
+  background-color:var(--bg-soft);flex-shrink:0;
+}
+.notif-empty{
+  text-align:center;padding:60px 20px;color:var(--muted);font-size:14px;
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+}
+.notif-empty .ico{width:60px;height:60px;border-radius:50%;background:var(--bg-soft);
+  display:flex;align-items:center;justify-content:center;color:var(--accent)}
+.notif-empty .ico i{width:30px;height:30px}
+
+/* Notif kind icon overlay on avatar */
+.notif-avatar-wrap{position:relative;flex-shrink:0}
+.notif-kind-badge{
+  position:absolute;right:-2px;bottom:-2px;width:18px;height:18px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;color:#fff;
+  border:2px solid var(--bg-2);
+}
+.notif-kind-badge i{width:10px;height:10px;stroke-width:3}
+.notif-kind-badge.like{background:var(--red)}
+.notif-kind-badge.comment{background:var(--accent)}
+.notif-kind-badge.follow{background:var(--green)}
+.notif-kind-badge.message{background:#8b5cf6}
 
 /* ===== Modal ===== */
 .modal{

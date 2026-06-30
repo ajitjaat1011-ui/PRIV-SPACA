@@ -577,7 +577,7 @@ function bindTabs() {
   const tc = $('#topChatBtn');
   if (tc) tc.addEventListener('click', () => switchTab('chat'));
   const tn = $('#topNotifBtn');
-  if (tn) tn.addEventListener('click', () => toast('Notifications coming soon'));
+  if (tn) tn.addEventListener('click', openNotifications);
 }
 
 function switchTab(tab) {
@@ -592,7 +592,14 @@ function switchTab(tab) {
   if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
   if (tab === 'search') { activeView = $('#searchView'); activeView.classList.add('active'); loadMembers(); renderSearch(''); setTimeout(() => $('#searchInput').focus(), 100); }
   if (tab === 'chat') { activeView = $('#chatView'); activeView.classList.add('active'); markTabSeen('chat'); }
-  if (tab === 'profile') { activeView = $('#profileView'); activeView.classList.add('active'); }
+  if (tab === 'profile') {
+    activeView = $('#profileView');
+    activeView.classList.add('active');
+    // Ensure we show view-mode (not edit-mode) on tab open
+    $('#profileEditMode').classList.add('hidden');
+    $('#profileViewMode').classList.remove('hidden');
+    renderOwnProfile();
+  }
   if (activeView) springIn(activeView, { duration: 0.28 });
   refreshIcons();
   if (typeof updateNotifDots === 'function') updateNotifDots();
@@ -1058,12 +1065,22 @@ let _lastNotif = { chatUnread: 0, feedUnread: 0 };
 async function pollNotifications() {
   if (!State.token || !State.user) return;
   const meId = State.user.id;
+  let chatUnread = 0, feedUnread = 0, headerUnread = 0;
+
+  // 1) Server-side notifications (authoritative for like/comment/follow/message)
+  try {
+    const r = await api('/notifications');
+    _notifData = r;
+    headerUnread = r.unread || 0;
+    (r.notifications || []).forEach(n => {
+      if (n.seenAt) return;
+      if (n.kind === 'message') chatUnread++;
+      else feedUnread++;   // like / comment / follow → home dot
+    });
+  } catch (_) {}
+
+  // 2) New general-group messages (client tracks per-tab lastSeen so unread is true unread)
   const seenChat = _getLastSeen('ps_seenChatAt') || (Date.now() - 24*3600*1000);
-  const seenFeed = _getLastSeen('ps_seenFeedAt') || (Date.now() - 24*3600*1000);
-
-  let chatUnread = 0, feedUnread = 0;
-
-  // 1) General chat messages
   try {
     const r = await api('/messages?roomId=general-group');
     (r.messages || []).forEach(m => {
@@ -1071,54 +1088,13 @@ async function pollNotifications() {
     });
   } catch (_) {}
 
-  // 2) DM rooms — derive list from members directory (DM rooms = me <-> each other user)
-  // To keep it cheap, only check the 5 most-recently-online others
-  try {
-    const others = (State.members || []).filter(u => u.id !== meId)
-      .sort((a,b) => (b.lastSeen||0) - (a.lastSeen||0)).slice(0, 5);
-    for (const u of others) {
-      const roomId = 'dm:' + [meId, u.id].sort().join(':');
-      const r = await api('/messages?roomId=' + encodeURIComponent(roomId));
-      (r.messages || []).forEach(m => {
-        if (m.userId !== meId && m.createdAt > seenChat) chatUnread++;
-      });
-    }
-  } catch (_) {}
-
-  // 3) Feed: posts/likes/comments
+  // 3) Keep posts cached for stories rail + saved tab
   try {
     const r = await api('/posts');
-    (r.posts || []).forEach(p => {
-      // New post by someone else
-      if (p.userId !== meId && p.createdAt > seenFeed) feedUnread++;
-      // Likes/comments on MY post (since lastSeenFeed)
-      if (p.userId === meId) {
-        // Heuristic: count comments by others after seenFeed
-        (p.comments || []).forEach(c => {
-          if (c.userId !== meId && c.createdAt > seenFeed) feedUnread++;
-        });
-        // Likes — server doesn't carry timestamps per-like, so count any post with
-        // likes from others and use the post.createdAt+1m as a proxy.
-        const othersLiked = (p.likes || []).filter(uid => uid !== meId);
-        if (othersLiked.length > 0 && _lastNotif._likeMap) {
-          const prev = _lastNotif._likeMap[p.id] || 0;
-          if (othersLiked.length > prev) feedUnread += (othersLiked.length - prev);
-        }
-      }
-    });
-    // Snapshot like counts for next diff
-    const likeMap = {};
-    (r.posts || []).forEach(p => {
-      if (p.userId === meId) {
-        likeMap[p.id] = (p.likes || []).filter(uid => uid !== meId).length;
-      }
-    });
-    _lastNotif._likeMap = likeMap;
-    // Cache posts so renderStoriesRail can compute story viewed-state
     State.posts = r.posts || State.posts;
   } catch (_) {}
 
-  // 4) Unviewed stories (any other member with a latest post the user hasn't opened)
+  // 4) Unviewed stories add to feed dot
   try {
     (State.members || []).forEach(u => {
       if (u.id === meId) return;
@@ -1130,21 +1106,35 @@ async function pollNotifications() {
 
   _lastNotif.chatUnread = chatUnread;
   _lastNotif.feedUnread = feedUnread;
+  _lastNotif.headerUnread = headerUnread;
   updateNotifDots();
 }
 
 function updateNotifDots() {
   const showChat = (_lastNotif.chatUnread > 0) && (State.currentTab !== 'chat');
   const showFeed = (_lastNotif.feedUnread > 0) && (State.currentTab !== 'feed');
-  $$('[data-dot="chat"], [data-dot="chat-top"]').forEach(d => {
+  // Top-bar heart icon shows red dot if any unread server notification
+  const showHeader = (_lastNotif.headerUnread || 0) > 0;
+  $$('[data-dot="chat"]').forEach(d => {
     const wasHidden = d.classList.contains('hidden');
     d.classList.toggle('hidden', !showChat);
     if (wasHidden && showChat) popIn(d, { duration: 0.32 });
   });
-  $$('[data-dot="feed"], [data-dot="feed-top"]').forEach(d => {
+  $$('[data-dot="chat-top"]').forEach(d => {
+    const wasHidden = d.classList.contains('hidden');
+    d.classList.toggle('hidden', !showChat);
+    if (wasHidden && showChat) popIn(d, { duration: 0.32 });
+  });
+  $$('[data-dot="feed"]').forEach(d => {
     const wasHidden = d.classList.contains('hidden');
     d.classList.toggle('hidden', !showFeed);
     if (wasHidden && showFeed) popIn(d, { duration: 0.32 });
+  });
+  // Top-bar heart icon dot (data-dot="feed-top") = headerUnread (server notifications)
+  $$('[data-dot="feed-top"]').forEach(d => {
+    const wasHidden = d.classList.contains('hidden');
+    d.classList.toggle('hidden', !showHeader);
+    if (wasHidden && showHeader) popIn(d, { duration: 0.32 });
   });
 }
 
@@ -1326,6 +1316,12 @@ function renderPost(p) {
   moreBtn.innerHTML = '<i data-lucide="more-horizontal"></i>';
   moreBtn.addEventListener('click', (e) => { e.stopPropagation(); openMoreMenu(p, isMine); });
   head.appendChild(avRing); head.appendChild(meta); head.appendChild(moreBtn);
+  // Tap on avatar or name → open user profile
+  const openProfile = () => { if (p.userId !== (State.user && State.user.id)) openUserProfile(p.userId); else switchTab('profile'); };
+  avRing.style.cursor = 'pointer';
+  meta.style.cursor = 'pointer';
+  avRing.addEventListener('click', openProfile);
+  meta.addEventListener('click', openProfile);
   card.appendChild(head);
 
   // Image with double-tap to like
@@ -1995,6 +1991,396 @@ function openLightbox(url, uploaderName) {
   refreshIcons();
 }
 
+// ============================================================
+// ===== Notifications panel
+// ============================================================
+let _notifData = { notifications: [], unread: 0 };
+
+async function openNotifications() {
+  const sheet = $('#notifSheet');
+  const list = $('#notifList');
+  list.innerHTML = '<li class="notif-empty"><div class="ico"><i data-lucide="bell"></i></div><div>Loading…</div></li>';
+  sheet.classList.remove('hidden');
+  const card = sheet.querySelector('.sheet-card');
+  if (card) motionAnimate(card,
+    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
+    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
+  );
+  refreshIcons();
+  try {
+    const data = await api('/notifications');
+    _notifData = data;
+    renderNotifications();
+    // Mark seen after a short delay so the unread highlight is visible first
+    setTimeout(async () => {
+      try { await api('/notifications/seen', { method: 'POST' }); }
+      catch (_) {}
+      // Force notif poller refresh
+      pollNotifications();
+    }, 1500);
+  } catch (e) {
+    list.innerHTML = '<li class="notif-empty"><div>Could not load notifications</div></li>';
+  }
+}
+
+function closeNotifications() {
+  $('#notifSheet').classList.add('hidden');
+}
+
+function renderNotifications() {
+  const list = $('#notifList');
+  list.innerHTML = '';
+  const items = _notifData.notifications || [];
+  if (items.length === 0) {
+    list.innerHTML = `<li class="notif-empty">
+      <div class="ico"><i data-lucide="bell"></i></div>
+      <div><strong>No notifications yet</strong><div class="small muted" style="margin-top:4px">When someone likes, comments, follows or messages you, it'll show up here.</div></div>
+    </li>`;
+    refreshIcons();
+    return;
+  }
+  items.forEach((n, i) => list.appendChild(buildNotifRow(n, i)));
+  refreshIcons();
+}
+
+function buildNotifRow(n, i) {
+  const li = document.createElement('li');
+  if (!n.seenAt) li.classList.add('unread');
+
+  // Avatar with kind badge
+  const wrap = document.createElement('div');
+  wrap.className = 'notif-avatar-wrap';
+  const av = document.createElement('span');
+  av.className = 'avatar md';
+  renderAvatar(av, n.from);
+  wrap.appendChild(av);
+  const badge = document.createElement('span');
+  badge.className = 'notif-kind-badge ' + n.kind;
+  const ico = { like: 'heart', comment: 'message-circle', follow: 'user-plus', message: 'send' }[n.kind] || 'bell';
+  badge.innerHTML = `<i data-lucide="${ico}"></i>`;
+  wrap.appendChild(badge);
+  li.appendChild(wrap);
+
+  // Body
+  const body = document.createElement('div');
+  body.className = 'body';
+  const fromName = (n.from && (n.from.username || n.from.displayName)) || 'Someone';
+  let msg = '';
+  if (n.kind === 'like')    msg = `<strong>${escapeHtml(fromName)}</strong> liked your post.`;
+  if (n.kind === 'comment') msg = `<strong>${escapeHtml(fromName)}</strong> commented:`;
+  if (n.kind === 'follow')  msg = `<strong>${escapeHtml(fromName)}</strong> started following you.`;
+  if (n.kind === 'message') msg = `<strong>${escapeHtml(fromName)}</strong> sent you a message:`;
+  body.innerHTML = msg + `<div class="nm">${escapeHtml(timeAgo(n.createdAt))}</div>`;
+  if (n.text) {
+    const preview = document.createElement('div');
+    preview.className = 'preview';
+    preview.textContent = '"' + n.text + '"';
+    body.insertBefore(preview, body.querySelector('.nm'));
+  }
+  li.appendChild(body);
+
+  // Thumbnail for post-related notifs
+  if (n.postId) {
+    const post = (State.posts || []).find(p => p.id === n.postId);
+    if (post && post.imageUrl) {
+      const t = document.createElement('div');
+      t.className = 'thumb';
+      t.style.backgroundImage = `url("${String(post.imageUrl).replace(/"/g, '%22')}")`;
+      li.appendChild(t);
+    }
+  }
+
+  // Click → navigate
+  li.addEventListener('click', () => {
+    closeNotifications();
+    if (n.kind === 'follow' || n.kind === 'message' || n.kind === 'like' || n.kind === 'comment') {
+      if (n.kind === 'message' && n.fromUserId) {
+        // Open DM with sender
+        const member = (State.members || []).find(m => m.id === n.fromUserId);
+        if (member) { openDM(member); switchTab('chat'); return; }
+      }
+      // Open the user's profile
+      if (n.fromUserId) openUserProfile(n.fromUserId);
+    }
+  });
+
+  return li;
+}
+
+function bindNotifSheet() {
+  $$('[data-close-notif]').forEach(b => b.addEventListener('click', closeNotifications));
+  const clr = $('#notifClearBtn');
+  if (clr) clr.addEventListener('click', async () => {
+    if (!confirm('Clear all notifications?')) return;
+    try {
+      await api('/notifications/clear', { method: 'POST' });
+      _notifData = { notifications: [], unread: 0 };
+      renderNotifications();
+      pollNotifications();
+    } catch (e) { toast(e.message || 'Failed', 'error'); }
+  });
+}
+
+// ============================================================
+// ===== Other-user profile sheet
+// ============================================================
+let _activeOtherProfile = null;
+
+async function openUserProfile(userId) {
+  if (!userId || userId === (State.user && State.user.id)) {
+    switchTab('profile'); return;
+  }
+  const sheet = $('#userProfileSheet');
+  sheet.classList.remove('hidden');
+  springIn(sheet);
+  // Show skeleton
+  $('#upHeaderUsername').textContent = 'Loading…';
+  $('#upDisplayName').textContent = '';
+  $('#upBio').textContent = '';
+  $('#upStatPosts').textContent = '·';
+  $('#upStatFollowers').textContent = '·';
+  $('#upStatFollowing').textContent = '·';
+  $('#upPostsGrid').innerHTML = '';
+  renderAvatar($('#upAvatar'), null);
+  try {
+    const data = await api('/user/' + encodeURIComponent(userId) + '/profile');
+    _activeOtherProfile = data;
+    renderOtherProfile(data);
+  } catch (e) {
+    $('#upDisplayName').textContent = e.message || 'Could not load profile';
+    _activeOtherProfile = null;
+  }
+  refreshIcons();
+}
+
+function closeUserProfile() {
+  $('#userProfileSheet').classList.add('hidden');
+  _activeOtherProfile = null;
+}
+
+function renderOtherProfile(data) {
+  const u = data.user;
+  $('#upHeaderUsername').textContent = '@' + u.username;
+  $('#upDisplayName').textContent = u.displayName || '';
+  $('#upBio').textContent = u.bio || '';
+  $('#upStatPosts').textContent = String(u.postsCount || 0);
+  $('#upStatFollowers').textContent = String(u.followers || 0);
+  $('#upStatFollowing').textContent = String(u.following || 0);
+  renderAvatar($('#upAvatar'), u);
+  // Follow button
+  const fb = $('#upFollowBtn');
+  if (data.relationship.iFollow) {
+    fb.textContent = 'Following';
+    fb.classList.remove('primary'); fb.classList.add('following');
+  } else {
+    fb.textContent = data.relationship.followsMe ? 'Follow back' : 'Follow';
+    fb.classList.add('primary'); fb.classList.remove('following');
+  }
+  fb.onclick = async () => {
+    fb.disabled = true;
+    try {
+      const action = data.relationship.iFollow ? 'unfollow' : 'follow';
+      await api('/user/' + action, { method: 'POST', body: { targetId: u.id }});
+      // Reload
+      const fresh = await api('/user/' + encodeURIComponent(u.id) + '/profile');
+      _activeOtherProfile = fresh;
+      renderOtherProfile(fresh);
+      pollNotifications();
+    } catch (e) { toast(e.message || 'Failed', 'error'); }
+    finally { fb.disabled = false; }
+  };
+  // Message
+  const mb = $('#upMessageBtn');
+  mb.onclick = () => {
+    closeUserProfile();
+    const member = (State.members || []).find(m => m.id === u.id) || u;
+    openDM(member); switchTab('chat');
+  };
+  // Posts grid
+  const grid = $('#upPostsGrid');
+  grid.innerHTML = '';
+  if (!data.posts || data.posts.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'ig-grid-empty';
+    empty.innerHTML = '<i data-lucide="camera" style="width:36px;height:36px;color:var(--muted-2);display:block;margin:0 auto 8px"></i>No posts yet';
+    grid.appendChild(empty);
+  } else {
+    data.posts.forEach(p => grid.appendChild(buildGridCell(p)));
+  }
+  refreshIcons();
+}
+
+function buildGridCell(p) {
+  const cell = document.createElement('div');
+  cell.className = 'ig-grid-cell';
+  if (p.imageUrl) {
+    const img = document.createElement('img');
+    img.src = p.imageUrl; img.alt = ''; img.loading = 'lazy';
+    img.addEventListener('error', () => {
+      img.remove();
+      const fb = document.createElement('div');
+      fb.className = 'text-only';
+      fb.textContent = p.text || '(image)';
+      cell.appendChild(fb);
+    });
+    cell.appendChild(img);
+  } else if (p.text) {
+    const div = document.createElement('div');
+    div.className = 'text-only';
+    div.textContent = p.text.slice(0, 200);
+    cell.appendChild(div);
+  }
+  if (p.likeCount > 0 || p.commentCount > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.innerHTML = `<i data-lucide="heart"></i>${p.likeCount || 0}`;
+    cell.appendChild(badge);
+  }
+  cell.addEventListener('click', () => {
+    if (p.imageUrl) openLightbox(p.imageUrl, '');
+    else toast(p.text || '');
+  });
+  return cell;
+}
+
+function bindUserProfileSheet() {
+  const back = $('#upBackBtn');
+  if (back) back.addEventListener('click', closeUserProfile);
+  const more = $('#upMoreBtn');
+  if (more) more.addEventListener('click', () => {
+    if (!_activeOtherProfile) return;
+    const u = _activeOtherProfile.user;
+    const rel = _activeOtherProfile.relationship;
+    const wrap = document.createElement('div');
+    wrap.className = 'more-menu';
+    wrap.innerHTML = '<div class="bd"></div>';
+    wrap.querySelector('.bd').addEventListener('click', () => wrap.remove());
+    const card = document.createElement('div');
+    card.className = 'card';
+    const items = [];
+    items.push({ label: rel.iBlocked ? 'Unblock' : 'Block', danger: true, action: async () => {
+      wrap.remove();
+      if (!confirm(`${rel.iBlocked ? 'Unblock' : 'Block'} @${u.username}?`)) return;
+      try {
+        await api('/user/' + (rel.iBlocked ? 'unblock' : 'block'), { method:'POST', body:{ targetId: u.id }});
+        toast(rel.iBlocked ? 'Unblocked' : 'Blocked', 'success');
+        if (!rel.iBlocked) {
+          closeUserProfile();
+          loadMembers();
+          loadPosts();
+        } else {
+          openUserProfile(u.id);
+        }
+      } catch (e) { toast(e.message || 'Failed', 'error'); }
+    }});
+    items.push({ label: 'Copy username', action: async () => {
+      wrap.remove();
+      try { await navigator.clipboard.writeText('@' + u.username); toast('Copied'); }
+      catch (_) { toast('Copy failed', 'error'); }
+    }});
+    items.push({ label: 'Report', danger: true, action: () => { wrap.remove(); toast('Reported. Thanks.'); }});
+    items.push({ label: 'Cancel', cancel: true, action: () => wrap.remove() });
+    items.forEach(it => {
+      const b = document.createElement('button');
+      b.className = 'item' + (it.danger ? ' danger' : '') + (it.cancel ? ' cancel' : '');
+      b.textContent = it.label;
+      b.addEventListener('click', it.action);
+      card.appendChild(b);
+    });
+    wrap.appendChild(card);
+    document.body.appendChild(wrap);
+  });
+}
+
+// ============================================================
+// ===== Own profile view (IG-style) — render + edit toggle
+// ============================================================
+let _profileTab = 'posts';
+
+async function renderOwnProfile() {
+  if (!State.user) return;
+  // Fetch fresh data (own profile uses same endpoint)
+  try {
+    const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
+    const u = data.user;
+    $('#profileDisplayName').textContent = u.displayName || '';
+    $('#profileUsername').textContent = '@' + u.username + (u.bio ? '' : '');
+    $('#profileBio').textContent = u.bio || '';
+    $('#statPosts').textContent = String(u.postsCount || 0);
+    $('#statFollowers').textContent = String(u.followers || 0);
+    $('#statFollowing').textContent = String(u.following || 0);
+    renderAvatar($('#profileAvatarPreview'), u);
+    // Grid
+    const grid = $('#profilePostsGrid');
+    grid.innerHTML = '';
+    let postsToShow = data.posts;
+    if (_profileTab === 'saved') {
+      // Use the bookmark localStorage to filter ALL posts
+      const saved = getSaved();
+      postsToShow = (State.posts || []).filter(p => saved[p.id]).map(p => ({
+        id: p.id, imageUrl: p.imageUrl, text: p.text,
+        likeCount: p.likeCount, commentCount: p.commentCount
+      }));
+    }
+    if (!postsToShow || postsToShow.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'ig-grid-empty';
+      empty.innerHTML = _profileTab === 'saved'
+        ? '<i data-lucide="bookmark" style="width:36px;height:36px;color:var(--muted-2);display:block;margin:0 auto 8px"></i>Posts you save appear here'
+        : '<i data-lucide="camera" style="width:36px;height:36px;color:var(--muted-2);display:block;margin:0 auto 8px"></i>Share your first post';
+      grid.appendChild(empty);
+    } else {
+      postsToShow.forEach(p => grid.appendChild(buildGridCell(p)));
+    }
+    refreshIcons();
+  } catch (e) {
+    console.warn('renderOwnProfile failed', e.message);
+  }
+}
+
+function bindProfileView() {
+  // Edit toggle
+  const edit = $('#editProfileBtn');
+  if (edit) edit.addEventListener('click', () => {
+    $('#profileViewMode').classList.add('hidden');
+    $('#profileEditMode').classList.remove('hidden');
+    renderAvatar($('#profileEditAvatar'), State.user);
+    // Populate form
+    const f = $('#profileForm');
+    if (f) {
+      const dn = f.querySelector('[name="displayName"]');
+      const un = f.querySelector('[name="username"]');
+      const bio = f.querySelector('[name="bio"]');
+      if (dn) dn.value = State.user.displayName || '';
+      if (un) un.value = State.user.username || '';
+      if (bio) bio.value = State.user.bio || '';
+    }
+    springIn($('#profileEditMode'));
+  });
+  const cancel = $('#cancelEditBtn');
+  if (cancel) cancel.addEventListener('click', () => {
+    $('#profileEditMode').classList.add('hidden');
+    $('#profileViewMode').classList.remove('hidden');
+    springIn($('#profileViewMode'));
+  });
+  // Share
+  const sh = $('#shareProfileBtn');
+  if (sh) sh.addEventListener('click', async () => {
+    const url = location.origin + '/#user=' + encodeURIComponent(State.user.username);
+    try {
+      if (navigator.share) await navigator.share({ title: '@' + State.user.username, url });
+      else { await navigator.clipboard.writeText(url); toast('Link copied'); }
+    } catch (_) {}
+  });
+  // Grid tabs
+  $$('.ig-tab').forEach(t => t.addEventListener('click', () => {
+    $$('.ig-tab').forEach(x => x.classList.toggle('active', x === t));
+    _profileTab = t.dataset.grid;
+    renderOwnProfile();
+  }));
+  // Stat buttons → toggle which list shown? For now they're decorative
+}
+
 // ===== Search =====
 function bindSearch() {
   const inp = $('#searchInput');
@@ -2066,7 +2452,7 @@ function renderSearch(query) {
     send.title = 'Message';
     send.addEventListener('click', (e) => { e.stopPropagation(); openDM(u); switchTab('chat'); });
     li.appendChild(send);
-    li.addEventListener('click', () => { openDM(u); switchTab('chat'); });
+    li.addEventListener('click', () => openUserProfile(u.id));
     list.appendChild(li);
   });
   refreshIcons();
@@ -2080,6 +2466,8 @@ function bindLightbox() {
       if (!$('#lightbox').classList.contains('hidden')) closeLightbox();
       if (!$('#scheduleModal').classList.contains('hidden')) $('#scheduleModal').classList.add('hidden');
       if (!$('#commentsSheet').classList.contains('hidden')) closeCommentsSheet();
+      if (!$('#notifSheet').classList.contains('hidden')) closeNotifications();
+      if (!$('#userProfileSheet').classList.contains('hidden')) closeUserProfile();
       if (!$('#storyViewer').classList.contains('hidden')) closeStory();
       const mm = document.querySelector('.more-menu'); if (mm) mm.remove();
     }
@@ -2110,6 +2498,9 @@ function boot() {
   bindCommentsSheet();
   bindStoryViewer();
   bindSearch();
+  bindNotifSheet();
+  bindUserProfileSheet();
+  bindProfileView();
   refreshIcons();
 
   // Pause/resume polls when the tab is hidden to save data

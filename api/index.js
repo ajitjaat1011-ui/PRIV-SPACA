@@ -41,8 +41,9 @@ let localCache = {
   messages: [],
   scheduledMessages: [],
   posts: [],
-  typing: {},      // { roomId: { userId: timestamp } }
-  heartbeat: {},   // { userId: timestamp }
+  notifications: [],   // { id, userId (recipient), kind, fromUserId, postId?, commentId?, text?, createdAt, seenAt? }
+  typing: {},          // { roomId: { userId: timestamp } }
+  heartbeat: {},       // { userId: timestamp }
 };
 
 let cacheTimestamp = 0;
@@ -227,6 +228,7 @@ async function fetchDatabase() {
       messages: Array.isArray(remote.messages) ? remote.messages : [],
       scheduledMessages: Array.isArray(remote.scheduledMessages) ? remote.scheduledMessages : [],
       posts: Array.isArray(remote.posts) ? remote.posts : [],
+      notifications: Array.isArray(remote.notifications) ? remote.notifications : [],
       typing: remote.typing && typeof remote.typing === 'object' ? remote.typing : {},
       heartbeat: remote.heartbeat && typeof remote.heartbeat === 'object' ? remote.heartbeat : {},
     };
@@ -613,14 +615,25 @@ app.post('/api/user/update', authMiddleware, async (req, res) => {
 app.get('/api/users', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
   const now = nowMs();
-  const list = db.users.map(u => {
-    const hb = db.heartbeat[u.id] || 0;
-    return {
-      ...sanitizeUser(u),
-      online: now - hb < 45000, // <45s = online
-      lastSeen: hb,
-    };
+  const me = db.users.find(u => u.id === req.userId);
+  const myBlocked = new Set((me && me.blocked) || []);
+  // Also hide users who blocked ME
+  const blockedMe = new Set();
+  db.users.forEach(u => {
+    if (u.id !== req.userId && Array.isArray(u.blocked) && u.blocked.includes(req.userId)) {
+      blockedMe.add(u.id);
+    }
   });
+  const list = db.users
+    .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
+    .map(u => {
+      const hb = db.heartbeat[u.id] || 0;
+      return {
+        ...sanitizeUser(u),
+        online: now - hb < 45000,
+        lastSeen: hb,
+      };
+    });
   res.json({ users: list });
 });
 
@@ -737,6 +750,14 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       createdAt: nowMs(),
     };
     db.messages.push(msg);
+    // Fire 'message' notification(s) for the recipient(s)
+    if (roomId.startsWith('dm:')) {
+      const parts = roomId.slice(3).split(':');
+      parts.filter(uid2 => uid2 !== req.userId).forEach(recip => {
+        pushNotification(db, recip, 'message', req.userId, { text: (cleanText || (cleanImage ? '📷 Photo' : '')).slice(0, 80) });
+      });
+    }
+    // For group messages we skip notifications (avoids ringing every member on every chat) — IG doesn't either
     await saveDatabase(db, false);
     res.json({ message: { ...msg, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } } });
   } catch (e) {
@@ -830,10 +851,218 @@ app.post('/api/messages/scheduled/cancel', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Notifications + Follow/Block helpers ----------
+
+/**
+ * Push a notification onto the recipient's queue.
+ * Dedupes within a 30-second window to prevent spam from repeated like-toggles.
+ * Does NOT trigger self-notifications (user can't notify themselves).
+ */
+function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
+  if (!recipientId || !fromUserId || recipientId === fromUserId) return null;
+  if (!Array.isArray(db.notifications)) db.notifications = [];
+  // Honor block list — if recipient blocked the from-user, drop
+  const recipient = db.users.find(u => u.id === recipientId);
+  if (recipient && Array.isArray(recipient.blocked) && recipient.blocked.includes(fromUserId)) return null;
+  const now = nowMs();
+  // Dedupe: same (recipient, fromUser, kind, postId) within 30s
+  const dupe = db.notifications.find(n =>
+    n.userId === recipientId &&
+    n.kind === kind &&
+    n.fromUserId === fromUserId &&
+    n.postId === (extra.postId || null) &&
+    (now - n.createdAt) < 30000
+  );
+  if (dupe) {
+    // Refresh its timestamp so it stays at the top
+    dupe.createdAt = now;
+    delete dupe.seenAt;
+    return dupe;
+  }
+  const author = db.users.find(u => u.id === fromUserId);
+  const snapshot = author ? {
+    id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || ''
+  } : null;
+  const notif = {
+    id: uid('ntf'),
+    userId: recipientId,
+    kind,                        // 'like' | 'comment' | 'follow' | 'message'
+    fromUserId,
+    fromSnapshot: snapshot,
+    postId: extra.postId || null,
+    commentId: extra.commentId || null,
+    text: extra.text || null,    // comment text or message preview
+    createdAt: now,
+  };
+  db.notifications.push(notif);
+  // Cap at 500 per user to prevent runaway growth
+  const perUser = db.notifications.filter(n => n.userId === recipientId);
+  if (perUser.length > 500) {
+    const oldest = perUser.slice(0, perUser.length - 500).map(n => n.id);
+    db.notifications = db.notifications.filter(n => !oldest.includes(n.id));
+  }
+  return notif;
+}
+
+// GET /api/notifications — list mine, newest first
+app.get('/api/notifications', authMiddleware, async (req, res) => {
+  const db = await fetchDatabase();
+  const mine = (db.notifications || [])
+    .filter(n => n.userId === req.userId)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 200);
+  // Enrich with current author data when available
+  const enriched = mine.map(n => {
+    const author = db.users.find(u => u.id === n.fromUserId);
+    return {
+      ...n,
+      from: author ? sanitizeUser(author) : (n.fromSnapshot || { id: n.fromUserId, displayName: 'Member', username: 'member' })
+    };
+  });
+  const unread = enriched.filter(n => !n.seenAt).length;
+  res.json({ notifications: enriched, unread });
+});
+
+// POST /api/notifications/seen — mark all my notifications as seen
+app.post('/api/notifications/seen', authMiddleware, async (req, res) => {
+  const db = await fetchDatabase();
+  const now = nowMs();
+  let changed = 0;
+  (db.notifications || []).forEach(n => {
+    if (n.userId === req.userId && !n.seenAt) { n.seenAt = now; changed++; }
+  });
+  if (changed > 0) await saveDatabase(db, true); // ephemeral — okay if it batches
+  res.json({ ok: true, updated: changed });
+});
+
+// POST /api/notifications/clear — delete all my notifications
+app.post('/api/notifications/clear', authMiddleware, async (req, res) => {
+  const db = await fetchDatabase();
+  const before = (db.notifications || []).length;
+  db.notifications = (db.notifications || []).filter(n => n.userId !== req.userId);
+  if (before !== db.notifications.length) await saveDatabase(db, false);
+  res.json({ ok: true, removed: before - db.notifications.length });
+});
+
+// ---------- Follow / Unfollow / Block ----------
+
+app.post('/api/user/follow', authMiddleware, async (req, res) => {
+  const { targetId } = req.body || {};
+  if (!targetId || targetId === req.userId) return res.status(400).json({ error: 'Invalid target' });
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  const target = db.users.find(u => u.id === targetId);
+  if (!me || !target) return res.status(404).json({ error: 'User not found' });
+  // Blocked relationships prevent follow
+  if (Array.isArray(target.blocked) && target.blocked.includes(req.userId)) {
+    return res.status(403).json({ error: 'Cannot follow this user' });
+  }
+  if (Array.isArray(me.blocked) && me.blocked.includes(targetId)) {
+    return res.status(403).json({ error: 'Unblock this user first' });
+  }
+  me.following = Array.isArray(me.following) ? me.following : [];
+  target.followers = Array.isArray(target.followers) ? target.followers : [];
+  if (!me.following.includes(targetId)) me.following.push(targetId);
+  if (!target.followers.includes(req.userId)) target.followers.push(req.userId);
+  pushNotification(db, targetId, 'follow', req.userId);
+  await saveDatabase(db, false);
+  res.json({ ok: true, following: me.following.length, followers: target.followers.length });
+});
+
+app.post('/api/user/unfollow', authMiddleware, async (req, res) => {
+  const { targetId } = req.body || {};
+  if (!targetId) return res.status(400).json({ error: 'targetId required' });
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  const target = db.users.find(u => u.id === targetId);
+  if (!me || !target) return res.status(404).json({ error: 'User not found' });
+  me.following = (me.following || []).filter(id => id !== targetId);
+  target.followers = (target.followers || []).filter(id => id !== req.userId);
+  await saveDatabase(db, false);
+  res.json({ ok: true });
+});
+
+app.post('/api/user/block', authMiddleware, async (req, res) => {
+  const { targetId } = req.body || {};
+  if (!targetId || targetId === req.userId) return res.status(400).json({ error: 'Invalid target' });
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  const target = db.users.find(u => u.id === targetId);
+  if (!me || !target) return res.status(404).json({ error: 'User not found' });
+  me.blocked = Array.isArray(me.blocked) ? me.blocked : [];
+  if (!me.blocked.includes(targetId)) me.blocked.push(targetId);
+  // Mutual unfollow
+  me.following = (me.following || []).filter(id => id !== targetId);
+  target.followers = (target.followers || []).filter(id => id !== req.userId);
+  target.following = (target.following || []).filter(id => id !== req.userId);
+  me.followers = (me.followers || []).filter(id => id !== targetId);
+  // Remove notifications involving the blocked user (both directions)
+  db.notifications = (db.notifications || []).filter(n => !(
+    (n.userId === req.userId && n.fromUserId === targetId) ||
+    (n.userId === targetId && n.fromUserId === req.userId)
+  ));
+  await saveDatabase(db, false);
+  res.json({ ok: true });
+});
+
+app.post('/api/user/unblock', authMiddleware, async (req, res) => {
+  const { targetId } = req.body || {};
+  if (!targetId) return res.status(400).json({ error: 'targetId required' });
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  if (!me) return res.status(404).json({ error: 'Not found' });
+  me.blocked = (me.blocked || []).filter(id => id !== targetId);
+  await saveDatabase(db, false);
+  res.json({ ok: true });
+});
+
+// GET /api/user/:id/profile — public profile of any user
+app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
+  const targetId = req.params.id;
+  const db = await fetchDatabase();
+  const target = db.users.find(u => u.id === targetId);
+  if (!target) return res.status(404).json({ error: 'Not found' });
+  const me = db.users.find(u => u.id === req.userId);
+  const blockedMe = Array.isArray(target.blocked) && target.blocked.includes(req.userId);
+  const iBlocked = me && Array.isArray(me.blocked) && me.blocked.includes(targetId);
+  if (blockedMe) return res.status(403).json({ error: 'Profile unavailable' });
+  const posts = (db.posts || [])
+    .filter(p => p.userId === targetId)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(p => ({
+      id: p.id, imageUrl: p.imageUrl, text: p.text, createdAt: p.createdAt,
+      likeCount: (p.likes || []).length, commentCount: (p.comments || []).length,
+    }));
+  res.json({
+    user: {
+      ...sanitizeUser(target),
+      followers: (target.followers || []).length,
+      following: (target.following || []).length,
+      postsCount: posts.length,
+    },
+    posts,
+    relationship: {
+      isMe: targetId === req.userId,
+      iFollow: !!(me && (me.following || []).includes(targetId)),
+      followsMe: Array.isArray(target.following) && target.following.includes(req.userId),
+      iBlocked,
+    }
+  });
+});
+
 // ---------- Social Feed / Posts ----------
 app.get('/api/posts', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  const myBlocked = new Set((me && me.blocked) || []);
+  const blockedMe = new Set();
+  db.users.forEach(u => {
+    if (u.id !== req.userId && Array.isArray(u.blocked) && u.blocked.includes(req.userId)) {
+      blockedMe.add(u.id);
+    }
+  });
   const list = db.posts
+    .filter(p => !myBlocked.has(p.userId) && !blockedMe.has(p.userId))
     .slice()
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => {
@@ -897,6 +1126,10 @@ app.post('/api/posts/like', authMiddleware, async (req, res) => {
   let liked;
   if (idx === -1) { post.likes.push(req.userId); liked = true; }
   else { post.likes.splice(idx, 1); liked = false; }
+  // Fire notification only on a NEW like (not on unlike)
+  if (liked) {
+    pushNotification(db, post.userId, 'like', req.userId, { postId: post.id });
+  }
   await saveDatabase(db, false);
   res.json({ liked, likeCount: post.likes.length });
 });
@@ -922,6 +1155,8 @@ app.post('/api/posts/comment', authMiddleware, async (req, res) => {
     createdAt: nowMs(),
   };
   post.comments.push(comment);
+  // Notify post owner of new comment (skipped automatically if commenter == owner)
+  pushNotification(db, post.userId, 'comment', req.userId, { postId: post.id, commentId: comment.id, text: cleanText.slice(0, 140) });
   await saveDatabase(db, false);
   res.json({ comment: { ...comment, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } } });
 });
