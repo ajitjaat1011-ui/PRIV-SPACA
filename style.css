@@ -1396,3 +1396,43 @@ img{user-select:none;-webkit-user-drag:none}
   50% { transform: scale(1.1); opacity: 0.7; }
   100% { transform: scale(1); opacity: 1; }
 }
+.call-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+  z-index: 10000; display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(8px);
+}
+.call-overlay.hidden { display: none; }
+.call-box {
+  width: 100%; max-width: 400px; height: 100%; max-height: 700px;
+  background: var(--bg); display: flex; flex-direction: column;
+  position: relative; overflow: hidden;
+}
+@media (min-width: 480px) { .call-box { border-radius: 20px; height: 80vh; } }
+.call-info { text-align: center; padding: 40px 20px; z-index: 2; flex: 1; }
+.call-name { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+.call-videos {
+  position: absolute; inset: 0; z-index: 1; background: #000;
+}
+.call-videos.hidden { display: none; }
+#rtcRemoteVideo { width: 100%; height: 100%; object-fit: cover; }
+#rtcLocalVideo {
+  position: absolute; bottom: 120px; right: 20px; width: 100px; height: 150px;
+  object-fit: cover; border-radius: 12px; border: 2px solid rgba(255,255,255,0.2);
+  background: #333; z-index: 2;
+}
+.call-controls {
+  position: absolute; bottom: 40px; left: 0; right: 0;
+  display: flex; justify-content: center; gap: 40px; z-index: 3;
+}
+.call-btn {
+  width: 64px; height: 64px; border-radius: 50%; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-size: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.call-btn.accept { background: #2ecc71; animation: pulse-green 1.5s infinite; }
+.call-btn.reject { background: #e74c3c; }
+@keyframes pulse-green {
+  0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); }
+  70% { box-shadow: 0 0 0 20px rgba(46, 204, 113, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
+}

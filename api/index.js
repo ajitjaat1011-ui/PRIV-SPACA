@@ -1590,6 +1590,16 @@ app.post('/api/posts/like', authMiddleware, async (req, res) => {
   res.json({ liked, likeCount: post.likes.length });
 });
 
+app.post('/api/rtc/signal', authMiddleware, async (req, res) => {
+  const { targetId, signal } = req.body || {};
+  if (!targetId || !signal) return res.status(400).json({ error: 'Missing data' });
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: req.userId, displayName: 'Member', username: 'member' };
+  _pushEvent(targetId, 'rtc_signal', { fromId: req.userId, author, signal });
+  res.json({ ok: true });
+});
+
 app.post('/api/posts/comment', authMiddleware, async (req, res) => {
   const { postId, text } = req.body || {};
   if (!postId) return res.status(400).json({ error: 'postId required' });

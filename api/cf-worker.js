@@ -1277,6 +1277,18 @@ app.post('/api/posts/like', requireAuth, async (c) => {
   return c.json({ liked, likeCount: post.likes.length });
 });
 
+app.post('/api/rtc/signal', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { targetId, signal } = body;
+  if (!targetId || !signal) return c.json({ error: 'Missing data' }, 400);
+  const myId = c.get('userId');
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === myId);
+  const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: myId, displayName: 'Member', username: 'member' };
+  _pushEvent(targetId, 'rtc_signal', { fromId: myId, author, signal });
+  return c.json({ ok: true });
+});
+
 app.post('/api/posts/comment', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { postId, text } = body;
