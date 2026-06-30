@@ -476,6 +476,21 @@ function clearPin(group) {
 function bindAuth() {
   $$('.pin-input').forEach(g => bindPinGroup(g));
 
+  // Terms modal open/close
+  const openTermsBtn = $('#openTermsBtn');
+  if (openTermsBtn) openTermsBtn.addEventListener('click', () => {
+    const m = $('#termsModal');
+    m.classList.remove('hidden');
+    const card = m.querySelector('.modal-card');
+    if (card) springIn(card, { duration: 0.28 });
+    refreshIcons();
+  });
+  $$('[data-close-terms]').forEach(b => b.addEventListener('click', () => {
+    $('#termsModal').classList.add('hidden');
+  }));
+  const tm = $('#termsModal');
+  if (tm) tm.addEventListener('click', (e) => { if (e.target === tm) tm.classList.add('hidden'); });
+
   $$('.auth-tab').forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.authTab;
@@ -512,6 +527,20 @@ function bindAuth() {
     errEl.textContent = '';
     const pin = String(fd.get('pin') || '');
     if (!/^\d{4}$/.test(pin)) { errEl.textContent = 'Enter your 4-digit PIN'; return; }
+
+    // ---- Terms & Conditions check (defaults checked, must be checked to proceed) ----
+    const termsBox = $('#termsCheckbox');
+    const termsRow = e.target.querySelector('.terms-row');
+    if (termsBox && !termsBox.checked) {
+      errEl.textContent = "You must accept the Terms & Community Guidelines to create an account.";
+      if (termsRow) {
+        termsRow.classList.add('invalid');
+        pulseEl(termsRow);
+        setTimeout(() => termsRow.classList.remove('invalid'), 2000);
+      }
+      return;
+    }
+
     const btn = e.target.querySelector('button[type=submit]');
     const orig = btn.innerHTML;
     btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Creating…';
@@ -522,6 +551,8 @@ function bindAuth() {
         displayName: String(fd.get('displayName') || '').trim(),
         password: String(fd.get('password') || ''),
         pin,
+        termsAccepted: true,
+        termsVersion: '1.0',
       }});
       acceptSession(data);
     } catch (err) { errEl.textContent = err.message || 'Signup failed'; }
@@ -614,6 +645,7 @@ async function loadMembers() {
   } catch (_) {}
 }
 
+let _lastMembersSig = '';
 function renderMembers() {
   const list = $('#membersList');
   if (!list) return;
@@ -622,6 +654,12 @@ function renderMembers() {
   const me = State.members.find(u => u.id === meId);
   $('#memberCount').textContent = String(State.members.length);
   const ordered = me ? [me, ...others] : others;
+  // Skip rebuild if nothing visible changed (members list is shown in the chat side panel)
+  const typingIds = (State.typingUsers || []).map(t => t.id).sort().join(',');
+  const activeDM = (State.currentRoom.kind === 'dm' && State.currentRoom.target) ? State.currentRoom.target.id : '';
+  const sig = ordered.map(u => u.id + ':' + (u.online?1:0) + ':' + (u.photoUrl?1:0)).join('|') + '||' + typingIds + '||' + activeDM;
+  if (sig === _lastMembersSig && list.children.length > 0) return;
+  _lastMembersSig = sig;
   list.innerHTML = '';
   ordered.forEach(u => {
     const li = document.createElement('li');
@@ -705,6 +743,10 @@ async function loadMessages(scrollEnd) {
 }
 
 let _previousMessageIds = new Set();
+let _lastMessageRenderSig = '';
+function _messagesRenderSig(msgs) {
+  return msgs.map(m => m.id + ':' + (m.text||'').length + ':' + (m.imageUrl?'1':'0')).join('|');
+}
 function renderMessages(forceScroll) {
   const list = $('#messagesList');
   const scroller = $('#messagesScroll');
@@ -712,6 +754,12 @@ function renderMessages(forceScroll) {
   const currentIds = new Set(State.messages.map(m => m.id));
   const newOnes = new Set();
   currentIds.forEach(id => { if (!_previousMessageIds.has(id)) newOnes.add(id); });
+  // === Skip rebuild if nothing actually changed (anti-flicker) ===
+  const sig = _messagesRenderSig(State.messages);
+  if (sig === _lastMessageRenderSig && newOnes.size === 0 && !forceScroll && list.children.length > 0) {
+    return;
+  }
+  _lastMessageRenderSig = sig;
   _previousMessageIds = currentIds;
   list.innerHTML = '';
   if (State.messages.length === 0) {
@@ -1155,21 +1203,26 @@ async function loadPosts() {
 // "Stories" — synthesized from the active members directory.
 // Each member gets a story cell; clicking opens a story viewer.
 let _storiesRendered = false;
+let _lastStoriesSig = '';
 function renderStoriesRail() {
   const rail = $('#storiesRail');
   if (!rail) return;
-  rail.innerHTML = '';
   if (!State.members || State.members.length === 0) {
     rail.style.display = 'none';
     return;
   }
-  rail.style.display = '';
   const meId = State.user && State.user.id;
   const me = State.members.find(m => m.id === meId) || State.user;
-  rail.appendChild(buildStoryCell(me, true));
   const others = State.members
     .filter(m => m.id !== meId)
     .sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+  // Signature based on member ids + viewed-state of each (so ring colour-change re-renders)
+  const sig = [me && me.id, ...others.map(o => o.id + ':' + (isStoryViewed(o.id)?'v':'u'))].join('|');
+  if (sig === _lastStoriesSig && rail.children.length > 0) return;
+  _lastStoriesSig = sig;
+  rail.style.display = '';
+  rail.innerHTML = '';
+  rail.appendChild(buildStoryCell(me, true));
   others.forEach(m => rail.appendChild(buildStoryCell(m, false)));
   if (!_storiesRendered) {
     _storiesRendered = true;
@@ -1247,16 +1300,41 @@ function postDateLabel(ts) {
 }
 
 let _previousPostIds = new Set();
+let _postCardCache = new Map(); // id -> { card, sig } so we only re-render when a post's data actually changed
+function _postCardSignature(p) {
+  // Anything visible on the card that can change:
+  return [
+    p.id,
+    p.likeCount || (p.likes || []).length,
+    p.commentCount || (p.comments || []).length,
+    (p.likes || []).join(','),  // who liked (for "liked by"/dot)
+    p.text || '',
+    p.imageUrl || '',
+  ].join('|');
+}
+
 function renderPosts() {
   renderStoriesRail();
   const list = $('#feedList');
+  const meId = State.user && State.user.id;
   const currentIds = new Set(State.posts.map(p => p.id));
   const newOnes = new Set();
   currentIds.forEach(id => { if (!_previousPostIds.has(id)) newOnes.add(id); });
   const isFirstRender = _previousPostIds.size === 0;
-  _previousPostIds = currentIds;
-  list.innerHTML = '';
+
+  // ===== Smart incremental DOM diff (no flicker) =====
+  // 1) Remove cards no longer in State.posts
+  Array.from(list.children).forEach(child => {
+    const id = child.dataset && child.dataset.id;
+    if (id && !currentIds.has(id)) {
+      child.remove();
+      _postCardCache.delete(id);
+    }
+  });
+
+  // Handle empty state
   if (State.posts.length === 0) {
+    list.innerHTML = '';
     const e = document.createElement('div');
     e.className = 'empty-state';
     e.innerHTML = `
@@ -1266,17 +1344,39 @@ function renderPosts() {
     `;
     list.appendChild(e);
     springIn(e);
+    _previousPostIds = currentIds;
+    refreshIcons();
+    return;
+  } else {
+    // Remove any leftover empty-state node
+    const emptyState = list.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
   }
+
+  // 2) For each post in order, ensure the right card is at the right position
   State.posts.forEach((p, idx) => {
-    const card = renderPost(p);
-    list.appendChild(card);
-    if (isFirstRender) {
-      // Stagger the initial render
-      springIn(card, { delay: 0.04 * Math.min(idx, 6) });
-    } else if (newOnes.has(p.id)) {
-      slideUp(card);
+    const sig = _postCardSignature(p);
+    let cached = _postCardCache.get(p.id);
+    let card;
+    if (cached && cached.sig === sig && cached.card.isConnected) {
+      // Unchanged — reuse
+      card = cached.card;
+    } else {
+      // Changed (or new) — build (or rebuild) the card
+      card = renderPost(p);
+      _postCardCache.set(p.id, { card, sig });
     }
+    // Ensure correct position in DOM
+    const existing = list.children[idx];
+    if (existing !== card) {
+      list.insertBefore(card, existing || null);
+    }
+    // Animate ONLY truly new posts (not reused or rebuilt-on-change)
+    if (newOnes.has(p.id) && !isFirstRender) slideUp(card);
+    else if (isFirstRender) springIn(card, { delay: 0.04 * Math.min(idx, 6) });
   });
+
+  _previousPostIds = currentIds;
   refreshIcons();
 }
 
@@ -1372,7 +1472,7 @@ function renderPost(p) {
   const right = document.createElement('div'); right.className = 'action-grp';
 
   const likeBtn = document.createElement('button');
-  likeBtn.className = 'act-btn' + (liked ? ' liked' : '');
+  likeBtn.className = 'act-btn like-btn' + (liked ? ' liked' : '');
   likeBtn.setAttribute('aria-label', liked ? 'Unlike' : 'Like');
   likeBtn.innerHTML = '<i data-lucide="heart"></i>';
   likeBtn.addEventListener('click', () => toggleLike(p, card));
@@ -1525,15 +1625,79 @@ function renderPost(p) {
 
 async function toggleLike(p, card) {
   const meId = State.user && State.user.id;
+  const wasLiked = Array.isArray(p.likes) && p.likes.includes(meId);
+  // === Optimistic UI: update local state + DOM in-place immediately (no flicker) ===
+  p.likes = Array.isArray(p.likes) ? p.likes.slice() : [];
+  if (wasLiked) p.likes = p.likes.filter(x => x !== meId);
+  else if (!p.likes.includes(meId)) p.likes.push(meId);
+  p.likeCount = p.likes.length;
+  patchLikeUI(card, p, meId);
   try {
     const data = await api('/posts/like', { method: 'POST', body: { postId: p.id } });
-    p.likes = p.likes || [];
-    if (data.liked && !p.likes.includes(meId)) p.likes.push(meId);
-    if (!data.liked) p.likes = p.likes.filter(x => x !== meId);
+    // Sync with server's authoritative count (in case of race)
     p.likeCount = data.likeCount;
-    lastPostsSignature = '';
-    renderPosts();
-  } catch (e) { toast(e.message || 'Failed', 'error'); }
+    patchLikeUI(card, p, meId);
+    // Mark signature so the next poll comparison doesn't re-render unnecessarily
+    lastPostsSignature = _computePostsSignature(State.posts);
+  } catch (e) {
+    // Roll back optimistic change
+    if (wasLiked && !p.likes.includes(meId)) p.likes.push(meId);
+    else p.likes = p.likes.filter(x => x !== meId);
+    p.likeCount = p.likes.length;
+    patchLikeUI(card, p, meId);
+    toast(e.message || 'Failed', 'error');
+  }
+}
+
+/** Update only the like button + "Liked by" row inside a post card; no full re-render. */
+function patchLikeUI(card, p, meId) {
+  if (!card) return;
+  const liked = Array.isArray(p.likes) && p.likes.includes(meId);
+  const btn = card.querySelector('.act-btn.like-btn') || card.querySelectorAll('.post-actions .act-btn')[0];
+  if (btn) {
+    btn.classList.toggle('liked', liked);
+    btn.setAttribute('aria-label', liked ? 'Unlike' : 'Like');
+    // Pop animation only on a NEW like (not on unlike)
+    if (liked) pulseEl(btn.querySelector('i') || btn);
+  }
+  // Update liked-by row
+  let lb = card.querySelector('.liked-by');
+  if (p.likeCount > 0) {
+    if (!lb) {
+      // Insert after actions
+      const actions = card.querySelector('.post-actions');
+      lb = document.createElement('div');
+      lb.className = 'liked-by';
+      if (actions) actions.insertAdjacentElement('afterend', lb);
+      else card.appendChild(lb);
+    }
+    const liker = (State.members || []).find(m => p.likes && p.likes.includes(m.id));
+    lb.innerHTML = '';
+    if (liker) {
+      const stack = document.createElement('span'); stack.className = 'stack';
+      const a = document.createElement('span'); a.className = 'avatar';
+      renderAvatar(a, liker);
+      stack.appendChild(a);
+      lb.appendChild(stack);
+    }
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    if (liker && p.likeCount === 1) {
+      txt.innerHTML = `Liked by <strong>${escapeHtml(liker.username)}</strong>`;
+    } else if (liker && p.likeCount > 1) {
+      const others = p.likeCount - 1;
+      txt.innerHTML = `Liked by <strong>${escapeHtml(liker.username)}</strong> and <strong>${others} other${others === 1 ? '' : 's'}</strong>`;
+    } else {
+      txt.innerHTML = `<strong>${p.likeCount}</strong> ${p.likeCount === 1 ? 'like' : 'likes'}`;
+    }
+    lb.appendChild(txt);
+  } else if (lb) {
+    lb.remove();
+  }
+}
+
+function _computePostsSignature(posts) {
+  return (posts || []).map(p => p.id + ':' + (p.likeCount||0) + ':' + (p.commentCount||0)).join('|');
 }
 
 function getSaved() {
@@ -2465,6 +2629,7 @@ function bindLightbox() {
     if (e.key === 'Escape') {
       if (!$('#lightbox').classList.contains('hidden')) closeLightbox();
       if (!$('#scheduleModal').classList.contains('hidden')) $('#scheduleModal').classList.add('hidden');
+      if (!$('#termsModal').classList.contains('hidden')) $('#termsModal').classList.add('hidden');
       if (!$('#commentsSheet').classList.contains('hidden')) closeCommentsSheet();
       if (!$('#notifSheet').classList.contains('hidden')) closeNotifications();
       if (!$('#userProfileSheet').classList.contains('hidden')) closeUserProfile();
