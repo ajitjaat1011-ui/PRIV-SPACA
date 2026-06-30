@@ -56,6 +56,7 @@ let ghFileSha = null;
 
 // ---------- Helpers ----------
 const nowMs = () => Date.now();
+const sleepMs = (ms) => new Promise(r => setTimeout(r, ms));
 const uid = (p = 'id') => p + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
 const safeJson = (s, f) => { try { return JSON.parse(s); } catch (_) { return f; } };
 const isRepo = () => !!(GITHUB_PAT && GH_REPO && GH_BRANCH);
@@ -728,7 +729,7 @@ app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
   persistence: isRepo() ? 'github-repo' : 'in-memory',
   runtime: 'cloudflare-workers',
-  time: nowMs(), version: 'auth-storage-v5-reset-token',
+  time: nowMs(), version: 'auth-storage-v6-read-retry',
 }));
 
 app.get('/api/diag', async (c) => {
@@ -1030,12 +1031,21 @@ app.get('/api/messages', requireAuth, async (c) => {
     const parts = roomId.slice(3).split(':');
     if (!parts.includes(c.get('userId'))) return c.json({ error: 'Forbidden' }, 403);
   }
-  const db = await fetchDatabase();
-  const now = nowMs();
-  const list = db.messages
+  let db = await fetchDatabase({ fresh: true });
+  let now = nowMs();
+  let list = db.messages
     .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-200);
+  // GitHub contents can be briefly eventually-consistent across isolates. For chat,
+  // do a short fresh retry instead of returning an empty room right after send.
+  if (list.length === 0 && roomId.startsWith('dm:')) {
+    await sleepMs(900); cacheTimestamp = 0; db = await fetchDatabase({ fresh: true }); now = nowMs();
+    list = db.messages
+      .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(-200);
+  }
   const enriched = list.map(m => {
     const author = db.users.find(u => u.id === m.userId);
     if (author) return { ...m, author: sanitizeUser(author) };
@@ -1399,11 +1409,22 @@ app.get('/api/rtc/signals', requireAuth, async (c) => {
   const db = await fetchDatabase();
   const now = nowMs();
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
-  const signals = db.rtcSignals
+  let signals = db.rtcSignals
     .filter(x => x.targetId === myId && (x.createdAt || 0) > since)
     .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
     .slice(-30)
     .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
+  if (signals.length === 0) {
+    await sleepMs(900); cacheTimestamp = 0;
+    const db2 = await fetchDatabase({ fresh: true });
+    const now2 = nowMs();
+    db2.rtcSignals = Array.isArray(db2.rtcSignals) ? db2.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now2) : [];
+    signals = db2.rtcSignals
+      .filter(x => x.targetId === myId && (x.createdAt || 0) > since)
+      .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
+      .slice(-30)
+      .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
+  }
   return c.json({ signals, now });
 });
 
