@@ -647,14 +647,14 @@ app.get('/api/diag', async (c) => {
   };
   try {
     const db = await repoRead();
-    if (db && typeof db === 'object') {
+    if (db && typeof db === 'object' && !db._err && !db._httpError) {
       out.canRead = true;
       out.userCount = (db.users || []).length;
       out.canWrite = await repoWrite(db);
     } else if (!isPersist()) {
       out.canRead = true; out.canWrite = true;
       out.userCount = (localCache.users || []).length;
-    } else out.error = 'Read returned no data';
+    } else out.error = db ? (db._err || db._httpError || 'Read returned no data (not an array)') : 'Read returned no data';
   } catch (e) { out.error = e.message; }
   return c.json(out);
 });
