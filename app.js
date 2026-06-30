@@ -20,6 +20,7 @@ const State = {
   attach: null,
   postAttach: null,
   pollTimers: {},
+  rtcLastSignalAt: Number(localStorage.getItem('ps_rtcLastSignalAt') || 0),
 };
 
 const API_BASE = '/api';
@@ -96,7 +97,7 @@ function initWebRTC() {
 }
 
 function sendRTCSignal(targetId, signal) {
-  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => console.error('Signal error', e));
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => { console.error('Signal error', e); toast('Call signal failed: '+(e.message||''),'error'); });
 }
 
 async function startCall(video) {
@@ -520,6 +521,7 @@ function showApp() {
   hideSplash();
   refreshIcons();
   hydrateMeChips();
+  syncAdminVisibility();
   switchTab('feed');
   startPolls();
   loadAll();
@@ -762,6 +764,65 @@ function acceptSession(data) {
   toast('Welcome, ' + (State.user.displayName || State.user.username) + '!', 'success');
 }
 
+
+function isAdminMe() {
+  const u = State.user || {};
+  const keys = [u.username, u.email, u.id].map(x => String(x || '').toLowerCase());
+  return keys.includes('arvindjaat1011') || keys.includes('ajitjaat1011@gmail.com') || keys.includes('arvindjaat1011@gmail.com');
+}
+function syncAdminVisibility() {
+  const btn = $('#adminNavBtn');
+  if (btn) btn.classList.toggle('hidden', !isAdminMe());
+}
+function openPostComposer() {
+  switchTab('feed');
+  const modal = $('#postComposerModal');
+  const mount = $('#postModalMount');
+  const card = $('#inlineComposerCard');
+  if (!modal || !mount || !card) return;
+  mount.appendChild(card);
+  card.classList.remove('hidden');
+  modal.classList.remove('hidden');
+  setTimeout(() => { const input = $('#postInput'); if (input) input.focus(); }, 80);
+  refreshIcons();
+}
+function closePostComposer() {
+  const modal = $('#postComposerModal');
+  const card = $('#inlineComposerCard');
+  const feed = $('.feed-wrap');
+  const stories = $('#storiesRail');
+  if (card && feed) {
+    if (stories && stories.nextSibling) feed.insertBefore(card, stories.nextSibling);
+    else feed.prepend(card);
+    card.classList.add('hidden');
+  }
+  if (modal) modal.classList.add('hidden');
+}
+async function loadAdminPanel() {
+  if (!isAdminMe()) return;
+  const statsEl = $('#adminStats'), usersEl = $('#adminUsers'), postsEl = $('#adminPosts'), msgEl = $('#adminMessages');
+  if (statsEl) statsEl.innerHTML = '<div class="admin-stat"><strong>...</strong><span>Loading</span></div>';
+  try {
+    const data = await api('/admin/summary');
+    const stats = data.stats || {};
+    if (statsEl) statsEl.innerHTML = ['users','messages','posts','notifications'].map(k => `<div class="admin-stat"><strong>${escapeHtml(String(stats[k]||0))}</strong><span>${k}</span></div>`).join('');
+    if (usersEl) usersEl.innerHTML = (data.users||[]).map(u => `<div class="admin-item"><span class="avatar sm" data-admin-avatar="${escapeHtml(u.id)}"></span><div class="grow"><b>${escapeHtml(u.displayName||u.username)} ${u.isAdmin?'<span class="admin-pill">admin</span>':''}</b><small>@${escapeHtml(u.username||'')} · ${escapeHtml(u.email||'')}</small></div>${u.isAdmin?'':`<button data-admin-del-user="${escapeHtml(u.id)}">Delete</button>`}</div>`).join('') || '<div class="empty-state">No users</div>';
+    if (postsEl) postsEl.innerHTML = (data.recentPosts||[]).map(p => `<div class="admin-item"><div class="grow"><b>${escapeHtml((p.text||'Photo post').slice(0,70))}</b><small>${new Date(p.createdAt||0).toLocaleString()} · ${p.likeCount||0} likes · ${p.commentCount||0} comments</small></div><button data-admin-del-post="${escapeHtml(p.id)}">Delete</button></div>`).join('') || '<div class="empty-state">No posts</div>';
+    if (msgEl) msgEl.innerHTML = (data.recentMessages||[]).map(m => `<div class="admin-item"><div class="grow"><b>${escapeHtml((m.text||'Photo message').slice(0,70))}</b><small>${escapeHtml(m.roomId||'')} · ${new Date(m.createdAt||0).toLocaleString()}</small></div><button data-admin-del-msg="${escapeHtml(m.id)}">Delete</button></div>`).join('') || '<div class="empty-state">No messages</div>';
+    if (usersEl) (data.users||[]).forEach(u => { const el = usersEl.querySelector(`[data-admin-avatar="${CSS.escape(u.id)}"]`); if (el) renderAvatar(el, u); });
+    bindAdminActions();
+    refreshIcons();
+  } catch (e) {
+    if (statsEl) statsEl.innerHTML = `<div class="admin-stat"><strong>!</strong><span>${escapeHtml(e.message||'Admin failed')}</span></div>`;
+    toast(e.message || 'Admin load failed', 'error');
+  }
+}
+function bindAdminActions() {
+  $$('[data-admin-del-post]').forEach(b => b.onclick = async () => { if(!confirm('Delete this post?')) return; await api('/admin/delete-post',{method:'POST',body:{postId:b.dataset.adminDelPost}}); toast('Post deleted','success'); loadAdminPanel(); loadPosts(); });
+  $$('[data-admin-del-msg]').forEach(b => b.onclick = async () => { if(!confirm('Delete this message?')) return; await api('/admin/delete-message',{method:'POST',body:{messageId:b.dataset.adminDelMsg}}); toast('Message deleted','success'); loadAdminPanel(); loadMessages(false); });
+  $$('[data-admin-del-user]').forEach(b => b.onclick = async () => { if(!confirm('Delete this user and hide their content?')) return; await api('/admin/delete-user',{method:'POST',body:{userId:b.dataset.adminDelUser}}); toast('User deleted','success'); loadAdminPanel(); loadMembers(); });
+}
+
 // ====== Tabs ======
 function bindTabs() {
   $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
@@ -772,13 +833,13 @@ function bindTabs() {
   if (tn) tn.addEventListener('click', openNotifications);
   // New IG-style top "+" — jump to feed, focus composer, open photo picker
   const ta = $('#topAddBtn');
-  if (ta) ta.addEventListener('click', () => {
-    switchTab('feed');
-    setTimeout(() => {
-      const fc = $('#postInput');
-      if (fc) { fc.focus(); fc.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-    }, 250);
-  });
+  if (ta) ta.addEventListener('click', openPostComposer);
+  const pmc = $('#postModalClose');
+  if (pmc) pmc.addEventListener('click', closePostComposer);
+  const pm = $('#postComposerModal');
+  if (pm) pm.addEventListener('click', (e) => { if (e.target === pm) closePostComposer(); });
+  const ar = $('#adminRefreshBtn');
+  if (ar) ar.addEventListener('click', loadAdminPanel);
   // Reels = placeholder for now (Part 4 will bring multi-photo carousel / voice notes)
   const reels = $('#bnReelsBtn');
   if (reels) reels.addEventListener('click', () => {
@@ -787,6 +848,7 @@ function bindTabs() {
 }
 
 function switchTab(tab) {
+  if (tab === 'admin' && !isAdminMe()) { toast('Admin only', 'error'); return; }
   State.currentTab = tab;
   $$('.bn-btn[data-tab]').forEach(b => {
     const active = b.dataset.tab === tab;
@@ -798,6 +860,7 @@ function switchTab(tab) {
   if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
   if (tab === 'search') { activeView = $('#searchView'); activeView.classList.add('active'); loadMembers(); renderSearch(''); setTimeout(() => $('#searchInput').focus(), 100); }
   if (tab === 'chat') { activeView = $('#chatView'); activeView.classList.add('active'); markTabSeen('chat'); refreshSecretChatUI(); }
+  if (tab === 'admin') { activeView = $('#adminView'); activeView.classList.add('active'); loadAdminPanel(); }
   if (tab === 'profile') {
     activeView = $('#profileView');
     activeView.classList.add('active');
@@ -1077,7 +1140,7 @@ function initWebRTC() {
 }
 
 function sendRTCSignal(targetId, signal) {
-  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => console.error('Signal error', e));
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => { console.error('Signal error', e); toast('Call signal failed: '+(e.message||''),'error'); });
 }
 
 async function startCall(video) {
@@ -1360,7 +1423,7 @@ function initWebRTC() {
 }
 
 function sendRTCSignal(targetId, signal) {
-  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => console.error('Signal error', e));
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => { console.error('Signal error', e); toast('Call signal failed: '+(e.message||''),'error'); });
 }
 
 async function startCall(video) {
@@ -2049,6 +2112,7 @@ function startPolls() {
   loadMembers();
   pollTyping();
   pollNotifications();
+  pollRTCSignals();
   State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
   State.pollTimers.members = setInterval(loadMembers, 15000);
   // MESSAGES: 1.5s on chat tab (fast feels live), 3s otherwise — unless SSE is alive
@@ -2069,6 +2133,8 @@ function startPolls() {
     if (_sseConnected) return;
     pollNotifications();
   }, 5000);
+  // RTC call signaling must always poll as a Cloudflare fallback because SSE events can land on another isolate.
+  State.pollTimers.rtc = setInterval(pollRTCSignals, 2500);
   // Try SSE — it'll auto-fall-back if not supported
   connectSSE();
 }
@@ -2123,7 +2189,7 @@ function connectSSE() {
     if (!data) return;
     handleRealtimeEvent(type, data);
   };
-  ['notification','new_message','new_post','presence','typing'].forEach(t => {
+  ['notification','new_message','new_post','presence','typing','rtc_signal'].forEach(t => {
     _sseSource.addEventListener(t, (e) => onAny(t, e));
   });
   _sseSource.addEventListener('error', () => {
@@ -3167,6 +3233,7 @@ function bindFeedComposer() {
       clearPostAttach();
       lastPostsSignature = '';
       loadPosts();
+      closePostComposer();
       toast('Posted!', 'success');
     } catch (e) { toast(e.message || 'Post failed', 'error'); }
     finally { btn.disabled = false; }
@@ -3514,7 +3581,7 @@ async function togglePushSubscription() {
   try { keyRes = await api('/push/vapid-public'); }
   catch (e) { toast('Server not ready for push', 'error'); return; }
   if (!keyRes || !keyRes.key) {
-    toast('Push notifications unavailable (no VAPID key configured)', 'error');
+    toast('In-app notifications work. Phone push needs VAPID keys configured by admin.', 'info');
     return;
   }
   try {
@@ -3530,6 +3597,22 @@ async function togglePushSubscription() {
   } catch (e) {
     toast('Push subscribe failed: ' + (e.message || ''), 'error');
   }
+}
+
+
+async function pollRTCSignals() {
+  if (!State.token) return;
+  try {
+    const data = await api('/rtc/signals?since=' + encodeURIComponent(State.rtcLastSignalAt || 0));
+    const signals = data.signals || [];
+    signals.forEach(sig => {
+      if (sig.createdAt && sig.createdAt > State.rtcLastSignalAt) {
+        State.rtcLastSignalAt = sig.createdAt;
+        localStorage.setItem('ps_rtcLastSignalAt', String(State.rtcLastSignalAt));
+      }
+      handleRTCSignal(sig);
+    });
+  } catch (_) {}
 }
 
 /* ====== Settings sheet ====== */
@@ -4252,7 +4335,7 @@ function initWebRTC() {
 }
 
 function sendRTCSignal(targetId, signal) {
-  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => console.error('Signal error', e));
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => { console.error('Signal error', e); toast('Call signal failed: '+(e.message||''),'error'); });
 }
 
 async function startCall(video) {

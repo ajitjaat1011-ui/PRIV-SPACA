@@ -24,6 +24,7 @@ let GH_FILE    = 'db.json';
 let VAPID_PUBLIC  = '';
 let VAPID_PRIVATE = '';
 let VAPID_SUBJECT = 'mailto:admin@priv-spaca.app';
+let ADMIN_USERS = 'Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com';
 function loadConfig(env) {
   if (!env) return;
   // Always overwrite — values can change per-deploy
@@ -35,6 +36,7 @@ function loadConfig(env) {
   if (env.VAPID_PUBLIC_KEY) VAPID_PUBLIC = env.VAPID_PUBLIC_KEY;
   if (env.VAPID_PRIVATE_KEY) VAPID_PRIVATE = env.VAPID_PRIVATE_KEY;
   if (env.VAPID_SUBJECT) VAPID_SUBJECT = env.VAPID_SUBJECT;
+  if (env.ADMIN_USERS) ADMIN_USERS = env.ADMIN_USERS;
 }
 
 const JWT_EXPIRES_DAYS = 7;
@@ -46,7 +48,7 @@ const EPHEMERAL_WRITE_INTERVAL_MS = 30000;
 // ---------- In-memory cache + DB ----------
 let localCache = {
   users: [], messages: [], scheduledMessages: [], posts: [], notifications: [],
-  typing: {}, heartbeat: {},
+  typing: {}, heartbeat: {}, rtcSignals: [],
 };
 let cacheTimestamp = 0;
 let lastEphemeralWrite = 0;
@@ -72,6 +74,25 @@ function sanitizeUser(u) {
   return { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
            bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt,
            publicKey: u.publicKey || null };
+}
+
+function adminSet() {
+  return new Set(String(ADMIN_USERS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+}
+function isAdminUser(u) {
+  if (!u) return false;
+  const set = adminSet();
+  return set.has(String(u.username || '').toLowerCase()) || set.has(String(u.email || '').toLowerCase()) || set.has(String(u.id || '').toLowerCase());
+}
+async function requireAdmin(c, next) {
+  const auth = await requireAuth(c, async () => {});
+  if (auth instanceof Response) return auth;
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === c.get('userId'));
+  if (!isAdminUser(u)) return c.json({ error: 'Admin only' }, 403);
+  c.set('adminUser', u);
+  c.set('adminDb', db);
+  await next();
 }
 
 // ---------- GitHub repo persistence ----------
@@ -164,6 +185,11 @@ function runScheduler(db) {
       if (Object.keys(map).length === 0) delete db.typing[room];
     }
   }
+  if (Array.isArray(db.rtcSignals)) {
+    const beforeRtc = db.rtcSignals.length;
+    db.rtcSignals = db.rtcSignals.filter(x => x && (!x.expiresAt || x.expiresAt > now));
+    if (db.rtcSignals.length !== beforeRtc) changed = true;
+  } else { db.rtcSignals = []; changed = true; }
   if (!Array.isArray(db.scheduledMessages) || db.scheduledMessages.length === 0) return changed;
   const due = [], remaining = [];
   for (const sm of db.scheduledMessages) {
@@ -201,6 +227,7 @@ async function fetchDatabase() {
       notifications: Array.isArray(remote.notifications) ? remote.notifications : [],
       typing: remote.typing && typeof remote.typing === 'object' ? remote.typing : {},
       heartbeat: remote.heartbeat && typeof remote.heartbeat === 'object' ? remote.heartbeat : {},
+      rtcSignals: Array.isArray(remote.rtcSignals) ? remote.rtcSignals : [],
     };
   }
   cacheTimestamp = now;
@@ -1294,8 +1321,27 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
   const db = await fetchDatabase();
   const me = db.users.find(u => u.id === myId);
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: myId, displayName: 'Member', username: 'member' };
-  _pushEvent(targetId, 'rtc_signal', { fromId: myId, author, signal });
+  const payload = { fromId: myId, author, signal };
+  db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals : [];
+  db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt: nowMs() + 120000 });
+  if (db.rtcSignals.length > 200) db.rtcSignals = db.rtcSignals.slice(-200);
+  _pushEvent(targetId, 'rtc_signal', payload);
+  await saveDatabase(db, false);
   return c.json({ ok: true });
+});
+
+app.get('/api/rtc/signals', requireAuth, async (c) => {
+  const since = Number(c.req.query('since') || 0) || 0;
+  const myId = c.get('userId');
+  const db = await fetchDatabase();
+  const now = nowMs();
+  db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
+  const signals = db.rtcSignals
+    .filter(x => x.targetId === myId && (x.createdAt || 0) > since)
+    .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
+    .slice(-30)
+    .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
+  return c.json({ signals, now });
 });
 
 app.post('/api/posts/comment', requireAuth, async (c) => {
@@ -1342,6 +1388,51 @@ app.post('/api/posts/restore', requireAuth, async (c) => {
   delete p.deletedAt;
   await saveDatabase(db, false);
   return c.json({ ok: true });
+});
+
+// ---------- Admin ----------
+app.get('/api/admin/summary', requireAdmin, async (c) => {
+  const db = c.get('adminDb') || await fetchDatabase();
+  const users = (db.users || []).map(u => ({ ...sanitizeUser(u), isAdmin: isAdminUser(u), followers: (u.followers||[]).length, following: (u.following||[]).length, blocked: (u.blocked||[]).length }));
+  const recentMessages = (db.messages || []).slice(-50).reverse().map(m => ({ id:m.id, roomId:m.roomId, userId:m.userId, text:m.encrypted ? '🔒 Encrypted message' : (m.text||''), createdAt:m.createdAt, deletedAt:m.deletedAt||null }));
+  const recentPosts = (db.posts || []).slice(-50).reverse().map(p => ({ id:p.id, userId:p.userId, text:p.text||'', imageUrl:p.imageUrl||null, likeCount:(p.likes||[]).length, commentCount:(p.comments||[]).length, createdAt:p.createdAt, deletedAt:p.deletedAt||null }));
+  return c.json({ ok:true, stats:{ users:users.length, messages:(db.messages||[]).length, posts:(db.posts||[]).length, notifications:(db.notifications||[]).length, rtcSignals:(db.rtcSignals||[]).length }, users, recentMessages, recentPosts });
+});
+
+app.post('/api/admin/delete-post', requireAdmin, async (c) => {
+  const { postId } = await c.req.json().catch(() => ({}));
+  if (!postId) return c.json({ error:'postId required' }, 400);
+  const db = await fetchDatabase();
+  const p = (db.posts||[]).find(x => x.id === postId);
+  if (!p) return c.json({ error:'Not found' }, 404);
+  p.deletedAt = nowMs();
+  await saveDatabase(db, false);
+  return c.json({ ok:true });
+});
+
+app.post('/api/admin/delete-message', requireAdmin, async (c) => {
+  const { messageId } = await c.req.json().catch(() => ({}));
+  if (!messageId) return c.json({ error:'messageId required' }, 400);
+  const db = await fetchDatabase();
+  const m = (db.messages||[]).find(x => x.id === messageId);
+  if (!m) return c.json({ error:'Not found' }, 404);
+  m.deletedAt = nowMs();
+  await saveDatabase(db, false);
+  return c.json({ ok:true });
+});
+
+app.post('/api/admin/delete-user', requireAdmin, async (c) => {
+  const { userId } = await c.req.json().catch(() => ({}));
+  if (!userId) return c.json({ error:'userId required' }, 400);
+  const db = await fetchDatabase();
+  const u = (db.users||[]).find(x => x.id === userId);
+  if (!u) return c.json({ error:'Not found' }, 404);
+  if (isAdminUser(u)) return c.json({ error:'Cannot delete admin user' }, 403);
+  db.users = (db.users||[]).filter(x => x.id !== userId);
+  for (const p of db.posts||[]) if (p.userId === userId) p.deletedAt = nowMs();
+  for (const m of db.messages||[]) if (m.userId === userId) m.deletedAt = nowMs();
+  await saveDatabase(db, false);
+  return c.json({ ok:true });
 });
 
 // ---------- Push (subscribe endpoints - actual delivery is no-op for now) ----------
