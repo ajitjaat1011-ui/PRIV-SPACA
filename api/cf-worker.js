@@ -78,8 +78,18 @@ function sanitizeUser(u) {
 async function repoRead() {
   if (!isRepo()) return null;
   try {
-    const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}?ref=${encodeURIComponent(GH_BRANCH)}`;
-    const r = await fetch(url, { headers: { Authorization: 'token ' + GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json' } });
+    // Add cache-bust query param + no-cache header so different Cloudflare isolates
+    // don't sit on stale db.json from GitHub's CDN after a recent write.
+    const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}?ref=${encodeURIComponent(GH_BRANCH)}&_=${Date.now()}`;
+    const r = await fetch(url, {
+      headers: {
+        Authorization: 'token ' + GITHUB_PAT,
+        'User-Agent': 'PRIV-SPACA',
+        Accept: 'application/vnd.github+json',
+        'Cache-Control': 'no-cache',
+      },
+      cf: { cacheTtl: 0, cacheEverything: false },
+    });
     if (!r.ok) { console.error('[repoRead]', r.status); return null; }
     const d = await r.json();
     ghFileSha = d.sha || null;
@@ -873,8 +883,15 @@ app.post('/api/user/public-key', requireAuth, async (c) => {
 app.get('/api/user/public-key', requireAuth, async (c) => {
   const userId = c.req.query('userId');
   if (!userId) return c.json({ error: 'userId required' }, 400);
-  const db = await fetchDatabase();
-  const u = db.users.find(x => x.id === userId);
+  let db = await fetchDatabase();
+  let u = db.users.find(x => x.id === userId);
+  // Cross-isolate consistency: if user has no key yet (or user not found),
+  // force a fresh read from GitHub in case the upload just happened elsewhere.
+  if (!u || !u.publicKey) {
+    cacheTimestamp = 0;
+    db = await fetchDatabase();
+    u = db.users.find(x => x.id === userId);
+  }
   if (!u) return c.json({ error: 'Not found' }, 404);
   return c.json({ userId: u.id, publicKey: u.publicKey || null });
 });
