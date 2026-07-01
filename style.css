@@ -1443,11 +1443,11 @@ img{user-select:none;-webkit-user-drag:none}
   100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
 }
 
-/* ===== Instagram-style home refresh ===== */
-.feed-view{background:#fff}
-.feed-wrap{max-width:640px;margin:0 auto;padding-bottom:92px;background:#fff}
-.stories-rail{position:sticky;top:56px;z-index:5;background:#fff;display:flex;gap:14px;overflow-x:auto;padding:12px 10px 10px;border-bottom:1px solid #eef1f4;box-shadow:0 1px 0 rgba(0,0,0,.02)}
-.story-cell{min-width:76px;max-width:84px}.story-ring{width:68px;height:68px;border-radius:50%;padding:3px;background:linear-gradient(45deg,#ffd600,#ff7a00,#ff0069,#d300c5,#7638fa);display:grid;place-items:center;position:relative}.story-ring.viewed{background:#d8dee6}.story-ring .avatar{width:60px;height:60px;border:3px solid #fff}.story-cell .lbl{font-size:12px;text-align:center;margin-top:6px;color:#202631;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.story-ring .add-badge{background:#111;color:#fff;border:2px solid #fff}
-.ig-compose-inline.hidden{display:none!important}.post-card{border-radius:0;border-left:0;border-right:0;margin:0;background:#fff;box-shadow:none}.post-img{width:100%;max-height:78vh;object-fit:cover;background:#000}.post-head{padding:10px 12px}.post-actions{padding:8px 8px 2px}.feed-list{gap:0;margin-top:0}.topbar{position:sticky;top:0;z-index:20;background:#fff}.brand-wordmark{font-family:Georgia, 'Times New Roman', serif;font-style:italic;font-size:32px;letter-spacing:.5px;color:#e62d73}.topbar .ghost-btn i{width:28px;height:28px}.bottom-nav{background:#fff;border-top:1px solid #edf0f4}.bn-btn i{width:29px;height:29px}.bn-avatar{width:30px;height:30px}
-.post-modal-card{max-width:560px}.post-modal-card .composer-card{display:block!important;margin:0;border:0;box-shadow:none;padding:0}.post-modal-card textarea{min-height:150px;font-size:18px}.modal:not(.hidden){display:flex}
+/* NOTE: an old, conflicting "Instagram-style home refresh" override block that
+   duplicated & fought with the rules above (forcing white backgrounds, a
+   different serif/pink title font, a second sticky stories-rail position,
+   etc.) used to live here and caused the home/stories section to render
+   broken. It has been removed — the canonical rules earlier in this file
+   (feed-wrap, stories-rail, topbar, brand-wordmark, bottom-nav, post-*,
+   post-modal-card) are now the only source of truth for these components. */
 
