@@ -1525,7 +1525,7 @@ function bindComposer() {
           const base64data = reader.result;
           try {
             const data = await api('/upload-photo', { method: 'POST', body: { dataUrl: base64data, kind: 'media' } });
-            State.attach = { file: new File([audioBlob], 'voice_note.webm', {type:'audio/webm'}), url: data.url };
+            State.attach = { file: new File([audioBlob], 'voice_note.webm', {type:'audio/webm'}), url: data.url, isAudio: true };
             showAttachPreview(State.attach);
           } catch(e) { toast('Audio upload failed', 'error'); }
         };
@@ -1622,8 +1622,39 @@ async function handleAttach(file) {
 }
 
 function showAttachPreview(att) {
-  $('#attachThumb').src = att.url;
-  $('#attachName').textContent = (att.name || 'image') + ' · ready';
+  const isAudio = att.isAudio || (att.file && att.file.type && att.file.type.startsWith('audio/')) || (att.url && (att.url.startsWith('data:audio/') || att.url.includes('voice_note') || att.url.endsWith('.webm') || att.url.endsWith('.mp3')));
+  
+  const imgEl = $('#attachThumb');
+  let audioBox = $('#attachAudioBox');
+  if (!audioBox && imgEl) {
+    audioBox = document.createElement('div');
+    audioBox.id = 'attachAudioBox';
+    imgEl.parentElement.insertBefore(audioBox, imgEl.nextSibling);
+  }
+
+  if (isAudio) {
+    if (imgEl) imgEl.style.display = 'none';
+    if (audioBox) {
+      audioBox.style.display = 'flex';
+      audioBox.style.alignItems = 'center';
+      audioBox.style.gap = '10px';
+      audioBox.innerHTML = `
+        <div style="width:38px; height:38px; border-radius:50%; background:rgba(236,72,153,0.2); color:#ec4899; display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0;">🎙️</div>
+        <audio controls src="${att.url}" style="height:34px; max-width:180px; outline:none;"></audio>
+      `;
+    }
+    $('#attachName').textContent = '🎙️ Voice Note · recorded & ready';
+  } else {
+    if (imgEl) {
+      imgEl.style.display = 'block';
+      imgEl.src = att.url;
+    }
+    if (audioBox) {
+      audioBox.style.display = 'none';
+      audioBox.innerHTML = '';
+    }
+    $('#attachName').textContent = (att.name || (att.file && att.file.name) || 'Image') + ' · ready';
+  }
   $('#attachProgress').style.width = '100%';
   $('#attachPreview').classList.remove('hidden');
 }
@@ -1631,7 +1662,8 @@ function showAttachPreview(att) {
 function clearAttach() {
   State.attach = null;
   $('#attachPreview').classList.add('hidden');
-  $('#attachThumb').src = '';
+  const imgEl = $('#attachThumb'); if (imgEl) { imgEl.src = ''; imgEl.style.display = 'block'; }
+  const audioBox = $('#attachAudioBox'); if (audioBox) { audioBox.style.display = 'none'; audioBox.innerHTML = ''; }
   $('#attachName').textContent = '';
   $('#attachProgress').style.width = '0%';
 }
