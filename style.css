@@ -1032,14 +1032,14 @@ img{user-select:none;-webkit-user-drag:none}
   position:absolute;top:8px;left:8px;right:8px;display:flex;gap:4px;z-index:2;
 }
 .story-progress .bar{
-  flex:1;height:3px;background:rgba(255,255,255,.3);border-radius:2px;overflow:hidden;
+  flex:1;height:3.5px;background:rgba(255,255,255,.28);border-radius:999px;overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
 }
 .story-progress .bar .fill{
-  height:100%;background:#fff;width:0;
+  height:100%;background:#fff;width:0;border-radius:999px;
 }
 .story-progress .bar.done .fill{width:100%}
-.story-progress .bar.active .fill{animation:story-fill 5s linear forwards}
-@keyframes story-fill{from{width:0}to{width:100%}}
+.story-progress .bar.active .fill{box-shadow:0 0 8px rgba(255,255,255,.45)}
 .story-close{position:absolute;top:18px;right:18px;background:transparent;color:#fff;z-index:3}
 .story-close:hover{color:#fff;background:rgba(255,255,255,.15)}
 .story-author{

@@ -2995,6 +2995,16 @@ function markStoryViewed(userId) {
 }
 
 let storyTimer = null;
+const storyPlayback = {
+  user: null,
+  items: [],
+  index: 0,
+  durationMs: 6000,
+  rafId: 0,
+  startedAt: 0,
+  progressFill: null,
+};
+
 function applyStoryFontPreset(el, font = 'modern') {
   if (!el) return;
   el.style.fontFamily = 'system-ui, -apple-system, sans-serif';
@@ -3019,20 +3029,66 @@ function applyStoryFontPreset(el, font = 'modern') {
   }
 }
 
-function openStoryFor(user) {
-  const recent = getLatestStory(user.id);
-  if (!recent) {
-    if (user.id === (State.user && State.user.id) && typeof openStoryCreator === 'function') return openStoryCreator();
-    toast('No active story right now');
-    return;
+function getStorySequence(userId) {
+  return getStoryPosts(userId).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+function getStoryDurationMs(story) {
+  if (story && story.music && story.music.clipDur) {
+    return Math.max(5000, Math.min(15000, Number(story.music.clipDur) * 1000 || 6000));
   }
-  markStoryViewed(user.id);
+  if (story && story.text && !story.imageUrl) return 7000;
+  if (story && story.text && story.imageUrl) return 6500;
+  return 5500;
+}
+function stopStoryPlayback() {
+  clearTimeout(storyTimer);
+  storyTimer = null;
+  if (storyPlayback.rafId) cancelAnimationFrame(storyPlayback.rafId);
+  storyPlayback.rafId = 0;
+  storyPlayback.startedAt = 0;
+  storyPlayback.progressFill = null;
+}
+function renderStoryProgressBars(total, activeIndex) {
+  const progress = $('#storyProgress');
+  if (!progress) return;
+  progress.innerHTML = '';
+  storyPlayback.progressFill = null;
+  for (let i = 0; i < total; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'bar' + (i < activeIndex ? ' done' : (i === activeIndex ? ' active' : ''));
+    const fill = document.createElement('div');
+    fill.className = 'fill';
+    fill.style.width = i < activeIndex ? '100%' : '0%';
+    bar.appendChild(fill);
+    progress.appendChild(bar);
+    if (i === activeIndex) storyPlayback.progressFill = fill;
+  }
+}
+function startStoryProgress() {
+  stopStoryPlayback();
+  const fill = storyPlayback.progressFill;
+  if (!fill) return;
+  storyPlayback.startedAt = performance.now();
+  const step = (now) => {
+    const pct = Math.max(0, Math.min(1, (now - storyPlayback.startedAt) / storyPlayback.durationMs));
+    if (storyPlayback.progressFill) storyPlayback.progressFill.style.width = (pct * 100).toFixed(2) + '%';
+    if (pct >= 1) {
+      nextStoryItem();
+      return;
+    }
+    storyPlayback.rafId = requestAnimationFrame(step);
+  };
+  storyPlayback.rafId = requestAnimationFrame(step);
+}
+function renderStoryItem() {
+  const user = storyPlayback.user;
+  const recent = storyPlayback.items[storyPlayback.index];
+  if (!user || !recent) return closeStory();
   const v = $('#storyViewer');
   const content = $('#storyContent');
-  const progress = $('#storyProgress');
   const st = recent.style || {};
   content.innerHTML = '';
-  progress.innerHTML = '<div class="bar active"><div class="fill"></div></div>';
+  renderStoryProgressBars(storyPlayback.items.length, storyPlayback.index);
   renderAvatar($('#storyAvatar'), user);
   $('#storyName').textContent = user.displayName || user.username;
   $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
@@ -3113,13 +3169,46 @@ function openStoryFor(user) {
     { opacity: [0, 1], transform: ['scale(.94)', 'scale(1)'] },
     { duration: 0.32, easing: [0.2, 0.85, 0.2, 1] }
   );
+  storyPlayback.durationMs = getStoryDurationMs(recent);
+  startStoryProgress();
   refreshIcons();
-  clearTimeout(storyTimer);
-  storyTimer = setTimeout(closeStory, 6000);
+}
+function openStoryFor(user, startIndex = 0) {
+  const items = getStorySequence(user.id);
+  if (!items.length) {
+    if (user.id === (State.user && State.user.id) && typeof openStoryCreator === 'function') return openStoryCreator();
+    toast('No active story right now');
+    return;
+  }
+  storyPlayback.user = user;
+  storyPlayback.items = items;
+  storyPlayback.index = Math.max(0, Math.min(startIndex, items.length - 1));
+  markStoryViewed(user.id);
+  renderStoryItem();
+}
+function prevStoryItem() {
+  if (!storyPlayback.items.length) return closeStory();
+  if (storyPlayback.index > 0) {
+    storyPlayback.index--;
+    renderStoryItem();
+  } else {
+    closeStory();
+  }
+}
+function nextStoryItem() {
+  if (!storyPlayback.items.length) return closeStory();
+  if (storyPlayback.index < storyPlayback.items.length - 1) {
+    storyPlayback.index++;
+    renderStoryItem();
+  } else {
+    closeStory();
+  }
 }
 function closeStory() {
-  clearTimeout(storyTimer);
-  storyTimer = null;
+  stopStoryPlayback();
+  storyPlayback.user = null;
+  storyPlayback.items = [];
+  storyPlayback.index = 0;
   const player = $('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
   $('#storyViewer').classList.add('hidden');
@@ -3127,8 +3216,8 @@ function closeStory() {
 }
 function bindStoryViewer() {
   $('#storyClose').addEventListener('click', closeStory);
-  $('#storyPrev').addEventListener('click', closeStory);
-  $('#storyNext').addEventListener('click', closeStory);
+  $('#storyPrev').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); prevStoryItem(); });
+  $('#storyNext').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); nextStoryItem(); });
   $('#storyViewer').addEventListener('click', (e) => {
     if (e.target.id === 'storyViewer') closeStory();
   });
