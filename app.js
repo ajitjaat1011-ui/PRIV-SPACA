@@ -3048,7 +3048,7 @@ window.setStoryFont = (font, el) => {
   if (font === 'playful') inp.style.fontFamily = "'Trebuchet MS', sans-serif";
 };
 
-function openStoryCreator() {
+window.openStoryCreator = () => {
   const mod = $('#storyEditorModal');
   if (!mod) return;
   mod.classList.remove('hidden');
@@ -3078,9 +3078,9 @@ function openStoryCreator() {
   if (initSpan && State.user) {
     initSpan.textContent = (State.user.displayName || State.user.username || 'AJ').slice(0,2).toUpperCase();
   }
-}
+};
 
-function closeStoryCreator() {
+window.closeStoryCreator = () => {
   const mod = $('#storyEditorModal');
   if (mod) mod.classList.add('hidden');
   const player = $('#storyBgAudioPlayer');
@@ -3097,52 +3097,89 @@ function closeStoryCreator() {
   const cap = $('#storyEditorCaptionInput');
   if (cap) { cap.value = ''; cap.style.fontFamily = ''; }
   State.storyCreatorImgUrl = null;
-}
+};
 
-function promptStoryCaption() {
+window.promptStoryCaption = () => {
   const cap = $('#storyEditorCaptionInput');
   if (cap) cap.focus();
-}
+};
 
-function promptStoryMention() {
+window.promptStoryMention = () => {
   const cap = $('#storyEditorCaptionInput');
   if (cap) {
     cap.value = cap.value + (cap.value && !cap.value.endsWith(' ') ? ' ' : '') + '@';
     cap.focus();
   }
-}
+};
 
-function openStoryMusicSheet() {
+window.openStoryMusicSheet = () => {
   const sh = $('#storyMusicSheet');
   if (sh) sh.classList.remove('hidden');
-  filterStorySongs();
-}
+  window.filterStorySongs();
+};
 
-function closeStoryMusicSheet() {
+window.closeStoryMusicSheet = () => {
   const sh = $('#storyMusicSheet');
   if (sh) sh.classList.add('hidden');
-}
+};
 
-function closeStoryMusicSheetOnBackdrop(e) {
-  if (e.target.id === 'storyMusicSheet') closeStoryMusicSheet();
-}
+window.closeStoryMusicSheetOnBackdrop = (e) => {
+  if (e && e.target && e.target.id === 'storyMusicSheet') window.closeStoryMusicSheet();
+};
 
-function selectStoryMusicCategory(cat, el) {
+window.selectStoryMusicCategory = (cat, el) => {
   activeStoryMusicCat = cat;
   $$('.story-pill').forEach(p => p.classList.remove('active'));
   if (el) el.classList.add('active');
-  filterStorySongs();
-}
+  window.filterStorySongs();
+};
 
-function filterStorySongs() {
+let storyMusicSearchTimer = null;
+let liveSearchResults = [];
+
+window.filterStorySongs = () => {
   const container = $('#storySongsListContainer');
   const q = ($('#storyMusicSearchInput')?.value || '').toLowerCase().trim();
   if (!container) return;
+
+  if (q.length >= 2) {
+    container.innerHTML = `<div style="text-align:center; padding:30px; color:#a3a3a3;">🔍 Searching 30s clips for "${escapeHtml(q)}"...</div>`;
+    clearTimeout(storyMusicSearchTimer);
+    storyMusicSearchTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=15`);
+        const data = await res.json();
+        if (data && data.results && data.results.length > 0) {
+          liveSearchResults = data.results.filter(r => r.previewUrl).map(r => ({
+            id: r.trackId || Math.floor(Math.random()*100000),
+            title: r.trackName || 'Song',
+            artist: r.artistName || 'Artist',
+            category: 'search',
+            duration: '0:30',
+            art: r.artworkUrl100 || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=120&q=80',
+            audio: r.previewUrl
+          }));
+          renderSongListItems(liveSearchResults);
+        } else {
+          container.innerHTML = `<div style="text-align:center; padding:30px; color:#737373;">No 30s clips found for "${escapeHtml(q)}".</div>`;
+        }
+      } catch (e) {
+        renderSongListItems(storyMusicCatalog.filter(s => s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q)));
+      }
+    }, 350);
+    return;
+  }
+
   const list = storyMusicCatalog.filter(s => {
     const matchCat = activeStoryMusicCat === 'all' || s.category === activeStoryMusicCat;
-    const matchQ = !q || s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q);
-    return matchCat && matchQ;
+    return matchCat;
   });
+  renderSongListItems(list);
+};
+
+function renderSongListItems(list) {
+  const container = $('#storySongsListContainer');
+  if (!container) return;
   if (list.length === 0) {
     container.innerHTML = `<div style="text-align:center; padding:30px; color:#737373;">No songs found matching your search.</div>`;
     return;
@@ -3154,8 +3191,8 @@ function filterStorySongs() {
         <div class="story-song-left">
           <img src="${s.art}" class="story-song-art" alt="art" />
           <div class="story-song-meta">
-            <div class="story-song-name">${s.title}</div>
-            <div class="story-song-artist">${s.artist}</div>
+            <div class="story-song-name">${escapeHtml(s.title)}</div>
+            <div class="story-song-artist">${escapeHtml(s.artist)}</div>
           </div>
         </div>
         <div class="story-song-right">
@@ -3181,11 +3218,12 @@ window.toggleStorySongPreview = (e, id, url) => {
     player.play().catch(() => {});
     selectedStoryMusicId = id;
   }
-  filterStorySongs();
+  window.filterStorySongs();
 };
 
 window.pickStoryMusic = (id) => {
-  const song = storyMusicCatalog.find(s => s.id === id);
+  let song = storyMusicCatalog.find(s => s.id === id);
+  if (!song) song = liveSearchResults.find(s => s.id === id);
   if (!song) return;
   selectedStoryMusicId = id;
   const player = $('#storyBgAudioPlayer');
@@ -3198,7 +3236,7 @@ window.pickStoryMusic = (id) => {
     $('#storyStageMusicArtist').textContent = song.artist;
     stk.classList.remove('hidden');
   }
-  closeStoryMusicSheet();
+  window.closeStoryMusicSheet();
 };
 
 window.removeStoryMusic = (e) => {
@@ -3210,10 +3248,11 @@ window.removeStoryMusic = (e) => {
   if (stk) stk.classList.add('hidden');
 };
 
-async function publishStoryWithMusic(isCf = false) {
+window.publishStoryWithMusic = async (isCf = false) => {
   const text = ($('#storyEditorCaptionInput')?.value || '').trim();
   const imageUrl = State.storyCreatorImgUrl || null;
-  const song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
+  let song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
+  if (!song) song = liveSearchResults.find(s => s.id === selectedStoryMusicId);
   const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art } : null;
   const style = { font: activeStoryFont };
 
@@ -3223,13 +3262,13 @@ async function publishStoryWithMusic(isCf = false) {
   }
   try {
     await api('/posts/create', { method: 'POST', body: { text, imageUrl, music, style } });
-    closeStoryCreator();
+    window.closeStoryCreator();
     loadPosts();
     toast(music ? `🎉 Story published with 30s background song "${music.title}"!` : '🎉 Story published!', 'success');
   } catch (e) {
     toast(e.message || 'Story publish failed', 'error');
   }
-}
+};
 
 function renderPostAttachGrid() {
   const grid = $('#postAttachGrid');
