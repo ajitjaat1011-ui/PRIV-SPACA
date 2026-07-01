@@ -27,7 +27,7 @@ const State = {
   attach: null,
   postAttach: null,
   pollTimers: {},
-  rtcLastSignalAt: Number(safeLocalGet('ps_rtcLastSignalAt', 0) || 0),
+  rtcLastSignalAt: Math.max(Number(safeLocalGet('ps_rtcLastSignalAt', 0) || 0), Date.now() - 5000),
 };
 
 const API_BASE = '/api';
@@ -3930,6 +3930,15 @@ async function handleRTCSignal(data) {
   const author = data.author;
 
   if (signal.type === 'offer') {
+    const age = Date.now() - (data.createdAt || 0);
+    if (data.createdAt && age > 20000) {
+      console.warn('[RTC] Ignoring stale incoming offer (>20s old):', age);
+      return;
+    }
+    if (window._handledRtcOffers && window._handledRtcOffers.has(data.id)) return;
+    if (!window._handledRtcOffers) window._handledRtcOffers = new Set();
+    if (data.id) window._handledRtcOffers.add(data.id);
+
     if (rtcPeerConnection) {
       // Busy
       sendRTCSignal(peerId, { type: 'busy' });
