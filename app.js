@@ -2938,11 +2938,21 @@ function openStoryFor(user) {
     const img = document.createElement('img');
     img.src = recent.imageUrl;
     img.alt = 'story';
+    const st = recent.style || {};
+    if (st.ratio === '4:5') { img.style.objectFit = 'cover'; img.style.width = '88%'; img.style.height = '74%'; img.style.borderRadius = '24px'; }
+    else if (st.ratio === '1:1') { img.style.objectFit = 'cover'; img.style.width = '88%'; img.style.aspectRatio = '1/1'; img.style.borderRadius = '24px'; }
+    else if (st.ratio === 'fit') { img.style.objectFit = 'contain'; img.style.width = '100%'; img.style.height = '100%'; }
+    if (st.zoom && st.zoom !== 1) img.style.transform = `scale(${st.zoom})`;
     content.appendChild(img);
   } else if (recent && recent.text) {
     const div = document.createElement('div');
     div.className = 'text-story';
     div.textContent = recent.text.slice(0, 280);
+    const st = recent.style || {};
+    if (st.font === 'neon') { div.style.fontFamily = "'Impact', 'Arial Black', sans-serif"; }
+    else if (st.font === 'typewriter') { div.style.fontFamily = 'monospace'; }
+    else if (st.font === 'script') { div.style.fontFamily = "'Brush Script MT', Georgia, cursive"; }
+    else if (st.font === 'playful') { div.style.fontFamily = "'Trebuchet MS', sans-serif"; }
     content.appendChild(div);
   } else {
     const div = document.createElement('div');
@@ -3011,6 +3021,43 @@ const storyMusicCatalog = [
 let activeStoryMusicCat = 'all';
 let selectedStoryMusicId = null;
 
+let activeStoryRatio = '9:16';
+let activeStoryZoom = 1.0;
+let activeStoryFont = 'modern';
+
+window.setStoryRatio = (ratio, el) => {
+  activeStoryRatio = ratio;
+  $$('#storyPhotoControls .story-pill-btn').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const prev = $('#storyEditorPreviewImg');
+  if (!prev) return;
+  if (ratio === '9:16') { prev.style.objectFit = 'cover'; prev.style.width = '100%'; prev.style.height = '100%'; prev.style.borderRadius = '0'; }
+  if (ratio === '4:5') { prev.style.objectFit = 'cover'; prev.style.width = '88%'; prev.style.height = '74%'; prev.style.borderRadius = '24px'; }
+  if (ratio === '1:1') { prev.style.objectFit = 'cover'; prev.style.width = '88%'; prev.style.height = 'auto'; prev.style.aspectRatio = '1/1'; prev.style.borderRadius = '24px'; }
+  if (ratio === 'fit') { prev.style.objectFit = 'contain'; prev.style.width = '100%'; prev.style.height = '100%'; prev.style.borderRadius = '0'; }
+};
+
+window.adjustStoryZoom = (delta) => {
+  activeStoryZoom = Math.max(0.5, Math.min(2.5, activeStoryZoom + delta));
+  const prev = $('#storyEditorPreviewImg');
+  if (prev) prev.style.transform = `scale(${activeStoryZoom.toFixed(2)})`;
+  const val = $('#storyZoomVal');
+  if (val) val.textContent = Math.round(activeStoryZoom * 100) + '%';
+};
+
+window.setStoryFont = (font, el) => {
+  activeStoryFont = font;
+  $$('#storyFontControls .story-font-pill').forEach(p => p.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const inp = $('#storyEditorCaptionInput');
+  if (!inp) return;
+  if (font === 'modern') inp.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+  if (font === 'neon') { inp.style.fontFamily = "'Impact', 'Arial Black', sans-serif"; inp.style.fontWeight = 'bold'; }
+  if (font === 'typewriter') inp.style.fontFamily = 'monospace';
+  if (font === 'script') inp.style.fontFamily = "'Brush Script MT', Georgia, cursive";
+  if (font === 'playful') inp.style.fontFamily = "'Trebuchet MS', sans-serif";
+};
+
 function openStoryCreator() {
   const mod = $('#storyEditorModal');
   if (!mod) return;
@@ -3028,6 +3075,7 @@ function openStoryCreator() {
       const localUrl = URL.createObjectURL(f);
       if (prev) { prev.src = localUrl; prev.classList.remove('hidden'); }
       if (ph) ph.classList.add('hidden');
+      const ctrl = $('#storyPhotoControls'); if (ctrl) ctrl.classList.remove('hidden');
       try {
         const res = await uploadPermanentImage(f, { kind: 'story', maxDim: 1200, quality: 0.82 });
         State.storyCreatorImgUrl = res.url;
@@ -3052,11 +3100,15 @@ function closeStoryCreator() {
   const stk = $('#storyStageMusicSticker');
   if (stk) stk.classList.add('hidden');
   const prev = $('#storyEditorPreviewImg');
-  if (prev) { prev.src = ''; prev.classList.add('hidden'); }
+  if (prev) { prev.src = ''; prev.classList.add('hidden'); prev.style.transform = 'scale(1)'; prev.style.objectFit = 'cover'; prev.style.width = '100%'; prev.style.height = '100%'; }
+  const ctrl = $('#storyPhotoControls'); if (ctrl) ctrl.classList.add('hidden');
+  const fc = $('#storyFontControls'); if (fc) fc.classList.add('hidden');
+  activeStoryZoom = 1.0; activeStoryRatio = '9:16'; activeStoryFont = 'modern';
+  const val = $('#storyZoomVal'); if (val) val.textContent = '100%';
   const ph = $('#storyEditorPlaceholder');
   if (ph) ph.classList.remove('hidden');
   const cap = $('#storyEditorCaptionInput');
-  if (cap) cap.value = '';
+  if (cap) { cap.value = ''; cap.style.fontFamily = ''; }
   State.storyCreatorImgUrl = null;
 }
 
@@ -3176,13 +3228,14 @@ async function publishStoryWithMusic(isCf = false) {
   const imageUrl = State.storyCreatorImgUrl || null;
   const song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art } : null;
+  const style = { ratio: activeStoryRatio, zoom: activeStoryZoom, font: activeStoryFont };
 
   if (!text && !imageUrl) {
     toast('Pick a photo or type a text caption first!', 'error');
     return;
   }
   try {
-    await api('/posts/create', { method: 'POST', body: { text, imageUrl, music } });
+    await api('/posts/create', { method: 'POST', body: { text, imageUrl, music, style } });
     closeStoryCreator();
     loadPosts();
     toast(music ? `🎉 Story published with 30s background song "${music.title}"!` : '🎉 Story published!', 'success');
