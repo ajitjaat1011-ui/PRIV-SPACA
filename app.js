@@ -670,11 +670,6 @@ function bindTabs() {
   if (pmc) pmc.addEventListener('click', closePostComposer);
   const pm = $('#postComposerModal');
   if (pm) pm.addEventListener('click', (e) => { if (e.target === pm) closePostComposer(); });
-  // Reels = placeholder for now (Part 4 will bring multi-photo carousel / voice notes)
-  const reels = $('#bnReelsBtn');
-  if (reels) reels.addEventListener('click', () => {
-    toast('Reels coming soon ✨ (planned in Part 4)', 'info');
-  });
 }
 
 function switchTab(tab) {
@@ -688,11 +683,32 @@ function switchTab(tab) {
   let activeView = null;
   if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
   if (tab === 'search') { activeView = $('#searchView'); activeView.classList.add('active'); loadMembers(); renderSearch(''); setTimeout(() => $('#searchInput').focus(), 100); }
-  if (tab === 'chat') { activeView = $('#chatView'); activeView.classList.add('active'); markTabSeen('chat'); refreshSecretChatUI(); }
+  if (tab === 'groups') {
+    activeView = $('#chatView');
+    activeView.classList.add('active');
+    markTabSeen('groups');
+    const gs = $('#groupsPaneSection'); if (gs) gs.style.display = 'block';
+    const ds = $('#dmsPaneSection'); if (ds) ds.style.display = 'none';
+    const r = $('#roomsList .room-item[data-room="general-group"]');
+    if (r) r.click();
+  }
+  if (tab === 'chat') {
+    activeView = $('#chatView');
+    activeView.classList.add('active');
+    markTabSeen('chat');
+    refreshSecretChatUI();
+    const gs = $('#groupsPaneSection'); if (gs) gs.style.display = 'none';
+    const ds = $('#dmsPaneSection'); if (ds) ds.style.display = 'block';
+    if (window.innerWidth <= 820) {
+      $('#chatView').classList.add('show-rooms');
+    } else if (State.currentRoom.kind !== 'dm') {
+      const firstMember = $('#membersList .member-item');
+      if (firstMember) firstMember.click();
+    }
+  }
   if (tab === 'profile') {
     activeView = $('#profileView');
     activeView.classList.add('active');
-    // Ensure we show view-mode (not edit-mode) on tab open
     $('#profileEditMode').classList.add('hidden');
     $('#profileViewMode').classList.remove('hidden');
     renderOwnProfile();

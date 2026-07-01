@@ -150,15 +150,19 @@
   <!-- ====== CHAT TAB ====== -->
   <main id="chatView" class="view chat-view">
     <aside class="rooms-pane">
-      <div class="pane-title"><i data-lucide="hash"></i> Rooms</div>
-      <ul id="roomsList" class="rooms-list">
-        <li class="room-item active" data-room="general-group">
-          <span class="room-icon">#</span>
-          <span class="room-name">general-group</span>
-        </li>
-      </ul>
-      <div class="pane-title mt"><i data-lucide="users"></i> Members <span id="memberCount" class="muted-pill">0</span></div>
-      <ul id="membersList" class="members-list"></ul>
+      <div id="groupsPaneSection">
+        <div class="pane-title"><i data-lucide="hash"></i> Community Channels</div>
+        <ul id="roomsList" class="rooms-list">
+          <li class="room-item active" data-room="general-group">
+            <span class="room-icon">#</span>
+            <span class="room-name">general-group</span>
+          </li>
+        </ul>
+      </div>
+      <div id="dmsPaneSection">
+        <div class="pane-title"><i data-lucide="message-circle"></i> Direct Messages <span id="memberCount" class="muted-pill">0</span></div>
+        <ul id="membersList" class="members-list"></ul>
+      </div>
     </aside>
 
     <section class="chat-pane">
@@ -403,18 +407,19 @@
     </div>
   </main>
 
-  <!-- ====== BOTTOM NAV (IG-style: Home / Reels / Send / Search / Profile) ====== -->
+  <!-- ====== BOTTOM NAV (IG-style: Home / Groups / Send / Search / Profile) ====== -->
   <nav class="bottom-nav" role="navigation">
     <button data-tab="feed" class="bn-btn active" aria-label="Home">
       <i data-lucide="home" class="i-outline"></i>
       <i data-lucide="home" class="i-filled"></i>
       <span class="dot hidden" data-dot="feed"></span>
     </button>
-    <button id="bnReelsBtn" class="bn-btn" aria-label="Reels">
-      <i data-lucide="play-square" class="i-outline"></i>
-      <i data-lucide="play-square" class="i-filled"></i>
+    <button data-tab="groups" class="bn-btn" aria-label="Community Groups">
+      <i data-lucide="users" class="i-outline"></i>
+      <i data-lucide="users" class="i-filled"></i>
+      <span class="dot hidden" data-dot="groups"></span>
     </button>
-    <button data-tab="chat" class="bn-btn" aria-label="Send">
+    <button data-tab="chat" class="bn-btn" aria-label="Direct Messages">
       <i data-lucide="send" class="i-outline"></i>
       <i data-lucide="send" class="i-filled"></i>
       <span class="dot hidden" data-dot="chat"></span>
