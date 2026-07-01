@@ -265,17 +265,17 @@
           <button id="inlineComposerCloseBtn" type="button" class="ghost-btn sm" title="Close" style="margin-left:auto; font-size:1.1rem; padding:4px 8px; border-radius:50%;"><i data-lucide="x"></i></button>
         </div>
         <textarea id="postInput" placeholder="What's on your mind?" maxlength="2000" rows="3"></textarea>
-        <div id="postAttachPreview" class="attach-preview small hidden">
-          <img id="postAttachThumb" alt="" />
-          <div class="attach-info">
-            <div id="postAttachName" class="attach-name"></div>
-            <div class="progress-track"><div id="postAttachProgress" class="progress-fill"></div></div>
+        <div id="postAttachPreview" class="hidden" style="margin-top:10px;">
+          <div id="postAttachGrid" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:4px;"></div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:12px; color:var(--muted);">
+            <span id="postAttachStatus"></span>
+            <div class="progress-track" style="flex:1; margin:0 12px; max-width:120px;"><div id="postAttachProgress" class="progress-fill"></div></div>
+            <button id="postCancelAttachBtn" class="ghost-btn sm" type="button" style="padding:2px 8px;">Clear all</button>
           </div>
-          <button id="postCancelAttachBtn" class="ghost-btn" type="button"><i data-lucide="x"></i></button>
         </div>
         <div class="composer-card-actions">
           <button id="postAttachBtn" type="button" class="ghost-btn"><i data-lucide="image"></i> Photo</button>
-          <input type="file" id="postFileInput" accept="image/*" hidden />
+          <input type="file" id="postFileInput" accept="image/*" multiple hidden />
           <div style="display:flex; gap:8px; align-items:center;">
             <button id="inlineComposerCancelBtn" type="button" class="ghost-btn sm">Cancel</button>
             <button id="postSubmitBtn" type="button" class="primary-btn sm">Publish</button>
