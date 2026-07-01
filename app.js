@@ -1540,13 +1540,46 @@ function bindComposer() {
     }
   });
 
-  $('#attachBtn').addEventListener('click', () => $('#fileInput').click());
+  $('#attachBtn').addEventListener('click', () => {
+    $('#fileInput').click();
+    const addMenu = $('#composerAddMenu'); if (addMenu) addMenu.classList.add('hidden');
+  });
   $('#fileInput').addEventListener('change', async (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!f) return;
     await handleAttach(f);
   });
+
+  const addBtn = $('#composerAddBtn');
+  const addMenu = $('#composerAddMenu');
+  if (addBtn && addMenu) {
+    addBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      addMenu.classList.toggle('hidden');
+    });
+    document.addEventListener('click', (e) => {
+      if (!addMenu.contains(e.target) && e.target !== addBtn) addMenu.classList.add('hidden');
+    });
+    addMenu.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => addMenu.classList.add('hidden'));
+    });
+  }
+
+  const moreBtn = $('#chatMoreMenuBtn');
+  const moreDrop = $('#chatMoreDropdown');
+  if (moreBtn && moreDrop) {
+    moreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      moreDrop.classList.toggle('hidden');
+    });
+    document.addEventListener('click', (e) => {
+      if (!moreDrop.contains(e.target) && e.target !== moreBtn) moreDrop.classList.add('hidden');
+    });
+    moreDrop.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => moreDrop.classList.add('hidden'));
+    });
+  }
 
   const scroller = $('#messagesScroll');
   scroller.addEventListener('scroll', () => {

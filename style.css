@@ -412,11 +412,27 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .chat-header-left{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
 .chat-header-text{min-width:0;flex:1;display:flex;flex-direction:column;line-height:1.2}
-.chat-header-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
-.chat-header-actions .ghost-btn{padding:6px}
-.chat-header-actions .ghost-btn i{width:20px;height:20px}
-.chat-header-actions #secretChatBtn.active{color:#10b981;background:rgba(16,185,129,.12);border-radius:8px}
-.chat-header-actions #secretChatBtn.active i{color:#10b981}
+.chat-header-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.action-circle-btn{
+  background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:var(--text);
+  width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:all 0.2s ease;
+}
+.action-circle-btn:hover{background:rgba(255,255,255,0.16);transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,0.25)}
+.action-circle-btn:active{transform:scale(0.92)}
+.action-circle-btn i{width:18px;height:18px}
+.chat-dropdown{
+  position:absolute;top:44px;right:0;background:var(--bg-2);border:1px solid var(--line-2);border-radius:14px;
+  padding:6px;display:flex;flex-direction:column;gap:4px;min-width:190px;box-shadow:0 15px 35px rgba(0,0,0,0.5);z-index:40;
+  animation:popIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dropdown-item{
+  background:transparent;border:none;color:var(--text);padding:10px 12px;border-radius:10px;
+  display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13.5px;font-weight:600;text-align:left;
+  transition:background 0.15s;
+}
+.dropdown-item:hover{background:var(--bg-soft)}
+.dropdown-item i{width:18px;height:18px;color:var(--accent)}
 
 /* ===== Secret Chat banner (Part 3) ===== */
 .secret-banner{
@@ -600,33 +616,25 @@ img{user-select:none;-webkit-user-drag:none}
 .progress-track.shimmer{background:linear-gradient(90deg,var(--line) 0%,var(--line-2) 50%,var(--line) 100%);background-size:200% 100%;animation:shimmer 1.4s linear infinite}
 .attach-preview.small img{width:36px;height:36px}
 
-.composer{
-  display:flex;align-items:flex-end;gap:4px;padding:8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
-  background:var(--bg-2);border-top:1px solid var(--line);
-  min-width:0;
-}
-.composer textarea{
-  flex:1 1 0%;min-width:0;width:100%;
-  border:1.5px solid var(--line-2);background:#fbfdff;
-  padding:10px 14px;border-radius:22px;font-size:16px;color:var(--text);
-  font-family:inherit;resize:none;max-height:140px;line-height:1.35;transition:all .15s;
-  -webkit-appearance:none;
-}
-@media (min-width:560px){
-  .composer textarea{font-size:14.5px}
-}
-.composer textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);background:#fff}
-.composer textarea::placeholder{color:var(--muted-2)}
-.icon-btn{
-  background:transparent;border:0;color:var(--muted);cursor:pointer;
-  padding:8px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
-  transition:all .15s;flex-shrink:0;
-}
-.icon-btn:hover{background:var(--accent-soft);color:var(--accent)}
-.icon-btn:active{transform:scale(.9)}
-.icon-btn i{width:22px;height:22px}
-.send-btn{
-  background:var(--accent-grad);color:#fff;
+.modern-composer{display:flex;align-items:center;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom, 0px));background:var(--bg-2);border-top:1px solid var(--line)}
+.composer-add-btn{background:var(--bg-soft);border:1px solid var(--line-2);color:var(--text);width:38px;height:38px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.2s;flex-shrink:0}
+.composer-add-btn:hover{background:var(--accent);color:#fff;border-color:var(--accent);transform:rotate(90deg)}
+.composer-add-btn:active{transform:scale(0.92)}
+.composer-add-btn i{width:20px;height:20px}
+.composer-input-section{flex:1;min-width:0;display:flex}
+.composer-input-section textarea{flex:1;width:100%;border:1.5px solid var(--line-2);background:rgba(0,0,0,0.25);padding:10px 16px;border-radius:24px;font-size:15px;color:var(--text);font-family:inherit;resize:none;max-height:140px;line-height:1.35;transition:all 0.2s}
+.composer-input-section textarea:focus{outline:none;border-color:var(--accent);background:rgba(0,0,0,0.45);box-shadow:0 0 0 3px var(--accent-soft)}
+.voice-record-btn{background:transparent;border:none;color:var(--muted);width:38px;height:38px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.2s;flex-shrink:0}
+.voice-record-btn:hover{background:rgba(236,72,153,0.15);color:var(--accent);transform:scale(1.08)}
+.voice-record-btn.recording{background:rgba(239,68,68,0.2);color:#ef4444;animation:pulse 1s infinite}
+.voice-record-btn i{width:22px;height:22px}
+.improved-send{background:linear-gradient(135deg,#ec4899,#38bdf8);color:#fff;border:none;width:40px;height:40px;border-radius:50%;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.2s;flex-shrink:0;box-shadow:0 4px 14px rgba(236,72,153,0.35)}
+.improved-send:hover{filter:brightness(1.1);transform:scale(1.08)}
+.improved-send:active{transform:scale(0.92)}
+.composer-popup-menu{position:absolute;bottom:64px;left:12px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:16px;padding:6px;display:flex;flex-direction:column;gap:4px;min-width:185px;box-shadow:0 15px 35px rgba(0,0,0,0.6);z-index:40;animation:popIn 0.18s ease}
+.popup-action-btn{background:transparent;border:none;color:var(--text);padding:10px 14px;border-radius:10px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13.5px;font-weight:600;text-align:left;transition:background 0.15s}
+.popup-action-btn:hover{background:var(--bg-soft)}
+.popup-action-btn i{width:18px;height:18px;color:var(--accent)}
   border:0;padding:0;width:40px;height:40px;border-radius:50%;
   cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
   transition:all .15s;flex-shrink:0;

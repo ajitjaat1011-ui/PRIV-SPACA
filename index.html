@@ -175,13 +175,16 @@
             <div id="chatSubtitle" class="chat-subtitle">Tap members to start a private chat</div>
           </div>
         </div>
-        <div class="chat-header-actions">
-          <div id="rtcCallActions" style="display:none; gap: 8px;">
-            <button id="rtcAudioBtn" class="ghost-btn" title="Audio Call"><i data-lucide="phone"></i></button>
-            <button id="rtcVideoBtn" class="ghost-btn" title="Video Call"><i data-lucide="video"></i></button>
+        <div class="chat-header-actions" style="display:flex; align-items:center; gap:6px; position:relative;">
+          <div id="rtcCallActions" style="display:none; gap: 6px; align-items:center;">
+            <button id="rtcAudioBtn" class="action-circle-btn" title="Audio Call"><i data-lucide="phone"></i></button>
+            <button id="rtcVideoBtn" class="action-circle-btn" title="Video Call"><i data-lucide="video"></i></button>
           </div>
-          <button id="secretChatBtn" class="ghost-btn" title="Secret Chat (E2E)" style="display:none"><i data-lucide="lock"></i></button>
-          <button id="scheduleBtn" class="ghost-btn" title="Scheduled messages"><i data-lucide="clock"></i></button>
+          <button type="button" id="chatMoreMenuBtn" class="action-circle-btn" title="More Options"><i data-lucide="more-vertical"></i></button>
+          <div id="chatMoreDropdown" class="chat-dropdown hidden">
+            <button type="button" id="secretChatBtn" class="dropdown-item" title="Secret Chat (E2E)"><i data-lucide="lock"></i> <span>Toggle Secret Chat</span></button>
+            <button type="button" id="scheduleBtn" class="dropdown-item" title="Scheduled messages"><i data-lucide="clock"></i> <span>Scheduled Messages</span></button>
+          </div>
         </div>
       </div>
       <div id="secretBanner" class="secret-banner hidden">
@@ -238,14 +241,23 @@
         <button id="cancelAttachBtn" class="ghost-btn"><i data-lucide="x"></i></button>
       </div>
 
-      <form id="composer" class="composer">
-        <button type="button" id="attachBtn" class="icon-btn" title="Attach image"><i data-lucide="image"></i></button>
-        <input type="file" id="fileInput" accept="image/*" hidden />
-        <button type="button" id="scheduleOpenBtn" class="icon-btn" title="Schedule"><i data-lucide="calendar-clock"></i></button>
-        <button type="button" id="micBtn" class="icon-btn" title="Record Audio"><i data-lucide="mic"></i></button>
-        <textarea id="composerInput" placeholder="Message…" rows="1" maxlength="4000"></textarea>
-        <button type="submit" id="sendBtn" class="send-btn" title="Send"><i data-lucide="send"></i></button>
-      </form>
+      <div style="position:relative; width:100%;">
+        <div id="composerAddMenu" class="composer-popup-menu hidden">
+          <button type="button" id="attachBtn" class="popup-action-btn"><i data-lucide="image"></i> <span>Photo / Media</span></button>
+          <button type="button" id="scheduleOpenBtn" class="popup-action-btn"><i data-lucide="calendar-clock"></i> <span>Schedule Message</span></button>
+        </div>
+        <form id="composer" class="composer modern-composer">
+          <input type="file" id="fileInput" accept="image/*" hidden />
+          <button type="button" id="composerAddBtn" class="composer-add-btn" title="Attachments"><i data-lucide="plus"></i></button>
+          
+          <div class="composer-input-section">
+            <textarea id="composerInput" placeholder="Message…" rows="1" maxlength="4000"></textarea>
+          </div>
+
+          <button type="button" id="micBtn" class="voice-record-btn" title="Record Voice Note"><i data-lucide="mic"></i></button>
+          <button type="submit" id="sendBtn" class="send-btn improved-send" title="Send"><i data-lucide="send"></i></button>
+        </form>
+      </div>
     </section>
   </main>
 
