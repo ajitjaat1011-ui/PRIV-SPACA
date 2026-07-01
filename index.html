@@ -677,8 +677,10 @@
       <img id="storyEditorPreviewImg" class="story-editor-img hidden" alt="Story preview" />
       <input type="file" id="storyEditorFileInput" accept="image/*" hidden />
 
+      <div id="storyAlignGuide" class="story-align-guide hidden"></div>
+
       <!-- Draggable Music Sticker on Story Stage -->
-      <div class="story-music-sticker hidden" id="storyStageMusicSticker">
+      <div class="story-music-sticker hidden" id="storyStageMusicSticker" style="top:32%; left:50%;">
         <img src="" class="story-music-art" id="storyStageMusicArt" alt="Album" />
         <div class="story-music-meta">
           <div class="story-music-title" id="storyStageMusicTitle">Song</div>
@@ -692,7 +694,23 @@
         <button type="button" class="story-music-remove" onclick="removeStoryMusic(event)">✕</button>
       </div>
 
-      <div id="storyStageTextOverlay" class="story-stage-text-overlay hidden" onclick="openStoryTextEditor()"></div>
+      <div id="storyStageTextOverlay" class="story-stage-text-overlay hidden" style="top:68%; left:50%;" onclick="openStoryTextEditor()"></div>
+    </div>
+
+    <!-- Instagram Music Section Trimmer Scrubber -->
+    <div id="storyMusicTrimmer" class="story-music-trimmer hidden">
+      <div class="trimmer-top">
+        <span class="trimmer-song-title" id="trimmerSongTitle">Song Name</span>
+        <button type="button" class="story-text-done" onclick="closeMusicTrimmer()">Done</button>
+      </div>
+      <div class="trimmer-waveform-box">
+        <div class="waveform-bars" id="trimmerWaveformBars"></div>
+        <input type="range" id="musicStartTimeSlider" class="music-scrubber-range" min="0" max="180" value="0" step="1" oninput="updateMusicStartTime(this.value)" />
+      </div>
+      <div class="trimmer-time-lbl">
+        <span>Start time: <strong id="musicStartTimeLbl">0:00</strong></span>
+        <span>Clip length: <strong>30s</strong></span>
+      </div>
     </div>
 
     <!-- Right Sidebar Tools (No Effects button as requested) -->
