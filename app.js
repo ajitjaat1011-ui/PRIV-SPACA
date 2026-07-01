@@ -1975,13 +1975,12 @@ async function pollNotifications() {
     }
   } catch (_) {}
 
-  // 4) Unviewed stories add to feed dot
+  // 4) Unviewed active stories add to the feed dot
   try {
     (State.members || []).forEach(u => {
       if (u.id === meId) return;
-      const theirLatest = (State.posts || []).filter(p => p.userId === u.id)
-        .reduce((max, p) => Math.max(max, p.createdAt || 0), 0);
-      if (theirLatest && !isStoryViewed(u.id)) feedUnread++;
+      const theirLatestStory = getLatestStory(u.id);
+      if (theirLatestStory && !isStoryViewed(u.id)) feedUnread++;
     });
   } catch (_) {}
 
@@ -2034,24 +2033,53 @@ async function loadPosts() {
   } catch (_) {}
 }
 
-// "Stories" — synthesized from the active members directory.
-// Each member gets a story cell; clicking opens a story viewer.
+const STORY_TTL_MS = 24 * 60 * 60 * 1000;
+function isStoryRecord(p) {
+  if (!p || p.deletedAt) return false;
+  return !!(p.story === true || p.kind === 'story' || p.storyExpiresAt || p.style || p.music);
+}
+function storyExpiresAt(p) {
+  return Number(p && p.storyExpiresAt) || ((p && p.createdAt) ? (p.createdAt + STORY_TTL_MS) : 0);
+}
+function isActiveStoryPost(p) {
+  return isStoryRecord(p) && storyExpiresAt(p) > Date.now();
+}
+function getStoryPosts(userId = null) {
+  return (State.posts || [])
+    .filter(p => isActiveStoryPost(p) && (!userId || p.userId === userId))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+function getLatestStory(userId) {
+  return getStoryPosts(userId)[0] || null;
+}
+function hasActiveStory(userId) {
+  return !!getLatestStory(userId);
+}
+function getFeedPosts() {
+  return (State.posts || []).filter(p => !isStoryRecord(p));
+}
+
+// "Stories" are kept separate from the main feed.
 let _storiesRendered = false;
 let _lastStoriesSig = '';
 function renderStoriesRail() {
   const rail = $('#storiesRail');
   if (!rail) return;
-  if (!State.members || State.members.length === 0) {
+  if (!State.members || State.members.length === 0 || !State.user) {
     rail.style.display = 'none';
     return;
   }
-  const meId = State.user && State.user.id;
+  const meId = State.user.id;
   const me = State.members.find(m => m.id === meId) || State.user;
   const others = State.members
-    .filter(m => m.id !== meId)
-    .sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
-  // Signature based on member ids + viewed-state of each (so ring colour-change re-renders)
-  const sig = [me && me.id, ...others.map(o => o.id + ':' + (isStoryViewed(o.id)?'v':'u'))].join('|');
+    .filter(m => m.id !== meId && hasActiveStory(m.id))
+    .sort((a, b) => {
+      const bt = (getLatestStory(b.id)?.createdAt || 0) - (getLatestStory(a.id)?.createdAt || 0);
+      if (bt !== 0) return bt;
+      return (b.online ? 1 : 0) - (a.online ? 1 : 0);
+    });
+  const hasMine = hasActiveStory(meId);
+  const sig = [me && me.id + ':' + (hasMine ? '1' : '0'), ...others.map(o => o.id + ':' + (isStoryViewed(o.id) ? 'v' : 'u'))].join('|');
   if (sig === _lastStoriesSig && rail.children.length > 0) return;
   _lastStoriesSig = sig;
   rail.style.display = '';
@@ -2069,8 +2097,10 @@ function buildStoryCell(user, isMe) {
   cell.type = 'button';
   cell.className = 'story-cell' + (isMe ? ' me' : '');
   const ring = document.createElement('div');
+  const hasStory = !!(user && hasActiveStory(user.id));
   const viewed = !isMe && isStoryViewed(user.id);
   ring.className = 'story-ring' + (isMe ? ' is-me' : (viewed ? ' viewed' : ''));
+  if (!hasStory && !isMe) ring.classList.add('viewed');
   const inner = document.createElement('div');
   inner.className = 'avatar-inner';
   const url = user && user.photoUrl;
@@ -2093,6 +2123,10 @@ function buildStoryCell(user, isMe) {
     const badge = document.createElement('span');
     badge.className = 'add-badge';
     badge.textContent = '+';
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (typeof openStoryCreator === 'function') openStoryCreator();
+    });
     ring.appendChild(badge);
   }
   cell.appendChild(ring);
@@ -2102,9 +2136,10 @@ function buildStoryCell(user, isMe) {
   cell.appendChild(lbl);
   cell.addEventListener('click', () => {
     if (isMe) {
-      if (typeof openStoryCreator === 'function') openStoryCreator();
+      if (hasStory) openStoryFor(user);
+      else if (typeof openStoryCreator === 'function') openStoryCreator();
       else { const ta = $('#postInput'); if (ta) ta.focus(); }
-    } else {
+    } else if (hasStory) {
       openStoryFor(user);
     }
   });
@@ -2151,7 +2186,8 @@ function renderPosts() {
   renderStoriesRail();
   const list = $('#feedList');
   const meId = State.user && State.user.id;
-  const currentIds = new Set(State.posts.map(p => p.id));
+  const feedPosts = getFeedPosts();
+  const currentIds = new Set(feedPosts.map(p => p.id));
   const newOnes = new Set();
   currentIds.forEach(id => { if (!_previousPostIds.has(id)) newOnes.add(id); });
   const isFirstRender = _previousPostIds.size === 0;
@@ -2167,7 +2203,7 @@ function renderPosts() {
   });
 
   // Handle empty state
-  if (State.posts.length === 0) {
+  if (feedPosts.length === 0) {
     list.innerHTML = '';
     const e = document.createElement('div');
     e.className = 'empty-state';
@@ -2188,7 +2224,7 @@ function renderPosts() {
   }
 
   // 2) For each post in order, ensure the right card is at the right position
-  State.posts.forEach((p, idx) => {
+  feedPosts.forEach((p, idx) => {
     const sig = _postCardSignature(p);
     let cached = _postCardCache.get(p.id);
     let card;
@@ -2927,36 +2963,60 @@ function isStoryViewed(userId) {
   const map = _getStoryViewed();
   const entry = map[userId];
   if (!entry) return false;
-  // Find the user's latest post timestamp
-  const latest = (State.posts || []).filter(p => p.userId === userId)
-    .reduce((max, p) => Math.max(max, p.createdAt || 0), 0);
-  // If we haven't seen any post (latest=0) treat as not-viewed only for first 24h after first appearance
+  const latest = getLatestStory(userId)?.createdAt || 0;
   if (!latest) return !!entry.viewedAt;
-  // Viewed if our last view is at or after the latest post
   return entry.viewedAt >= latest;
 }
 function markStoryViewed(userId) {
-  const latest = (State.posts || []).filter(p => p.userId === userId)
-    .reduce((max, p) => Math.max(max, p.createdAt || 0), 0);
+  const latest = getLatestStory(userId)?.createdAt || 0;
   const map = _getStoryViewed();
   map[userId] = { lastPostTs: latest, viewedAt: Date.now() };
   _setStoryViewed(map);
 }
 
 let storyTimer = null;
+function applyStoryFontPreset(el, font = 'modern') {
+  if (!el) return;
+  el.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+  el.style.fontWeight = '700';
+  el.style.fontStyle = 'normal';
+  el.style.textTransform = 'none';
+  el.style.letterSpacing = '0';
+  if (font === 'SQUEEZE' || font === 'neon') {
+    el.style.fontFamily = "'Impact', sans-serif";
+    el.style.textTransform = 'uppercase';
+    el.style.letterSpacing = '1px';
+  } else if (font === 'Bubble' || font === 'playful') {
+    el.style.fontFamily = "'Trebuchet MS', sans-serif";
+    el.style.fontWeight = '800';
+  } else if (font === 'Deco') {
+    el.style.fontFamily = 'Georgia, serif';
+    el.style.fontStyle = 'italic';
+  } else if (font === 'Typewriter' || font === 'typewriter') {
+    el.style.fontFamily = 'monospace';
+  } else if (font === 'script') {
+    el.style.fontFamily = "'Brush Script MT', Georgia, cursive";
+  }
+}
+
 function openStoryFor(user) {
+  const recent = getLatestStory(user.id);
+  if (!recent) {
+    if (user.id === (State.user && State.user.id) && typeof openStoryCreator === 'function') return openStoryCreator();
+    toast('No active story right now');
+    return;
+  }
   markStoryViewed(user.id);
-  const theirPosts = (State.posts || []).filter(p => p.userId === user.id).sort((a, b) => b.createdAt - a.createdAt);
-  const recent = theirPosts[0];
   const v = $('#storyViewer');
   const content = $('#storyContent');
   const progress = $('#storyProgress');
+  const st = recent.style || {};
   content.innerHTML = '';
   progress.innerHTML = '<div class="bar active"><div class="fill"></div></div>';
   renderAvatar($('#storyAvatar'), user);
   $('#storyName').textContent = user.displayName || user.username;
   $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
-  if (recent && recent.imageUrl) {
+  if (recent.imageUrl) {
     const imgWrap = document.createElement('div');
     imgWrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;';
     const img = document.createElement('img');
@@ -2966,58 +3026,51 @@ function openStoryFor(user) {
     imgWrap.appendChild(img);
 
     if (recent.text) {
-      const st = recent.style || {};
       const cap = document.createElement('div');
       cap.className = 'story-img-caption';
-      const sz = st.size ? Math.min(36, Math.max(16, st.size)) : 22;
+      const sz = st.size ? Math.min(52, Math.max(16, st.size)) : 22;
       const clr = st.color || '#ffffff';
       const aln = st.align || 'center';
       const bg = st.bg ? (clr === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
       const px = st.posX || 50;
       const py = st.posY || 68;
-      cap.style.cssText = `position:absolute; top:${py}%; left:${px}%; transform:translate(-50%,-50%); width:85%; color:${clr}; background:${bg}; padding:${st.bg?'8px 16px':'0'}; border-radius:${st.bg?'14px':'0'}; text-align:${aln}; font-size:${sz}px; font-weight:700; z-index:15; word-break:break-word;`;
+      const scale = st.scale ? Math.max(0.5, Math.min(2.5, st.scale)) : 1;
+      cap.style.cssText = `position:absolute; top:${py}%; left:${px}%; transform:translate(-50%,-50%) scale(${scale}); transform-origin:center center; width:85%; color:${clr}; background:${bg}; padding:${st.bg ? '8px 16px' : '0'}; border-radius:${st.bg ? '14px' : '0'}; text-align:${aln}; font-size:${sz}px; font-weight:700; z-index:15; word-break:break-word;`;
       cap.textContent = recent.text;
-      if (st.font === 'SQUEEZE' || st.font === 'neon') { cap.style.fontFamily = "'Impact', sans-serif"; cap.style.textTransform = 'uppercase'; }
-      else if (st.font === 'Bubble') { cap.style.fontFamily = "'Trebuchet MS', sans-serif"; cap.style.fontWeight = '800'; }
-      else if (st.font === 'Deco') { cap.style.fontFamily = 'Georgia, serif'; cap.style.fontStyle = 'italic'; }
-      else if (st.font === 'Typewriter' || st.font === 'typewriter') { cap.style.fontFamily = 'monospace'; }
-      else if (st.font === 'script') { cap.style.fontFamily = "'Brush Script MT', Georgia, cursive"; }
+      applyStoryFontPreset(cap, st.font || 'modern');
       imgWrap.appendChild(cap);
     }
     content.appendChild(imgWrap);
-  } else if (recent && recent.text) {
-    const st = recent.style || {};
+  } else if (recent.text) {
     const div = document.createElement('div');
     div.className = 'text-story';
     div.textContent = recent.text.slice(0, 280);
-    const sz = st.size ? Math.min(42, Math.max(20, st.size)) : 28;
+    const sz = st.size ? Math.min(52, Math.max(20, st.size)) : 28;
     const clr = st.color || '#ffffff';
+    const scale = st.scale ? Math.max(0.5, Math.min(2.5, st.scale)) : 1;
     div.style.fontSize = sz + 'px';
     div.style.color = clr;
     div.style.textAlign = st.align || 'center';
-    if (st.font === 'SQUEEZE' || st.font === 'neon') { div.style.fontFamily = "'Impact', sans-serif"; div.style.textTransform = 'uppercase'; }
-    else if (st.font === 'Bubble') { div.style.fontFamily = "'Trebuchet MS', sans-serif"; div.style.fontWeight = '800'; }
-    else if (st.font === 'Deco') { div.style.fontFamily = 'Georgia, serif'; div.style.fontStyle = 'italic'; }
-    else if (st.font === 'Typewriter' || st.font === 'typewriter') { div.style.fontFamily = 'monospace'; }
-    content.appendChild(div);
-  } else {
-    const div = document.createElement('div');
-    div.className = 'text-story';
-    div.textContent = (user.bio && user.bio.trim()) || `👋 Hi from ${user.displayName || user.username}!`;
+    div.style.transform = `scale(${scale})`;
+    div.style.background = st.bg ? (clr === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
+    div.style.padding = st.bg ? '10px 16px' : '0';
+    div.style.borderRadius = st.bg ? '14px' : '0';
+    applyStoryFontPreset(div, st.font || 'modern');
     content.appendChild(div);
   }
   v.classList.remove('hidden');
   const player = $('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
-  if (recent && recent.music && recent.music.title) {
+  if (recent.music && recent.music.title) {
     const stk = document.createElement('div');
     stk.className = 'story-music-sticker';
     stk.style.position = 'absolute';
     const mpx = recent.music.posX || 50;
     const mpy = recent.music.posY || 32;
+    const mscale = recent.music.scale ? Math.max(0.5, Math.min(2.5, recent.music.scale)) : 1;
     stk.style.left = mpx + '%';
     stk.style.top = mpy + '%';
-    stk.style.transform = 'translate(-50%, -50%)';
+    stk.style.transform = `translate(-50%, -50%) scale(${mscale})`;
     stk.innerHTML = `
       <img src="${recent.music.art || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=120&q=80'}" class="story-music-art" alt="art" />
       <div class="story-music-meta">
@@ -3218,29 +3271,26 @@ window.finishStoryTextEditor = () => {
   const inp = $('#storyTextOverlayInput');
   activeStoryText = (inp?.value || '').trim();
   const stg = $('#storyStageTextOverlay');
+  const txt = $('#storyStageTextSpan');
   if (stg) {
     if (!activeStoryText) {
       stg.classList.add('hidden');
     } else {
-      stg.textContent = activeStoryText;
-      stg.style.color = activeStoryTextColor;
+      if (txt) txt.textContent = activeStoryText;
+      stg.style.color = activeStoryTextBg && activeStoryTextColor === '#ffffff' ? '#ffffff' : (activeStoryTextBg && activeStoryTextColor === '#000000' ? '#000000' : activeStoryTextColor);
       stg.style.fontSize = activeStoryTextSize + 'px';
       stg.style.textAlign = activeStoryTextAlign;
       stg.style.background = activeStoryTextBg ? (activeStoryTextColor === '#ffffff' ? '#000000' : '#ffffff') : 'transparent';
-      stg.style.color = activeStoryTextBg && activeStoryTextColor === '#ffffff' ? '#ffffff' : (activeStoryTextBg && activeStoryTextColor === '#000000' ? '#000000' : activeStoryTextColor);
-      if (activeStoryFont === 'modern') stg.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-      if (activeStoryFont === 'SQUEEZE') { stg.style.fontFamily = "'Impact', sans-serif"; stg.style.textTransform = 'uppercase'; stg.style.letterSpacing = '1px'; }
-      if (activeStoryFont === 'Bubble') { stg.style.fontFamily = "'Trebuchet MS', sans-serif"; stg.style.fontWeight = '800'; }
-      if (activeStoryFont === 'Deco') { stg.style.fontFamily = 'Georgia, serif'; stg.style.fontStyle = 'italic'; }
-      if (activeStoryFont === 'Typewriter') { stg.style.fontFamily = 'monospace'; }
+      stg.style.borderRadius = activeStoryTextBg ? '14px' : '0';
+      stg.style.padding = activeStoryTextBg ? '8px 14px' : '0';
       stg.style.left = (State.textPosX || 50) + '%';
       stg.style.top = (State.textPosY || 68) + '%';
+      stg.style.transform = `translate(-50%, -50%) scale(${State.textScale || 1})`;
+      applyStoryFontPreset(stg, activeStoryFont || 'modern');
       stg.classList.remove('hidden');
       makeStickerDraggable(stg, (px, py) => { State.textPosX = px; State.textPosY = py; });
     }
   }
-  const cap = $('#storyEditorCaptionInput');
-  if (cap && activeStoryText) cap.value = activeStoryText;
   window.closeStoryTextEditor();
 };
 
@@ -3255,11 +3305,7 @@ window.updateStoryTextLivePreview = () => {
   inp.style.background = activeStoryTextBg ? (activeStoryTextColor === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
   inp.style.borderRadius = activeStoryTextBg ? '12px' : '0';
   inp.style.padding = activeStoryTextBg ? '8px 14px' : '0';
-  if (activeStoryFont === 'modern') inp.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-  if (activeStoryFont === 'SQUEEZE') { inp.style.fontFamily = "'Impact', sans-serif"; inp.style.textTransform = 'uppercase'; }
-  if (activeStoryFont === 'Bubble') { inp.style.fontFamily = "'Trebuchet MS', sans-serif"; inp.style.fontWeight = '800'; }
-  if (activeStoryFont === 'Deco') { inp.style.fontFamily = 'Georgia, serif'; inp.style.fontStyle = 'italic'; }
-  if (activeStoryFont === 'Typewriter') { inp.style.fontFamily = 'monospace'; }
+  applyStoryFontPreset(inp, activeStoryFont || 'modern');
 };
 
 window.selectOverlayFont = (font, el) => {
@@ -3295,15 +3341,19 @@ window.setOverlayTextColor = (color) => {
 
 window.setStoryFont = (font, el) => {
   activeStoryFont = font;
-  $$('#storyFontControls .story-font-pill').forEach(p => p.classList.remove('active'));
+  if (el && el.closest('#storyTextEditorScreen')) {
+    $$('#storyTextEditorScreen .story-font-pill').forEach(p => p.classList.remove('active'));
+    if (el) el.classList.add('active');
+    window.updateStoryTextLivePreview();
+    return;
+  }
+  $$('.story-font-pill').forEach(p => {
+    if (p.closest('#storyFontControls')) p.classList.remove('active');
+  });
   if (el) el.classList.add('active');
   const inp = $('#storyEditorCaptionInput');
   if (!inp) return;
-  if (font === 'modern') inp.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-  if (font === 'neon') { inp.style.fontFamily = "'Impact', 'Arial Black', sans-serif"; inp.style.fontWeight = 'bold'; }
-  if (font === 'typewriter') inp.style.fontFamily = 'monospace';
-  if (font === 'script') inp.style.fontFamily = "'Brush Script MT', Georgia, cursive";
-  if (font === 'playful') inp.style.fontFamily = "'Trebuchet MS', sans-serif";
+  applyStoryFontPreset(inp, font || 'modern');
 };
 
 window.openStoryCreator = () => {
@@ -3345,21 +3395,41 @@ window.closeStoryCreator = () => {
   if (player) { player.pause(); player.src = ''; }
   selectedStoryMusicId = null;
   const stk = $('#storyStageMusicSticker');
-  if (stk) stk.classList.add('hidden');
+  if (stk) {
+    stk.classList.add('hidden');
+    stk.style.left = '50%';
+    stk.style.top = '32%';
+    stk.style.transform = 'translate(-50%, -50%) scale(1)';
+    stk.classList.remove('active-sticker');
+  }
   const stgText = $('#storyStageTextOverlay');
-  if (stgText) stgText.classList.add('hidden');
+  const stgTextSpan = $('#storyStageTextSpan');
+  if (stgText) {
+    stgText.classList.add('hidden');
+    stgText.style.left = '50%';
+    stgText.style.top = '68%';
+    stgText.style.transform = 'translate(-50%, -50%) scale(1)';
+    stgText.style.background = 'transparent';
+    stgText.style.padding = '8px 14px';
+    stgText.classList.remove('active-sticker');
+    applyStoryFontPreset(stgText, 'modern');
+  }
+  if (stgTextSpan) stgTextSpan.textContent = 'Text';
   const trim = $('#storyMusicTrimmer');
   if (trim) trim.classList.add('hidden');
   const prev = $('#storyEditorPreviewImg');
   if (prev) { prev.src = ''; prev.classList.add('hidden'); }
   const fc = $('#storyFontControls'); if (fc) fc.classList.add('hidden');
+  const colorRow = $('#storyTextColorsRow'); if (colorRow) colorRow.classList.add('hidden');
+  const slider = $('#storyTextSizeSlider'); if (slider) slider.value = '28';
   activeStoryFont = 'modern'; activeStoryText = ''; activeStoryTextColor = '#ffffff'; activeStoryTextBg = false; activeStoryTextAlign = 'center'; activeStoryTextSize = 28;
-  State.musicPosX = 50; State.musicPosY = 32; State.musicStartTime = 0;
-  State.textPosX = 50; State.textPosY = 68;
+  activeStickerScales = { storyStageMusicSticker: 1.0, storyStageTextOverlay: 1.0 };
+  State.musicPosX = 50; State.musicPosY = 32; State.musicStartTime = 0; State.musicScale = 1.0; State.musicClipDur = 30;
+  State.textPosX = 50; State.textPosY = 68; State.textScale = 1.0;
   const ph = $('#storyEditorPlaceholder');
   if (ph) ph.classList.remove('hidden');
   const cap = $('#storyEditorCaptionInput');
-  if (cap) { cap.value = ''; cap.style.fontFamily = ''; }
+  if (cap) { cap.value = ''; cap.style.fontFamily = ''; cap.style.fontWeight = ''; cap.style.fontStyle = ''; cap.style.textTransform = ''; cap.style.letterSpacing = ''; }
   State.storyCreatorImgUrl = null;
 };
 
@@ -3560,7 +3630,18 @@ window.publishStoryWithMusic = async (isCf = false) => {
     return;
   }
   try {
-    await api('/posts/create', { method: 'POST', body: { text, imageUrl, music, style } });
+    await api('/posts/create', {
+      method: 'POST',
+      body: {
+        text,
+        imageUrl,
+        music,
+        style,
+        story: true,
+        audience: isCf ? 'close_friends' : 'all',
+        storyExpiresAt: Date.now() + STORY_TTL_MS,
+      }
+    });
     window.closeStoryCreator();
     loadPosts();
     toast(music ? `🎉 Story published with 30s background song "${music.title}"!` : '🎉 Story published!', 'success');
