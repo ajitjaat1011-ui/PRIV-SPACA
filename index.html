@@ -262,6 +262,7 @@
             <strong id="feedMeName"></strong>
             <span class="muted small">Share with the community</span>
           </div>
+          <button id="inlineComposerCloseBtn" type="button" class="ghost-btn sm" title="Close" style="margin-left:auto; font-size:1.1rem; padding:4px 8px; border-radius:50%;"><i data-lucide="x"></i></button>
         </div>
         <textarea id="postInput" placeholder="What's on your mind?" maxlength="2000" rows="3"></textarea>
         <div id="postAttachPreview" class="attach-preview small hidden">
@@ -275,7 +276,10 @@
         <div class="composer-card-actions">
           <button id="postAttachBtn" type="button" class="ghost-btn"><i data-lucide="image"></i> Photo</button>
           <input type="file" id="postFileInput" accept="image/*" hidden />
-          <button id="postSubmitBtn" type="button" class="primary-btn sm">Publish</button>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button id="inlineComposerCancelBtn" type="button" class="ghost-btn sm">Cancel</button>
+            <button id="postSubmitBtn" type="button" class="primary-btn sm">Publish</button>
+          </div>
         </div>
       </div>
 
