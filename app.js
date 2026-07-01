@@ -6,9 +6,16 @@
 'use strict';
 
 // ====== State ======
+function safeLocalGet(key, fallback = null) {
+  try { return localStorage.getItem(key) || fallback; } catch (_) { return fallback; }
+}
+function safeJsonParse(raw, fallback = null) {
+  try { return raw ? JSON.parse(raw) : fallback; } catch (_) { return fallback; }
+}
+
 const State = {
-  token: localStorage.getItem('ps_token') || null,
-  user: JSON.parse(localStorage.getItem('ps_user') || 'null'),
+  token: safeLocalGet('ps_token', null),
+  user: safeJsonParse(safeLocalGet('ps_user', null), null),
   currentTab: 'feed',
   currentRoom: { id: 'general-group', kind: 'group', label: '#general-group', target: null },
   members: [],
@@ -20,7 +27,7 @@ const State = {
   attach: null,
   postAttach: null,
   pollTimers: {},
-  rtcLastSignalAt: Number(localStorage.getItem('ps_rtcLastSignalAt') || 0),
+  rtcLastSignalAt: Number(safeLocalGet('ps_rtcLastSignalAt', 0) || 0),
 };
 
 const API_BASE = '/api';
@@ -36,6 +43,7 @@ function authHeaders() {
 const _apiCache = new Map();      // key -> { ts, data }
 const _apiInflight = new Map();   // key -> Promise
 const API_CACHE_TTL_MS = 300;
+let startupFallback = null;
 
 async function api(path, options = {}) {
   const opts = Object.assign({ method: 'GET', headers: {} }, options);
@@ -53,8 +61,15 @@ async function api(path, options = {}) {
   }
   const fetchPromise = (async () => {
     let res;
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    let timeoutId = null;
+    if (controller) {
+      opts.signal = controller.signal;
+      timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 12000);
+    }
     try { res = await fetch(API_BASE + path, opts); }
-    catch (e) { throw new Error('Network error'); }
+    catch (e) { throw new Error(e && e.name === 'AbortError' ? 'Network timeout' : 'Network error'); }
+    finally { if (timeoutId) clearTimeout(timeoutId); }
     let data = null;
     try { data = await res.json(); } catch (_) { data = null; }
     if (!res.ok) {
@@ -76,164 +91,7 @@ async function api(path, options = {}) {
       }
     }
     return data;
-  // --- WEBRTC ---
-let rtcPeerConnection = null;
-let rtcLocalStream = null;
-let rtcRemoteStream = null;
-let rtcCurrentPeer = null; // targetId we are talking to
-let isVideoCall = false;
-
-const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-function initWebRTC() {
-  const btnAudio = $('#rtcAudioBtn');
-  const btnVideo = $('#rtcVideoBtn');
-  const btnAccept = $('#rtcAcceptBtn');
-  const btnReject = $('#rtcRejectBtn');
-  if(btnAudio) btnAudio.addEventListener('click', () => startCall(false));
-  if(btnVideo) btnVideo.addEventListener('click', () => startCall(true));
-  if(btnAccept) btnAccept.addEventListener('click', acceptCall);
-  if(btnReject) btnReject.addEventListener('click', endCall);
-}
-
-function sendRTCSignal(targetId, signal) {
-  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => { console.error('Signal error', e); toast('Call signal failed: '+(e.message||''),'error'); });
-}
-
-async function startCall(video) {
-  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
-  isVideoCall = video;
-  rtcCurrentPeer = State.currentRoom.target.id;
-  try {
-    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
-  } catch (err) {
-    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
-    return;
-  }
-  showCallUI('Calling...', State.currentRoom.target);
-  createPeerConnection();
-  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  
-  try {
-    const offer = await rtcPeerConnection.createOffer();
-    await rtcPeerConnection.setLocalDescription(offer);
-    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
-  } catch (err) {
-    toast('Failed to start call', 'error');
-    endCall();
-  }
-}
-
-async function handleRTCSignal(data) {
-  if (!data || !data.signal) return;
-  const peerId = data.fromId;
-  const signal = data.signal;
-  const author = data.author;
-
-  if (signal.type === 'offer') {
-    if (rtcPeerConnection) {
-      // Busy
-      sendRTCSignal(peerId, { type: 'busy' });
-      return;
-    }
-    rtcCurrentPeer = peerId;
-    isVideoCall = signal.video;
-    showCallUI('Incoming Call...', author, true);
-    // Store offer to use upon acceptance
-    window._rtcPendingOffer = signal.offer;
-  } else if (signal.type === 'answer') {
-    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
-      rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
-      $('#callStatusText').textContent = 'Connected';
-    }
-  } else if (signal.type === 'candidate') {
-    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
-      rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.log(e));
-    }
-  } else if (signal.type === 'end' || signal.type === 'busy') {
-    if (rtcCurrentPeer === peerId) {
-      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
-      endCall(true);
-    }
-  }
-}
-
-async function acceptCall() {
-  $('#rtcAcceptBtn').classList.add('hidden');
-  $('#callStatusText').textContent = 'Connecting...';
-  try {
-    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
-  } catch (err) {
-    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
-    endCall();
-    return;
-  }
-  createPeerConnection();
-  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  
-  try {
-    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
-    const answer = await rtcPeerConnection.createAnswer();
-    await rtcPeerConnection.setLocalDescription(answer);
-    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
-    window._rtcPendingOffer = null;
-  } catch(err) {
-    endCall();
-  }
-}
-
-function createPeerConnection() {
-  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
-  rtcRemoteStream = new MediaStream();
-  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
-  
-  rtcPeerConnection.onicecandidate = (e) => {
-    if (e.candidate && rtcCurrentPeer) {
-      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
-    }
-  };
-  rtcPeerConnection.ontrack = (e) => {
-    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
-    $('#callVideos').classList.remove('hidden');
-    $('#callStatusText').textContent = '';
-  };
-  rtcPeerConnection.oniceconnectionstatechange = () => {
-    if (rtcPeerConnection.iceConnectionState === 'disconnected' || rtcPeerConnection.iceConnectionState === 'failed') {
-      endCall(true);
-    }
-  };
-}
-
-function showCallUI(status, user, incoming = false) {
-  $('#callStatusText').textContent = status;
-  $('#callName').textContent = user.displayName || user.username || 'User';
-  $('#callVideos').classList.add('hidden');
-  $('#callOverlay').classList.remove('hidden');
-  if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
-  else $('#rtcAcceptBtn').classList.add('hidden');
-}
-
-function endCall(remote = false) {
-  if (rtcPeerConnection) {
-    rtcPeerConnection.close();
-    rtcPeerConnection = null;
-  }
-  if (rtcLocalStream) {
-    rtcLocalStream.getTracks().forEach(t => t.stop());
-    rtcLocalStream = null;
-  }
-  if (!remote && rtcCurrentPeer) {
-    sendRTCSignal(rtcCurrentPeer, { type: 'end' });
-  }
-  rtcCurrentPeer = null;
-  $('#callOverlay').classList.add('hidden');
-  $('#rtcLocalVideo').srcObject = null;
-  $('#rtcRemoteVideo').srcObject = null;
-}
-
-})();
+  })();
   if (cacheKey) {
     _apiInflight.set(cacheKey, fetchPromise);
     fetchPromise.finally(() => _apiInflight.delete(cacheKey));
@@ -509,6 +367,7 @@ function hideSplash() {
 }
 
 function showAuth() {
+  if (typeof startupFallback !== 'undefined') try { clearTimeout(startupFallback); } catch (_) {}
   $('#authShell').classList.remove('hidden');
   $('#appShell').classList.add('hidden');
   hideSplash();
@@ -516,12 +375,12 @@ function showAuth() {
 }
 
 function showApp() {
+  if (typeof startupFallback !== 'undefined') try { clearTimeout(startupFallback); } catch (_) {}
   $('#authShell').classList.add('hidden');
   $('#appShell').classList.remove('hidden');
   hideSplash();
   refreshIcons();
   hydrateMeChips();
-  syncAdminVisibility();
   switchTab('feed');
   startPolls();
   loadAll();
@@ -583,8 +442,8 @@ function logout(silent) {
   _previousMessageIds = new Set();
   _previousPostIds = new Set();
   _storiesRendered = false;
-  localStorage.removeItem('ps_token');
-  localStorage.removeItem('ps_user');
+  try { localStorage.removeItem('ps_token'); } catch (_) {}
+  try { localStorage.removeItem('ps_user'); } catch (_) {}
   showAuth();
   if (!silent) toast('Signed out');
 }
@@ -760,72 +619,14 @@ function bindAuth() {
 function acceptSession(data) {
   State.token = data.token;
   State.user = data.user;
-  localStorage.setItem('ps_token', State.token);
-  localStorage.setItem('ps_user', JSON.stringify(State.user));
+  try { localStorage.setItem('ps_token', State.token); } catch (_) {}
+  try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
   // Clear PIN fields
   $$('.pin-input').forEach(clearPin);
   showApp();
   toast('Welcome, ' + (State.user.displayName || State.user.username) + '!', 'success');
 }
 
-
-function isAdminMe() {
-  const u = State.user || {};
-  const keys = [u.username, u.email, u.id].map(x => String(x || '').toLowerCase());
-  return keys.includes('arvindjaat1011') || keys.includes('ajitjaat1011@gmail.com') || keys.includes('arvindjaat1011@gmail.com');
-}
-function syncAdminVisibility() {
-  const btn = $('#adminNavBtn');
-  if (btn) btn.classList.toggle('hidden', !isAdminMe());
-}
-function openPostComposer() {
-  switchTab('feed');
-  const modal = $('#postComposerModal');
-  const mount = $('#postModalMount');
-  const card = $('#inlineComposerCard');
-  if (!modal || !mount || !card) return;
-  mount.appendChild(card);
-  card.classList.remove('hidden');
-  modal.classList.remove('hidden');
-  setTimeout(() => { const input = $('#postInput'); if (input) input.focus(); }, 80);
-  refreshIcons();
-}
-function closePostComposer() {
-  const modal = $('#postComposerModal');
-  const card = $('#inlineComposerCard');
-  const feed = $('.feed-wrap');
-  const stories = $('#storiesRail');
-  if (card && feed) {
-    if (stories && stories.nextSibling) feed.insertBefore(card, stories.nextSibling);
-    else feed.prepend(card);
-    card.classList.add('hidden');
-  }
-  if (modal) modal.classList.add('hidden');
-}
-async function loadAdminPanel() {
-  if (!isAdminMe()) return;
-  const statsEl = $('#adminStats'), usersEl = $('#adminUsers'), postsEl = $('#adminPosts'), msgEl = $('#adminMessages');
-  if (statsEl) statsEl.innerHTML = '<div class="admin-stat"><strong>...</strong><span>Loading</span></div>';
-  try {
-    const data = await api('/admin/summary');
-    const stats = data.stats || {};
-    if (statsEl) statsEl.innerHTML = ['users','messages','posts','notifications'].map(k => `<div class="admin-stat"><strong>${escapeHtml(String(stats[k]||0))}</strong><span>${k}</span></div>`).join('');
-    if (usersEl) usersEl.innerHTML = (data.users||[]).map(u => `<div class="admin-item"><span class="avatar sm" data-admin-avatar="${escapeHtml(u.id)}"></span><div class="grow"><b>${escapeHtml(u.displayName||u.username)} ${u.isAdmin?'<span class="admin-pill">admin</span>':''}</b><small>@${escapeHtml(u.username||'')} · ${escapeHtml(u.email||'')}</small></div>${u.isAdmin?'':`<button data-admin-del-user="${escapeHtml(u.id)}">Delete</button>`}</div>`).join('') || '<div class="empty-state">No users</div>';
-    if (postsEl) postsEl.innerHTML = (data.recentPosts||[]).map(p => `<div class="admin-item"><div class="grow"><b>${escapeHtml((p.text||'Photo post').slice(0,70))}</b><small>${new Date(p.createdAt||0).toLocaleString()} · ${p.likeCount||0} likes · ${p.commentCount||0} comments</small></div><button data-admin-del-post="${escapeHtml(p.id)}">Delete</button></div>`).join('') || '<div class="empty-state">No posts</div>';
-    if (msgEl) msgEl.innerHTML = (data.recentMessages||[]).map(m => `<div class="admin-item"><div class="grow"><b>${escapeHtml((m.text||'Photo message').slice(0,70))}</b><small>${escapeHtml(m.roomId||'')} · ${new Date(m.createdAt||0).toLocaleString()}</small></div><button data-admin-del-msg="${escapeHtml(m.id)}">Delete</button></div>`).join('') || '<div class="empty-state">No messages</div>';
-    if (usersEl) (data.users||[]).forEach(u => { const el = usersEl.querySelector(`[data-admin-avatar="${CSS.escape(u.id)}"]`); if (el) renderAvatar(el, u); });
-    bindAdminActions();
-    refreshIcons();
-  } catch (e) {
-    if (statsEl) statsEl.innerHTML = `<div class="admin-stat"><strong>!</strong><span>${escapeHtml(e.message||'Admin failed')}</span></div>`;
-    toast(e.message || 'Admin load failed', 'error');
-  }
-}
-function bindAdminActions() {
-  $$('[data-admin-del-post]').forEach(b => b.onclick = async () => { if(!confirm('Delete this post?')) return; await api('/admin/delete-post',{method:'POST',body:{postId:b.dataset.adminDelPost}}); toast('Post deleted','success'); loadAdminPanel(); loadPosts(); });
-  $$('[data-admin-del-msg]').forEach(b => b.onclick = async () => { if(!confirm('Delete this message?')) return; await api('/admin/delete-message',{method:'POST',body:{messageId:b.dataset.adminDelMsg}}); toast('Message deleted','success'); loadAdminPanel(); loadMessages(false); });
-  $$('[data-admin-del-user]').forEach(b => b.onclick = async () => { if(!confirm('Delete this user and hide their content?')) return; await api('/admin/delete-user',{method:'POST',body:{userId:b.dataset.adminDelUser}}); toast('User deleted','success'); loadAdminPanel(); loadMembers(); });
-}
 
 // ====== Tabs ======
 function bindTabs() {
@@ -842,8 +643,6 @@ function bindTabs() {
   if (pmc) pmc.addEventListener('click', closePostComposer);
   const pm = $('#postComposerModal');
   if (pm) pm.addEventListener('click', (e) => { if (e.target === pm) closePostComposer(); });
-  const ar = $('#adminRefreshBtn');
-  if (ar) ar.addEventListener('click', loadAdminPanel);
   // Reels = placeholder for now (Part 4 will bring multi-photo carousel / voice notes)
   const reels = $('#bnReelsBtn');
   if (reels) reels.addEventListener('click', () => {
@@ -852,7 +651,6 @@ function bindTabs() {
 }
 
 function switchTab(tab) {
-  if (tab === 'admin' && !isAdminMe()) { toast('Admin only', 'error'); return; }
   State.currentTab = tab;
   $$('.bn-btn[data-tab]').forEach(b => {
     const active = b.dataset.tab === tab;
@@ -864,7 +662,6 @@ function switchTab(tab) {
   if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
   if (tab === 'search') { activeView = $('#searchView'); activeView.classList.add('active'); loadMembers(); renderSearch(''); setTimeout(() => $('#searchInput').focus(), 100); }
   if (tab === 'chat') { activeView = $('#chatView'); activeView.classList.add('active'); markTabSeen('chat'); refreshSecretChatUI(); }
-  if (tab === 'admin') { activeView = $('#adminView'); activeView.classList.add('active'); loadAdminPanel(); }
   if (tab === 'profile') {
     activeView = $('#profileView');
     activeView.classList.add('active');
@@ -1123,164 +920,7 @@ const E2E = (() => {
       );
       await _idbPut(KEY_ID, { privateKey: kp.privateKey, publicKey: kp.publicKey });
       return kp;
-    // --- WEBRTC ---
-let rtcPeerConnection = null;
-let rtcLocalStream = null;
-let rtcRemoteStream = null;
-let rtcCurrentPeer = null; // targetId we are talking to
-let isVideoCall = false;
-
-const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-function initWebRTC() {
-  const btnAudio = $('#rtcAudioBtn');
-  const btnVideo = $('#rtcVideoBtn');
-  const btnAccept = $('#rtcAcceptBtn');
-  const btnReject = $('#rtcRejectBtn');
-  if(btnAudio) btnAudio.addEventListener('click', () => startCall(false));
-  if(btnVideo) btnVideo.addEventListener('click', () => startCall(true));
-  if(btnAccept) btnAccept.addEventListener('click', acceptCall);
-  if(btnReject) btnReject.addEventListener('click', endCall);
-}
-
-function sendRTCSignal(targetId, signal) {
-  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => { console.error('Signal error', e); toast('Call signal failed: '+(e.message||''),'error'); });
-}
-
-async function startCall(video) {
-  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
-  isVideoCall = video;
-  rtcCurrentPeer = State.currentRoom.target.id;
-  try {
-    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
-  } catch (err) {
-    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
-    return;
-  }
-  showCallUI('Calling...', State.currentRoom.target);
-  createPeerConnection();
-  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  
-  try {
-    const offer = await rtcPeerConnection.createOffer();
-    await rtcPeerConnection.setLocalDescription(offer);
-    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
-  } catch (err) {
-    toast('Failed to start call', 'error');
-    endCall();
-  }
-}
-
-async function handleRTCSignal(data) {
-  if (!data || !data.signal) return;
-  const peerId = data.fromId;
-  const signal = data.signal;
-  const author = data.author;
-
-  if (signal.type === 'offer') {
-    if (rtcPeerConnection) {
-      // Busy
-      sendRTCSignal(peerId, { type: 'busy' });
-      return;
-    }
-    rtcCurrentPeer = peerId;
-    isVideoCall = signal.video;
-    showCallUI('Incoming Call...', author, true);
-    // Store offer to use upon acceptance
-    window._rtcPendingOffer = signal.offer;
-  } else if (signal.type === 'answer') {
-    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
-      rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
-      $('#callStatusText').textContent = 'Connected';
-    }
-  } else if (signal.type === 'candidate') {
-    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
-      rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.log(e));
-    }
-  } else if (signal.type === 'end' || signal.type === 'busy') {
-    if (rtcCurrentPeer === peerId) {
-      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
-      endCall(true);
-    }
-  }
-}
-
-async function acceptCall() {
-  $('#rtcAcceptBtn').classList.add('hidden');
-  $('#callStatusText').textContent = 'Connecting...';
-  try {
-    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
-  } catch (err) {
-    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
-    endCall();
-    return;
-  }
-  createPeerConnection();
-  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  
-  try {
-    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
-    const answer = await rtcPeerConnection.createAnswer();
-    await rtcPeerConnection.setLocalDescription(answer);
-    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
-    window._rtcPendingOffer = null;
-  } catch(err) {
-    endCall();
-  }
-}
-
-function createPeerConnection() {
-  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
-  rtcRemoteStream = new MediaStream();
-  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
-  
-  rtcPeerConnection.onicecandidate = (e) => {
-    if (e.candidate && rtcCurrentPeer) {
-      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
-    }
-  };
-  rtcPeerConnection.ontrack = (e) => {
-    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
-    $('#callVideos').classList.remove('hidden');
-    $('#callStatusText').textContent = '';
-  };
-  rtcPeerConnection.oniceconnectionstatechange = () => {
-    if (rtcPeerConnection.iceConnectionState === 'disconnected' || rtcPeerConnection.iceConnectionState === 'failed') {
-      endCall(true);
-    }
-  };
-}
-
-function showCallUI(status, user, incoming = false) {
-  $('#callStatusText').textContent = status;
-  $('#callName').textContent = user.displayName || user.username || 'User';
-  $('#callVideos').classList.add('hidden');
-  $('#callOverlay').classList.remove('hidden');
-  if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
-  else $('#rtcAcceptBtn').classList.add('hidden');
-}
-
-function endCall(remote = false) {
-  if (rtcPeerConnection) {
-    rtcPeerConnection.close();
-    rtcPeerConnection = null;
-  }
-  if (rtcLocalStream) {
-    rtcLocalStream.getTracks().forEach(t => t.stop());
-    rtcLocalStream = null;
-  }
-  if (!remote && rtcCurrentPeer) {
-    sendRTCSignal(rtcCurrentPeer, { type: 'end' });
-  }
-  rtcCurrentPeer = null;
-  $('#callOverlay').classList.add('hidden');
-  $('#rtcLocalVideo').srcObject = null;
-  $('#rtcRemoteVideo').srcObject = null;
-}
-
-})();
+    })();
     return _myKeypairP;
   }
 
@@ -1406,163 +1046,6 @@ function endCall(remote = false) {
     getOrCreateKeypair, getMyPublicKeyB64, publishPublicKey,
     encryptFor, decryptFrom, clearPeerCache,
   };
-// --- WEBRTC ---
-let rtcPeerConnection = null;
-let rtcLocalStream = null;
-let rtcRemoteStream = null;
-let rtcCurrentPeer = null; // targetId we are talking to
-let isVideoCall = false;
-
-const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-function initWebRTC() {
-  const btnAudio = $('#rtcAudioBtn');
-  const btnVideo = $('#rtcVideoBtn');
-  const btnAccept = $('#rtcAcceptBtn');
-  const btnReject = $('#rtcRejectBtn');
-  if(btnAudio) btnAudio.addEventListener('click', () => startCall(false));
-  if(btnVideo) btnVideo.addEventListener('click', () => startCall(true));
-  if(btnAccept) btnAccept.addEventListener('click', acceptCall);
-  if(btnReject) btnReject.addEventListener('click', endCall);
-}
-
-function sendRTCSignal(targetId, signal) {
-  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => { console.error('Signal error', e); toast('Call signal failed: '+(e.message||''),'error'); });
-}
-
-async function startCall(video) {
-  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
-  isVideoCall = video;
-  rtcCurrentPeer = State.currentRoom.target.id;
-  try {
-    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
-  } catch (err) {
-    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
-    return;
-  }
-  showCallUI('Calling...', State.currentRoom.target);
-  createPeerConnection();
-  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  
-  try {
-    const offer = await rtcPeerConnection.createOffer();
-    await rtcPeerConnection.setLocalDescription(offer);
-    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
-  } catch (err) {
-    toast('Failed to start call', 'error');
-    endCall();
-  }
-}
-
-async function handleRTCSignal(data) {
-  if (!data || !data.signal) return;
-  const peerId = data.fromId;
-  const signal = data.signal;
-  const author = data.author;
-
-  if (signal.type === 'offer') {
-    if (rtcPeerConnection) {
-      // Busy
-      sendRTCSignal(peerId, { type: 'busy' });
-      return;
-    }
-    rtcCurrentPeer = peerId;
-    isVideoCall = signal.video;
-    showCallUI('Incoming Call...', author, true);
-    // Store offer to use upon acceptance
-    window._rtcPendingOffer = signal.offer;
-  } else if (signal.type === 'answer') {
-    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
-      rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
-      $('#callStatusText').textContent = 'Connected';
-    }
-  } else if (signal.type === 'candidate') {
-    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
-      rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.log(e));
-    }
-  } else if (signal.type === 'end' || signal.type === 'busy') {
-    if (rtcCurrentPeer === peerId) {
-      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
-      endCall(true);
-    }
-  }
-}
-
-async function acceptCall() {
-  $('#rtcAcceptBtn').classList.add('hidden');
-  $('#callStatusText').textContent = 'Connecting...';
-  try {
-    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
-  } catch (err) {
-    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
-    endCall();
-    return;
-  }
-  createPeerConnection();
-  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  
-  try {
-    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
-    const answer = await rtcPeerConnection.createAnswer();
-    await rtcPeerConnection.setLocalDescription(answer);
-    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
-    window._rtcPendingOffer = null;
-  } catch(err) {
-    endCall();
-  }
-}
-
-function createPeerConnection() {
-  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
-  rtcRemoteStream = new MediaStream();
-  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
-  
-  rtcPeerConnection.onicecandidate = (e) => {
-    if (e.candidate && rtcCurrentPeer) {
-      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
-    }
-  };
-  rtcPeerConnection.ontrack = (e) => {
-    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
-    $('#callVideos').classList.remove('hidden');
-    $('#callStatusText').textContent = '';
-  };
-  rtcPeerConnection.oniceconnectionstatechange = () => {
-    if (rtcPeerConnection.iceConnectionState === 'disconnected' || rtcPeerConnection.iceConnectionState === 'failed') {
-      endCall(true);
-    }
-  };
-}
-
-function showCallUI(status, user, incoming = false) {
-  $('#callStatusText').textContent = status;
-  $('#callName').textContent = user.displayName || user.username || 'User';
-  $('#callVideos').classList.add('hidden');
-  $('#callOverlay').classList.remove('hidden');
-  if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
-  else $('#rtcAcceptBtn').classList.add('hidden');
-}
-
-function endCall(remote = false) {
-  if (rtcPeerConnection) {
-    rtcPeerConnection.close();
-    rtcPeerConnection = null;
-  }
-  if (rtcLocalStream) {
-    rtcLocalStream.getTracks().forEach(t => t.stop());
-    rtcLocalStream = null;
-  }
-  if (!remote && rtcCurrentPeer) {
-    sendRTCSignal(rtcCurrentPeer, { type: 'end' });
-  }
-  rtcCurrentPeer = null;
-  $('#callOverlay').classList.add('hidden');
-  $('#rtcLocalVideo').srcObject = null;
-  $('#rtcRemoteVideo').srcObject = null;
-}
-
 })();
 
 // ---- Secret Chat per-DM toggle (persisted in localStorage) ----
@@ -4205,15 +3688,17 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=13').then((reg) => {
+      try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
         const sw = reg.installing;
         if (!sw) return;
         sw.addEventListener('statechange', () => {
           if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-            // New version available — silently let it activate on next load
-            console.log('[sw] new version installed; will activate on reload');
+            // New version available — activate quickly to remove any old stuck loader cache
+            try { sw.postMessage({ type: 'SKIP_WAITING' }); } catch (_) {}
+            console.log('[sw] new version installed; activating');
           }
         });
       });
@@ -4256,8 +3741,39 @@ async function showInstallPrompt() {
   }
 }
 
+
+window.addEventListener('error', (e) => {
+  const splash = $('#splash');
+  const authHidden = $('#authShell') && $('#authShell').classList.contains('hidden');
+  const appHidden = $('#appShell') && $('#appShell').classList.contains('hidden');
+  if (splash && !splash.classList.contains('hidden') && authHidden && appHidden) {
+    try { showAuth(); toast('Startup recovered. Please continue.', 'info'); } catch (_) {}
+  }
+});
+window.addEventListener('unhandledrejection', () => {
+  const splash = $('#splash');
+  const authHidden = $('#authShell') && $('#authShell').classList.contains('hidden');
+  const appHidden = $('#appShell') && $('#appShell').classList.contains('hidden');
+  if (splash && !splash.classList.contains('hidden') && authHidden && appHidden) {
+    try { showAuth(); } catch (_) {}
+  }
+});
+
 function boot() {
-  $('#yr').textContent = String(new Date().getFullYear());
+  const yr = $('#yr');
+  if (yr) yr.textContent = String(new Date().getFullYear());
+
+  // Hard anti-stuck guard: if any startup/network/cache problem leaves the splash
+  // visible, move to the login screen instead of showing an endless loader.
+  startupFallback = setTimeout(() => {
+    const splash = $('#splash');
+    const authHidden = $('#authShell') && $('#authShell').classList.contains('hidden');
+    const appHidden = $('#appShell') && $('#appShell').classList.contains('hidden');
+    if (splash && !splash.classList.contains('hidden') && authHidden && appHidden) {
+      try { showAuth(); } catch (_) { splash.classList.add('hidden'); }
+      toast('Startup was slow. Showing login screen now.', 'info');
+    }
+  }, 5000);
   bindAuth();
   bindTabs();
   bindRooms();
@@ -4304,7 +3820,7 @@ function boot() {
     api('/auth/me').then(d => {
       if (d && d.user) {
         State.user = d.user;
-        localStorage.setItem('ps_user', JSON.stringify(State.user));
+        try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
         showApp();
       } else { showAuth(); }
     }).catch(() => showAuth());

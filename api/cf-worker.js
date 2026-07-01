@@ -11,6 +11,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { Buffer } from 'node:buffer';
+import { neon } from '@neondatabase/serverless';
 
 const app = new Hono();
 app.use('*', cors());
@@ -18,6 +19,7 @@ app.use('*', cors());
 // ---------- Config (refreshed on every request from c.env) ----------
 let JWT_SECRET = 'priv-spaca-dev-secret-change-me';
 let GITHUB_PAT = '';
+let DATABASE_URL = '';
 let GH_REPO    = 'ajitjaat1011-ui/PRIV-SPACA';
 let GH_BRANCH  = 'data';
 let GH_FILE    = 'db.json';
@@ -25,11 +27,16 @@ let VAPID_PUBLIC  = '';
 let VAPID_PRIVATE = '';
 let VAPID_SUBJECT = 'mailto:admin@priv-spaca.app';
 let ADMIN_USERS = 'Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com';
+let OWNER_EMAIL = 'ajitjaat1011@gmail.com';
+let OWNER_USERNAME = 'Arvindjaat1011';
+let OWNER_DEFAULT_PASSWORD = 'Priv@2026Reset';
+let OWNER_DEFAULT_PIN = '7391';
 function loadConfig(env) {
   if (!env) return;
   // Always overwrite — values can change per-deploy
   if (env.JWT_SECRET) JWT_SECRET = env.JWT_SECRET;
   if (env.GITHUB_PAT) GITHUB_PAT = env.GITHUB_PAT;
+  if (env.DATABASE_URL) DATABASE_URL = String(env.DATABASE_URL).replace(/&amp;/g, '&');
   if (env.GH_REPO) GH_REPO = env.GH_REPO;
   if (env.GH_BRANCH) GH_BRANCH = env.GH_BRANCH;
   if (env.GH_FILE) GH_FILE = env.GH_FILE;
@@ -37,9 +44,14 @@ function loadConfig(env) {
   if (env.VAPID_PRIVATE_KEY) VAPID_PRIVATE = env.VAPID_PRIVATE_KEY;
   if (env.VAPID_SUBJECT) VAPID_SUBJECT = env.VAPID_SUBJECT;
   if (env.ADMIN_USERS) ADMIN_USERS = env.ADMIN_USERS;
+  if (env.OWNER_EMAIL) OWNER_EMAIL = env.OWNER_EMAIL;
+  if (env.OWNER_USERNAME) OWNER_USERNAME = env.OWNER_USERNAME;
+  if (env.OWNER_DEFAULT_PASSWORD) OWNER_DEFAULT_PASSWORD = env.OWNER_DEFAULT_PASSWORD;
+  if (env.OWNER_DEFAULT_PIN) OWNER_DEFAULT_PIN = env.OWNER_DEFAULT_PIN;
 }
 
 const JWT_EXPIRES_DAYS = 7;
+const PASSWORD_HASH_ROUNDS = 8; // Cloudflare Worker CPU-safe bcrypt cost
 // Lower cache TTL on Cloudflare since each request can hit a different isolate
 // (no shared memory). Faster TTL = better consistency across concurrent users.
 const CACHE_TTL_MS = 500;
@@ -96,41 +108,87 @@ async function requireAdmin(c, next) {
   await next();
 }
 
+
+// ---------- Neon PostgreSQL JSON storage (primary) ----------
+let _neonSql = null;
+let _neonReady = false;
+function isNeonConfigured() { return !!DATABASE_URL; }
+function neonClient() {
+  if (!_neonSql) _neonSql = neon(DATABASE_URL);
+  return _neonSql;
+}
+async function neonEnsure() {
+  if (!isNeonConfigured()) return false;
+  if (_neonReady) return true;
+  const sql = neonClient();
+  await sql`CREATE TABLE IF NOT EXISTS priv_spaca_kv (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+  const rows = await sql`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
+  if (rows.length === 0) {
+    const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', createdAt: Date.now() } });
+    await sql`INSERT INTO priv_spaca_kv (key, value) VALUES ('db', ${JSON.stringify(empty)}::jsonb)`;
+  }
+  _neonReady = true;
+  return true;
+}
+async function neonReadDb() {
+  if (!isNeonConfigured()) return null;
+  await neonEnsure();
+  const rows = await neonClient()`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
+  if (!rows || rows.length === 0) return normalizeDb({});
+  const val = rows[0].value;
+  return typeof val === 'string' ? safeJson(val, normalizeDb({})) : val;
+}
+async function neonWriteDb(dbObj) {
+  if (!isNeonConfigured()) return false;
+  await neonEnsure();
+  const db = normalizeDb(dbObj);
+  db.meta = { ...(db.meta || {}), storage: 'neon-json-v1', updatedAt: Date.now() };
+  await neonClient()`INSERT INTO priv_spaca_kv (key, value, updated_at)
+    VALUES ('db', ${JSON.stringify(db)}::jsonb, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+  return true;
+}
+async function neonResetDb() {
+  if (!isNeonConfigured()) return false;
+  await neonEnsure();
+  const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', resetAt: Date.now() } });
+  await neonWriteDb(empty);
+  localCache = empty;
+  cacheTimestamp = Date.now();
+  return true;
+}
+
 // ---------- GitHub repo persistence ----------
 
 async function repoRead() {
+  if (isNeonConfigured()) return await neonReadDb();
   if (!isRepo()) return null;
   try {
     const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}?ref=${encodeURIComponent(GH_BRANCH)}&_=${Date.now()}`;
     
-    // First, fetch just to get the SHA (since raw doesn't give us the sha we need for writing)
+    // Read JSON directly from GitHub Contents API. Avoid raw.githubusercontent/raw
+    // responses because they can be stale and caused login to say account not found.
     const rSha = await fetch(url, {
       headers: { Authorization: 'token ' + GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json', 'Cache-Control': 'no-cache' },
       cf: { cacheTtl: 0, cacheEverything: false },
     });
-    if (rSha.ok) {
-      const dSha = await rSha.json();
-      if (dSha && dSha.sha) ghFileSha = dSha.sha;
-    }
-
-    // Then fetch the raw content
-    const r = await fetch(url, {
-      headers: {
-        Authorization: 'token ' + GITHUB_PAT,
-        'User-Agent': 'PRIV-SPACA',
-        Accept: 'application/vnd.github.v3.raw',
-        'Cache-Control': 'no-cache',
-      },
-      cf: { cacheTtl: 0, cacheEverything: false },
-    });
-    if (!r.ok) return { _httpError: r.status, txt: await r.text() };
-    const text = await r.text();
+    if (!rSha.ok) return { _httpError: rSha.status, txt: await rSha.text() };
+    const dSha = await rSha.json();
+    if (dSha && dSha.sha) ghFileSha = dSha.sha;
+    if (!dSha || !dSha.content) return null;
+    const b64 = String(dSha.content || '').replace(/\n/g, '');
+    const text = Buffer.from(b64, dSha.encoding || 'base64').toString('utf8');
     return safeJson(text, { _err: 'Invalid JSON', _textPreview: text.slice(0, 100) });
   } catch (e) {
     return { _err: e.message, _stack: e.stack };
   }
 }
 async function repoWrite(dbObj) {
+  if (isNeonConfigured()) return await neonWriteDb(dbObj);
   if (!isRepo()) return false;
   try {
     if (!ghFileSha) await repoRead();
@@ -263,6 +321,10 @@ function mergeDatabase(remoteRaw, localRaw) {
     meta: { ...remote.meta, ...local.meta, updatedAt: nowMs(), storage: 'github-merge-v3' },
   };
 }
+
+async function ensureOwnerAccount(db) { return false; }
+
+
 async function fetchDatabase({ fresh = false } = {}) {
   const now = nowMs();
   if (!fresh && now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
@@ -273,8 +335,9 @@ async function fetchDatabase({ fresh = false } = {}) {
   if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
     localCache = normalizeDb(remote);
   }
+  const ownerSeeded = await ensureOwnerAccount(localCache);
   cacheTimestamp = now;
-  const changed = runScheduler(localCache);
+  const changed = runScheduler(localCache) || ownerSeeded;
   if (changed) await saveDatabase(localCache, false);
   return localCache;
 }
@@ -297,16 +360,41 @@ async function saveDatabase(data, isEphemeral = false) {
   if (remoteBeforeWrite && typeof remoteBeforeWrite === 'object' && !remoteBeforeWrite._httpError && !remoteBeforeWrite._err) {
     toWrite = mergeDatabase(remoteBeforeWrite, data);
   }
-  let ok = await repoWrite(toWrite);
-  if (!ok) {
-    // One forced SHA refresh + merge retry. This protects signup/login/posts from transient GitHub content conflicts.
-    ghFileSha = null;
-    const latest = await repoRead();
-    if (latest && typeof latest === 'object' && !latest._httpError && !latest._err) toWrite = mergeDatabase(latest, toWrite);
+  let ok = false;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) {
+      await sleepMs(250 + attempt * 350);
+      ghFileSha = null;
+      const latest = await repoRead();
+      if (latest && typeof latest === 'object' && !latest._httpError && !latest._err) {
+        toWrite = mergeDatabase(latest, toWrite);
+      }
+    }
     ok = await repoWrite(toWrite);
+    if (ok) break;
   }
   if (ok) { localCache = normalizeDb(toWrite); cacheTimestamp = nowMs(); }
   return ok;
+}
+
+async function saveDatabaseVerified(data, verifyFn, attempts = 4) {
+  for (let i = 0; i < attempts; i++) {
+    const ok = await saveDatabase(data, false);
+    if (ok) {
+      await sleepMs(300 + i * 350);
+      cacheTimestamp = 0;
+      const fresh = await repoRead();
+      if (fresh && typeof fresh === 'object' && !fresh._httpError && !fresh._err && (!verifyFn || verifyFn(normalizeDb(fresh)))) {
+        localCache = normalizeDb(fresh);
+        cacheTimestamp = nowMs();
+        return true;
+      }
+      // Re-merge local data with whatever remote currently has, then try again.
+      if (fresh && typeof fresh === 'object' && !fresh._httpError && !fresh._err) data = mergeDatabase(fresh, data);
+    }
+    await sleepMs(500 + i * 500);
+  }
+  return false;
 }
 
 // ---------- Bcrypt + JWT (using pure-JS for Workers compat) ----------
@@ -727,14 +815,14 @@ app.use('/api/*', globalRateLimit);
 // ---------- Health & diag ----------
 app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
-  persistence: isRepo() ? 'github-repo' : 'in-memory',
+  persistence: isNeonConfigured() ? 'neon-postgres' : (isRepo() ? 'github-repo' : 'in-memory'),
   runtime: 'cloudflare-workers',
-  time: nowMs(), version: 'auth-storage-v6-read-retry',
+  time: nowMs(), version: 'phase1-neon-json-storage',
 }));
 
 app.get('/api/diag', async (c) => {
   const out = {
-    persistence: isRepo() ? 'github-repo' : 'in-memory',
+    persistence: isNeonConfigured() ? 'neon-postgres' : (isRepo() ? 'github-repo' : 'in-memory'),
     repoConfigured: isRepo(), gistConfigured: false,
     repo: GH_REPO, branch: GH_BRANCH, file: GH_FILE,
     canRead: false, canWrite: false, userCount: 0, error: null,
@@ -745,7 +833,8 @@ app.get('/api/diag', async (c) => {
     if (db && typeof db === 'object' && !db._err && !db._httpError) {
       out.canRead = true;
       out.userCount = (db.users || []).length;
-      out.canWrite = await repoWrite(db);
+      // Do not perform a real write in diagnostics; it can conflict with signup/message saves.
+      out.canWrite = !!GITHUB_PAT;
     } else if (!isPersist()) {
       out.canRead = true; out.canWrite = true;
       out.userCount = (localCache.users || []).length;
@@ -778,8 +867,8 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     const reserved = new Set(['admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root']);
     if (reserved.has(usernameLower)) return c.json({ error: 'That username is reserved' }, 403);
 
-    const passwordHash = await bcrypt.hash(password, 12);
-    const pinHash = await bcrypt.hash(pin, 12);
+    const passwordHash = await bcrypt.hash(password, PASSWORD_HASH_ROUNDS);
+    const pinHash = await bcrypt.hash(pin, PASSWORD_HASH_ROUNDS);
     const newUser = {
       id: uid('usr'), email: emailLower, username, displayName: cleanDN,
       bio: '', photoUrl: '', passwordHash, pinHash,
@@ -788,7 +877,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
       termsAcceptedAt: nowMs(), createdAt: nowMs(),
     };
     db.users.push(newUser);
-    const persisted = await saveDatabase(db, false);
+    const persisted = await saveDatabaseVerified(db, d => (d.users || []).some(u => u.id === newUser.id));
     if (isPersist() && !persisted) {
       db.users = db.users.filter(u => u.id !== newUser.id);
       return c.json({ error: 'Storage temporarily unavailable. Please try again in a moment.' }, 503);
@@ -846,8 +935,8 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     const pinOk = await bcrypt.compare(pin, user.pinHash);
     if (!pinOk) return c.json({ error: 'Incorrect PIN' }, 401);
     const oldHash = user.passwordHash;
-    user.passwordHash = await bcrypt.hash(newPassword, 12);
-    const persisted = await saveDatabase(db, false);
+    user.passwordHash = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
+    const persisted = await saveDatabaseVerified(db, d => (d.users || []).some(u => u.id === newUser.id));
     if (isPersist() && !persisted) { user.passwordHash = oldHash; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
     const token = await signToken(user);
     return c.json({ ok: true, token, user: sanitizeUser(user) });
@@ -1127,7 +1216,8 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     } else {
       _broadcastEvent('new_message', { roomId, message: enriched }, myId);
     }
-    await saveDatabase(db, false);
+    const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id));
+    if (isPersist() && !persisted) return c.json({ error: 'Message storage unavailable. Please retry.' }, 503);
     return c.json({ message: enriched });
   } catch (e) { console.error('[send]', e); return c.json({ error: 'Send failed' }, 500); }
 });
@@ -1358,7 +1448,8 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     db.posts.push(post);
     const enriched = { ...post, likeCount: 0, commentCount: 0, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
     _broadcastEvent('new_post', { post: enriched }, myId);
-    await saveDatabase(db, false);
+    const persisted = await saveDatabaseVerified(db, d => (d.posts || []).some(p => p.id === post.id));
+    if (isPersist() && !persisted) return c.json({ error: 'Post storage unavailable. Please retry.' }, 503);
     return c.json({ post: enriched });
   } catch (e) { return c.json({ error: 'Create post failed' }, 500); }
 });
@@ -1398,7 +1489,8 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
   db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt: nowMs() + 120000 });
   if (db.rtcSignals.length > 200) db.rtcSignals = db.rtcSignals.slice(-200);
   _pushEvent(targetId, 'rtc_signal', payload);
-  await saveDatabase(db, false);
+  const persisted = await saveDatabaseVerified(db, d => (d.rtcSignals || []).some(x => x.id === db.rtcSignals[db.rtcSignals.length - 1].id));
+  if (isPersist() && !persisted) return c.json({ error: 'Call signal storage unavailable. Please retry.' }, 503);
   return c.json({ ok: true });
 });
 
@@ -1474,50 +1566,8 @@ app.post('/api/posts/restore', requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
-// ---------- Admin ----------
-app.get('/api/admin/summary', requireAdmin, async (c) => {
-  const db = c.get('adminDb') || await fetchDatabase();
-  const users = (db.users || []).map(u => ({ ...sanitizeUser(u), isAdmin: isAdminUser(u), followers: (u.followers||[]).length, following: (u.following||[]).length, blocked: (u.blocked||[]).length }));
-  const recentMessages = (db.messages || []).slice(-50).reverse().map(m => ({ id:m.id, roomId:m.roomId, userId:m.userId, text:m.encrypted ? '🔒 Encrypted message' : (m.text||''), createdAt:m.createdAt, deletedAt:m.deletedAt||null }));
-  const recentPosts = (db.posts || []).slice(-50).reverse().map(p => ({ id:p.id, userId:p.userId, text:p.text||'', imageUrl:p.imageUrl||null, likeCount:(p.likes||[]).length, commentCount:(p.comments||[]).length, createdAt:p.createdAt, deletedAt:p.deletedAt||null }));
-  return c.json({ ok:true, stats:{ users:users.length, messages:(db.messages||[]).length, posts:(db.posts||[]).length, notifications:(db.notifications||[]).length, rtcSignals:(db.rtcSignals||[]).length }, users, recentMessages, recentPosts });
-});
-
-app.post('/api/admin/delete-post', requireAdmin, async (c) => {
-  const { postId } = await c.req.json().catch(() => ({}));
-  if (!postId) return c.json({ error:'postId required' }, 400);
-  const db = await fetchDatabase();
-  const p = (db.posts||[]).find(x => x.id === postId);
-  if (!p) return c.json({ error:'Not found' }, 404);
-  p.deletedAt = nowMs();
-  await saveDatabase(db, false);
-  return c.json({ ok:true });
-});
-
-app.post('/api/admin/delete-message', requireAdmin, async (c) => {
-  const { messageId } = await c.req.json().catch(() => ({}));
-  if (!messageId) return c.json({ error:'messageId required' }, 400);
-  const db = await fetchDatabase();
-  const m = (db.messages||[]).find(x => x.id === messageId);
-  if (!m) return c.json({ error:'Not found' }, 404);
-  m.deletedAt = nowMs();
-  await saveDatabase(db, false);
-  return c.json({ ok:true });
-});
-
-app.post('/api/admin/delete-user', requireAdmin, async (c) => {
-  const { userId } = await c.req.json().catch(() => ({}));
-  if (!userId) return c.json({ error:'userId required' }, 400);
-  const db = await fetchDatabase();
-  const u = (db.users||[]).find(x => x.id === userId);
-  if (!u) return c.json({ error:'Not found' }, 404);
-  if (isAdminUser(u)) return c.json({ error:'Cannot delete admin user' }, 403);
-  db.users = (db.users||[]).filter(x => x.id !== userId);
-  for (const p of db.posts||[]) if (p.userId === userId) p.deletedAt = nowMs();
-  for (const m of db.messages||[]) if (m.userId === userId) m.deletedAt = nowMs();
-  await saveDatabase(db, false);
-  return c.json({ ok:true });
-});
+// ---------- Admin panel removed by owner request ----------
+app.all('/api/admin/*', (c) => c.json({ error: 'Admin panel removed' }, 404));
 
 // ---------- Push (subscribe endpoints - actual delivery is no-op for now) ----------
 app.get('/api/push/vapid-public', (c) => c.json({ key: VAPID_PUBLIC }));
