@@ -346,11 +346,23 @@ async function saveDatabase(data, isEphemeral = false) {
   localCache = data;
   cacheTimestamp = nowMs();
   if (!isPersist()) return true;
-  if (isEphemeral) {
+  // The 30s ephemeral-write throttle exists to protect GitHub API rate limits.
+  // Neon Postgres has no such constraint, so skip the throttle when Neon is
+  // the active backend — otherwise heartbeat/typing indicators are silently
+  // dropped almost all the time (they still report {ok:true} to the client,
+  // which is misleading and breaks the "who's typing" / online-status UI).
+  if (isEphemeral && !isNeonConfigured()) {
     const now = nowMs();
     if (now - lastEphemeralWrite < EPHEMERAL_WRITE_INTERVAL_MS) return true;
     lastEphemeralWrite = now;
     repoWrite(data).catch(() => {});
+    return true;
+  }
+  if (isEphemeral && isNeonConfigured()) {
+    // Fire-and-forget fast path straight to Neon — no need for the full
+    // merge-with-remote dance below since typing/heartbeat data is small,
+    // per-user, and safely last-write-wins.
+    neonWriteDb(data).catch(() => {});
     return true;
   }
   // Merge with the newest remote DB before writing. This prevents a later request
