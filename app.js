@@ -2195,7 +2195,7 @@ function renderPosts() {
 function attachScratchOverlay(wrap) {
   const overlay = document.createElement('div');
   overlay.className = 'scratch-overlay';
-  overlay.style.cssText = 'position:absolute; inset:0; z-index:5; display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action:none; border-radius:18px; overflow:hidden;';
+  overlay.style.cssText = 'position:absolute; inset:0; z-index:5; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:18px; overflow:hidden; background:#334155;';
   
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'width:100%; height:100%; display:block;';
@@ -2203,70 +2203,86 @@ function attachScratchOverlay(wrap) {
   wrap.appendChild(overlay);
 
   const initCanvas = () => {
-    const w = wrap.clientWidth || 360;
-    const h = wrap.clientHeight || 360;
-    if (w <= 0 || h <= 0) { setTimeout(initCanvas, 100); return; }
+    const rect = overlay.getBoundingClientRect();
+    const w = Math.round(rect.width || wrap.clientWidth || 350);
+    const h = Math.round(rect.height || wrap.clientHeight || 350);
+    if (w < 50 || h < 50) return;
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     const grad = ctx.createLinearGradient(0, 0, w, h);
-    grad.addColorStop(0, '#334155'); grad.addColorStop(0.3, '#94a3b8'); grad.addColorStop(0.6, '#64748b'); grad.addColorStop(1, '#1e293b');
+    grad.addColorStop(0, '#334155'); grad.addColorStop(0.5, '#64748b'); grad.addColorStop(1, '#1e293b');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
-    // Sparkles
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    for (let i = 0; i < w; i += 18) {
-      for (let j = 0; j < h; j += 18) {
-        if ((i + j) % 36 === 0) { ctx.beginPath(); ctx.arc(i, j, 1.8, 0, Math.PI * 2); ctx.fill(); }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    for (let i = 20; i < w; i += 25) {
+      for (let j = 20; j < h; j += 25) {
+        if ((i + j) % 50 === 0) { ctx.beginPath(); ctx.arc(i, j, 2, 0, Math.PI * 2); ctx.fill(); }
       }
     }
-    // Badge
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.roundRect(w/2 - 120, h/2 - 24, 240, 48, 24);
+
+    const bw = Math.min(230, w - 30);
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.beginPath();
+    ctx.roundRect(w/2 - bw/2, h/2 - 20, bw, 40, 20);
     ctx.fill();
     ctx.fillStyle = '#f8fafc';
-    ctx.font = '700 14px system-ui, sans-serif';
+    ctx.font = '700 13px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('✨ Scratch to Reveal Secret! ✨', w/2, h/2);
-
-    let isScratching = false;
-    const scratchAt = (pos) => {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 35, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    const checkDone = () => {
-      try {
-        const data = ctx.getImageData(0, 0, w, h).data;
-        let cleared = 0, total = 0;
-        for (let i = 3; i < data.length; i += 4 * 25) { total++; if (data[i] === 0) cleared++; }
-        if (cleared / total > 0.42) {
-          overlay.style.transition = 'opacity 0.65s ease, transform 0.65s ease';
-          overlay.style.opacity = '0';
-          overlay.style.transform = 'scale(1.05)';
-          setTimeout(() => overlay.remove(), 650);
-        }
-      } catch (_) {}
-    };
-    const getPos = (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const cx = e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX;
-      const cy = e.touches && e.touches[0] ? e.touches[0].clientY : e.clientY;
-      return { x: cx - rect.left, y: cy - rect.top };
-    };
-    const start = (e) => { isScratching = true; scratchAt(getPos(e)); };
-    const move = (e) => { if (!isScratching) return; if (e.cancelable) e.preventDefault(); scratchAt(getPos(e)); };
-    const end = () => { if (isScratching) { isScratching = false; checkDone(); } };
-
-    canvas.addEventListener('mousedown', start);
-    canvas.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', end);
-    canvas.addEventListener('touchstart', start, { passive: false });
-    canvas.addEventListener('touchmove', move, { passive: false });
-    window.addEventListener('touchend', end);
+    ctx.fillText('✨ Scratch to Reveal! ✨', w/2, h/2);
   };
-  setTimeout(initCanvas, 50);
+
+  const img = wrap.querySelector('img');
+  if (img && !img.complete) {
+    img.addEventListener('load', initCanvas, { once: true });
+  } else {
+    setTimeout(initCanvas, 150);
+  }
+
+  let isScratching = false;
+  let canvasInited = false;
+  const scratchAt = (pos) => {
+    if (!canvasInited || canvas.width < 50) { initCanvas(); canvasInited = true; }
+    const ctx = canvas.getContext('2d');
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 38, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const checkDone = () => {
+    try {
+      const ctx = canvas.getContext('2d');
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let cleared = 0, total = 0;
+      for (let i = 3; i < data.length; i += 4 * 120) { total++; if (data[i] === 0) cleared++; }
+      if (total > 0 && cleared / total > 0.38) {
+        overlay.style.transition = 'opacity 0.5s ease';
+        overlay.style.opacity = '0';
+        overlay.style.pointerEvents = 'none';
+        setTimeout(() => overlay.remove(), 500);
+      }
+    } catch (_) {}
+  };
+
+  const getPos = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches && e.touches[0] ? e.touches[0].clientY : e.clientY;
+    return { x: cx - rect.left, y: cy - rect.top };
+  };
+
+  const start = (e) => { isScratching = true; scratchAt(getPos(e)); };
+  const move = (e) => { if (!isScratching) return; scratchAt(getPos(e)); };
+  const end = () => { if (isScratching) { isScratching = false; checkDone(); } };
+
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start, { passive: true });
+  canvas.addEventListener('touchmove', move, { passive: true });
+  window.addEventListener('touchend', end);
 }
 
 function renderPost(p) {
