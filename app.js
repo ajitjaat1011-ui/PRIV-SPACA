@@ -2080,8 +2080,8 @@ function buildStoryCell(user, isMe) {
   cell.appendChild(lbl);
   cell.addEventListener('click', () => {
     if (isMe) {
-      const ta = $('#postInput');
-      if (ta) { ta.focus(); ta.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+      if (typeof openStoryCreator === 'function') openStoryCreator();
+      else { const ta = $('#postInput'); if (ta) ta.focus(); }
     } else {
       openStoryFor(user);
     }
@@ -2469,6 +2469,22 @@ function renderPost(p) {
   right.appendChild(saveBtn);
   actions.appendChild(left); actions.appendChild(center); actions.appendChild(right);
   card.appendChild(actions);
+
+  if (p.music && p.music.title) {
+    const mBar = document.createElement('div');
+    mBar.className = 'feed-music-bar';
+    mBar.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 14px; background:rgba(236,72,153,0.12); border-radius:12px; margin:4px 14px; font-size:12.5px; font-weight:700; color:#ec4899; cursor:pointer;';
+    mBar.innerHTML = `<i data-lucide="music" style="width:14px;height:14px;"></i> <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">${escapeHtml(p.music.title)} · ${escapeHtml(p.music.artist || '')}</span>`;
+    mBar.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const player = $('#storyBgAudioPlayer');
+      if (player && p.music.audio) {
+        if (player.src === p.music.audio && !player.paused) { player.pause(); toast('Music paused', 'info'); }
+        else { player.src = p.music.audio; player.play().catch(()=>{}); toast(`🎵 Playing "${p.music.title}"`, 'success'); }
+      }
+    });
+    card.appendChild(mBar);
+  }
 
   // Liked-by row
   if (p.likeCount > 0) {
@@ -2935,6 +2951,29 @@ function openStoryFor(user) {
     content.appendChild(div);
   }
   v.classList.remove('hidden');
+  const player = $('#storyBgAudioPlayer');
+  if (player) { player.pause(); player.src = ''; }
+  if (recent && recent.music && recent.music.title) {
+    const stk = document.createElement('div');
+    stk.className = 'story-music-sticker';
+    stk.style.position = 'absolute';
+    stk.style.bottom = '80px';
+    stk.innerHTML = `
+      <img src="${recent.music.art || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=120&q=80'}" class="story-music-art" alt="art" />
+      <div class="story-music-meta">
+        <div class="story-music-title">${escapeHtml(recent.music.title)}</div>
+        <div class="story-music-artist">${escapeHtml(recent.music.artist || '')}</div>
+      </div>
+      <div class="story-eq-bars">
+        <div class="story-eq-bar"></div><div class="story-eq-bar"></div><div class="story-eq-bar"></div>
+      </div>
+    `;
+    content.appendChild(stk);
+    if (player && recent.music.audio) {
+      player.src = recent.music.audio;
+      player.play().catch(() => {});
+    }
+  }
   const contentEl = $('#storyContent');
   if (contentEl) motionAnimate(contentEl,
     { opacity: [0, 1], transform: ['scale(.94)', 'scale(1)'] },
@@ -2942,13 +2981,14 @@ function openStoryFor(user) {
   );
   refreshIcons();
   clearTimeout(storyTimer);
-  storyTimer = setTimeout(closeStory, 5100);
+  storyTimer = setTimeout(closeStory, 6000);
 }
 function closeStory() {
   clearTimeout(storyTimer);
   storyTimer = null;
+  const player = $('#storyBgAudioPlayer');
+  if (player) { player.pause(); player.src = ''; }
   $('#storyViewer').classList.add('hidden');
-  // Re-render the stories rail so the just-viewed ring turns grey
   if (typeof renderStoriesRail === 'function') renderStoriesRail();
 }
 function bindStoryViewer() {
@@ -2960,6 +3000,196 @@ function bindStoryViewer() {
   });
 }
 
+// ====== INSTAGRAM STORY MUSIC CREATOR ======
+const storyMusicCatalog = [
+  { id: 1, title: "Golden Hour Vibes (30s)", artist: "ChillHop Beats", category: "lofi", duration: "0:30", art: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=120&q=80", audio: "https://cdn.pixabay.com/download/audio/2022/05/16/audio_db6591201e.mp3?filename=lofi-study-112191.mp3" },
+  { id: 2, title: "Summer Night Anthem 🔥", artist: "SynthWave Pro", category: "trending", duration: "0:30", art: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=120&q=80", audio: "https://cdn.pixabay.com/download/audio/2022/10/25/audio_291e018d9f.mp3?filename=upbeat-pop-vlog-124040.mp3" },
+  { id: 3, title: "Acoustic Sunset Love", artist: "Guitar Dreams", category: "acoustic", duration: "0:30", art: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?auto=format&fit=crop&w=120&q=80", audio: "https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c7151a44.mp3?filename=acoustic-guitar-loop-f-91304.mp3" },
+  { id: 4, title: "Midnight Drive Pop Hit", artist: "Neon Stars", category: "pop", duration: "0:30", art: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=120&q=80", audio: "https://cdn.pixabay.com/download/audio/2023/04/23/audio_4cf13fddf5.mp3?filename=electronic-rock-king-around-here-150452.mp3" },
+  { id: 5, title: "Coffee Shop Rain & Jazz", artist: "Cozy Lofi", category: "lofi", duration: "0:30", art: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=120&q=80", audio: "https://cdn.pixabay.com/download/audio/2021/09/06/audio_7314227f42.mp3?filename=empty-mind-118973.mp3" }
+];
+let activeStoryMusicCat = 'all';
+let selectedStoryMusicId = null;
+
+function openStoryCreator() {
+  const mod = $('#storyEditorModal');
+  if (!mod) return;
+  mod.classList.remove('hidden');
+  const inp = $('#storyEditorFileInput');
+  const ph = $('#storyEditorPlaceholder');
+  const prev = $('#storyEditorPreviewImg');
+  if (ph && inp) {
+    ph.onclick = () => inp.click();
+  }
+  if (inp) {
+    inp.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const localUrl = URL.createObjectURL(f);
+      if (prev) { prev.src = localUrl; prev.classList.remove('hidden'); }
+      if (ph) ph.classList.add('hidden');
+      try {
+        const res = await uploadPermanentImage(f, { kind: 'story', maxDim: 1200, quality: 0.82 });
+        State.storyCreatorImgUrl = res.url;
+      } catch(err) {
+        try { const r2 = await uploadImage(f); State.storyCreatorImgUrl = r2.url; }
+        catch(_) { State.storyCreatorImgUrl = localUrl; }
+      }
+    };
+  }
+  const initSpan = $('#storyPubMeInitials');
+  if (initSpan && State.user) {
+    initSpan.textContent = (State.user.displayName || State.user.username || 'AJ').slice(0,2).toUpperCase();
+  }
+}
+
+function closeStoryCreator() {
+  const mod = $('#storyEditorModal');
+  if (mod) mod.classList.add('hidden');
+  const player = $('#storyBgAudioPlayer');
+  if (player) { player.pause(); player.src = ''; }
+  selectedStoryMusicId = null;
+  const stk = $('#storyStageMusicSticker');
+  if (stk) stk.classList.add('hidden');
+  const prev = $('#storyEditorPreviewImg');
+  if (prev) { prev.src = ''; prev.classList.add('hidden'); }
+  const ph = $('#storyEditorPlaceholder');
+  if (ph) ph.classList.remove('hidden');
+  const cap = $('#storyEditorCaptionInput');
+  if (cap) cap.value = '';
+  State.storyCreatorImgUrl = null;
+}
+
+function promptStoryCaption() {
+  const cap = $('#storyEditorCaptionInput');
+  if (cap) cap.focus();
+}
+
+function promptStoryMention() {
+  const cap = $('#storyEditorCaptionInput');
+  if (cap) {
+    cap.value = cap.value + (cap.value && !cap.value.endsWith(' ') ? ' ' : '') + '@';
+    cap.focus();
+  }
+}
+
+function openStoryMusicSheet() {
+  const sh = $('#storyMusicSheet');
+  if (sh) sh.classList.remove('hidden');
+  filterStorySongs();
+}
+
+function closeStoryMusicSheet() {
+  const sh = $('#storyMusicSheet');
+  if (sh) sh.classList.add('hidden');
+}
+
+function closeStoryMusicSheetOnBackdrop(e) {
+  if (e.target.id === 'storyMusicSheet') closeStoryMusicSheet();
+}
+
+function selectStoryMusicCategory(cat, el) {
+  activeStoryMusicCat = cat;
+  $$('.story-pill').forEach(p => p.classList.remove('active'));
+  if (el) el.classList.add('active');
+  filterStorySongs();
+}
+
+function filterStorySongs() {
+  const container = $('#storySongsListContainer');
+  const q = ($('#storyMusicSearchInput')?.value || '').toLowerCase().trim();
+  if (!container) return;
+  const list = storyMusicCatalog.filter(s => {
+    const matchCat = activeStoryMusicCat === 'all' || s.category === activeStoryMusicCat;
+    const matchQ = !q || s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q);
+    return matchCat && matchQ;
+  });
+  if (list.length === 0) {
+    container.innerHTML = `<div style="text-align:center; padding:30px; color:#737373;">No songs found matching your search.</div>`;
+    return;
+  }
+  container.innerHTML = list.map(s => {
+    const isPlaying = selectedStoryMusicId === s.id && !($('#storyBgAudioPlayer')?.paused);
+    return `
+      <div class="story-song-item" onclick="pickStoryMusic(${s.id})">
+        <div class="story-song-left">
+          <img src="${s.art}" class="story-song-art" alt="art" />
+          <div class="story-song-meta">
+            <div class="story-song-name">${s.title}</div>
+            <div class="story-song-artist">${s.artist}</div>
+          </div>
+        </div>
+        <div class="story-song-right">
+          <span class="story-song-dur">${s.duration}</span>
+          <button type="button" class="story-play-btn ${isPlaying ? 'playing' : ''}" onclick="toggleStorySongPreview(event, ${s.id}, '${s.audio}')">
+            ${isPlaying ? '⏸' : '▶'}
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+window.toggleStorySongPreview = (e, id, url) => {
+  if (e) e.stopPropagation();
+  const player = $('#storyBgAudioPlayer');
+  if (!player) return;
+  if (selectedStoryMusicId === id && !player.paused) {
+    player.pause();
+    selectedStoryMusicId = null;
+  } else {
+    player.src = url;
+    player.play().catch(() => {});
+    selectedStoryMusicId = id;
+  }
+  filterStorySongs();
+};
+
+window.pickStoryMusic = (id) => {
+  const song = storyMusicCatalog.find(s => s.id === id);
+  if (!song) return;
+  selectedStoryMusicId = id;
+  const player = $('#storyBgAudioPlayer');
+  if (player) { player.src = song.audio; player.play().catch(() => {}); }
+  
+  const stk = $('#storyStageMusicSticker');
+  if (stk) {
+    $('#storyStageMusicArt').src = song.art;
+    $('#storyStageMusicTitle').textContent = song.title;
+    $('#storyStageMusicArtist').textContent = song.artist;
+    stk.classList.remove('hidden');
+  }
+  closeStoryMusicSheet();
+};
+
+window.removeStoryMusic = (e) => {
+  if (e) e.stopPropagation();
+  selectedStoryMusicId = null;
+  const player = $('#storyBgAudioPlayer');
+  if (player) { player.pause(); player.src = ''; }
+  const stk = $('#storyStageMusicSticker');
+  if (stk) stk.classList.add('hidden');
+};
+
+async function publishStoryWithMusic(isCf = false) {
+  const text = ($('#storyEditorCaptionInput')?.value || '').trim();
+  const imageUrl = State.storyCreatorImgUrl || null;
+  const song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
+  const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art } : null;
+
+  if (!text && !imageUrl) {
+    toast('Pick a photo or type a text caption first!', 'error');
+    return;
+  }
+  try {
+    await api('/posts/create', { method: 'POST', body: { text, imageUrl, music } });
+    closeStoryCreator();
+    loadPosts();
+    toast(music ? `🎉 Story published with 30s background song "${music.title}"!` : '🎉 Story published!', 'success');
+  } catch (e) {
+    toast(e.message || 'Story publish failed', 'error');
+  }
+}
 
 function renderPostAttachGrid() {
   const grid = $('#postAttachGrid');
