@@ -2944,27 +2944,37 @@ function openStoryFor(user) {
     imgWrap.appendChild(img);
 
     if (recent.text) {
+      const st = recent.style || {};
       const cap = document.createElement('div');
       cap.className = 'story-img-caption';
-      cap.style.cssText = 'position:absolute; bottom:120px; left:20px; right:20px; background:rgba(0,0,0,0.65); color:#fff; padding:10px 18px; border-radius:20px; text-align:center; font-size:16px; backdrop-filter:blur(8px); z-index:10; word-break:break-word;';
+      const sz = st.size ? Math.min(36, Math.max(16, st.size)) : 22;
+      const clr = st.color || '#ffffff';
+      const aln = st.align || 'center';
+      const bg = st.bg ? (clr === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
+      cap.style.cssText = `position:absolute; top:45%; left:50%; transform:translate(-50%,-50%); width:85%; color:${clr}; background:${bg}; padding:${st.bg?'8px 16px':'0'}; border-radius:${st.bg?'14px':'0'}; text-align:${aln}; font-size:${sz}px; font-weight:700; z-index:15; word-break:break-word;`;
       cap.textContent = recent.text;
-      const st = recent.style || {};
-      if (st.font === 'neon') { cap.style.fontFamily = "'Impact', 'Arial Black', sans-serif"; cap.style.fontWeight = 'bold'; }
-      else if (st.font === 'typewriter') { cap.style.fontFamily = 'monospace'; }
-      else if (st.font === 'script') { cap.style.fontFamily = "'Brush Script MT', Georgia, cursive"; cap.style.fontSize = '20px'; }
-      else if (st.font === 'playful') { cap.style.fontFamily = "'Trebuchet MS', sans-serif"; }
+      if (st.font === 'SQUEEZE' || st.font === 'neon') { cap.style.fontFamily = "'Impact', sans-serif"; cap.style.textTransform = 'uppercase'; }
+      else if (st.font === 'Bubble') { cap.style.fontFamily = "'Trebuchet MS', sans-serif"; cap.style.fontWeight = '800'; }
+      else if (st.font === 'Deco') { cap.style.fontFamily = 'Georgia, serif'; cap.style.fontStyle = 'italic'; }
+      else if (st.font === 'Typewriter' || st.font === 'typewriter') { cap.style.fontFamily = 'monospace'; }
+      else if (st.font === 'script') { cap.style.fontFamily = "'Brush Script MT', Georgia, cursive"; }
       imgWrap.appendChild(cap);
     }
     content.appendChild(imgWrap);
   } else if (recent && recent.text) {
+    const st = recent.style || {};
     const div = document.createElement('div');
     div.className = 'text-story';
     div.textContent = recent.text.slice(0, 280);
-    const st = recent.style || {};
-    if (st.font === 'neon') { div.style.fontFamily = "'Impact', 'Arial Black', sans-serif"; }
-    else if (st.font === 'typewriter') { div.style.fontFamily = 'monospace'; }
-    else if (st.font === 'script') { div.style.fontFamily = "'Brush Script MT', Georgia, cursive"; }
-    else if (st.font === 'playful') { div.style.fontFamily = "'Trebuchet MS', sans-serif"; }
+    const sz = st.size ? Math.min(42, Math.max(20, st.size)) : 28;
+    const clr = st.color || '#ffffff';
+    div.style.fontSize = sz + 'px';
+    div.style.color = clr;
+    div.style.textAlign = st.align || 'center';
+    if (st.font === 'SQUEEZE' || st.font === 'neon') { div.style.fontFamily = "'Impact', sans-serif"; div.style.textTransform = 'uppercase'; }
+    else if (st.font === 'Bubble') { div.style.fontFamily = "'Trebuchet MS', sans-serif"; div.style.fontWeight = '800'; }
+    else if (st.font === 'Deco') { div.style.fontFamily = 'Georgia, serif'; div.style.fontStyle = 'italic'; }
+    else if (st.font === 'Typewriter' || st.font === 'typewriter') { div.style.fontFamily = 'monospace'; }
     content.appendChild(div);
   } else {
     const div = document.createElement('div');
@@ -3034,6 +3044,104 @@ let activeStoryMusicCat = 'all';
 let selectedStoryMusicId = null;
 
 let activeStoryFont = 'modern';
+let activeStoryTextColor = '#ffffff';
+let activeStoryTextBg = false;
+let activeStoryTextAlign = 'center';
+let activeStoryTextSize = 28;
+let activeStoryText = '';
+
+window.openStoryTextEditor = () => {
+  const screen = $('#storyTextEditorScreen');
+  if (!screen) return;
+  screen.classList.remove('hidden');
+  const inp = $('#storyTextOverlayInput');
+  if (inp) {
+    inp.value = activeStoryText || $('#storyEditorCaptionInput')?.value || '';
+    inp.focus();
+  }
+  window.updateStoryTextLivePreview();
+};
+
+window.closeStoryTextEditor = () => {
+  const screen = $('#storyTextEditorScreen');
+  if (screen) screen.classList.add('hidden');
+};
+
+window.finishStoryTextEditor = () => {
+  const inp = $('#storyTextOverlayInput');
+  activeStoryText = (inp?.value || '').trim();
+  const stg = $('#storyStageTextOverlay');
+  if (stg) {
+    if (!activeStoryText) {
+      stg.classList.add('hidden');
+    } else {
+      stg.textContent = activeStoryText;
+      stg.style.color = activeStoryTextColor;
+      stg.style.fontSize = activeStoryTextSize + 'px';
+      stg.style.textAlign = activeStoryTextAlign;
+      stg.style.background = activeStoryTextBg ? (activeStoryTextColor === '#ffffff' ? '#000000' : '#ffffff') : 'transparent';
+      stg.style.color = activeStoryTextBg && activeStoryTextColor === '#ffffff' ? '#ffffff' : (activeStoryTextBg && activeStoryTextColor === '#000000' ? '#000000' : activeStoryTextColor);
+      if (activeStoryFont === 'modern') stg.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+      if (activeStoryFont === 'SQUEEZE') { stg.style.fontFamily = "'Impact', sans-serif"; stg.style.textTransform = 'uppercase'; stg.style.letterSpacing = '1px'; }
+      if (activeStoryFont === 'Bubble') { stg.style.fontFamily = "'Trebuchet MS', sans-serif"; stg.style.fontWeight = '800'; }
+      if (activeStoryFont === 'Deco') { stg.style.fontFamily = 'Georgia, serif'; stg.style.fontStyle = 'italic'; }
+      if (activeStoryFont === 'Typewriter') { stg.style.fontFamily = 'monospace'; }
+      stg.classList.remove('hidden');
+    }
+  }
+  const cap = $('#storyEditorCaptionInput');
+  if (cap && activeStoryText) cap.value = activeStoryText;
+  window.closeStoryTextEditor();
+};
+
+window.updateStoryTextLivePreview = () => {
+  const inp = $('#storyTextOverlayInput');
+  const slider = $('#storyTextSizeSlider');
+  if (!inp) return;
+  if (slider) activeStoryTextSize = parseInt(slider.value, 10) || 28;
+  inp.style.fontSize = activeStoryTextSize + 'px';
+  inp.style.color = activeStoryTextColor;
+  inp.style.textAlign = activeStoryTextAlign;
+  inp.style.background = activeStoryTextBg ? (activeStoryTextColor === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
+  inp.style.borderRadius = activeStoryTextBg ? '12px' : '0';
+  inp.style.padding = activeStoryTextBg ? '8px 14px' : '0';
+  if (activeStoryFont === 'modern') inp.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+  if (activeStoryFont === 'SQUEEZE') { inp.style.fontFamily = "'Impact', sans-serif"; inp.style.textTransform = 'uppercase'; }
+  if (activeStoryFont === 'Bubble') { inp.style.fontFamily = "'Trebuchet MS', sans-serif"; inp.style.fontWeight = '800'; }
+  if (activeStoryFont === 'Deco') { inp.style.fontFamily = 'Georgia, serif'; inp.style.fontStyle = 'italic'; }
+  if (activeStoryFont === 'Typewriter') { inp.style.fontFamily = 'monospace'; }
+};
+
+window.selectOverlayFont = (font, el) => {
+  activeStoryFont = font;
+  $$('#storyTextEditorScreen .story-font-pill').forEach(p => p.classList.remove('active'));
+  if (el) el.classList.add('active');
+  window.updateStoryTextLivePreview();
+};
+
+window.toggleTextColorsRow = () => {
+  const row = $('#storyTextColorsRow');
+  if (row) row.classList.toggle('hidden');
+};
+
+window.toggleOverlayTextBg = () => {
+  activeStoryTextBg = !activeStoryTextBg;
+  const btn = $('#storyTextBgToggleBtn');
+  if (btn) btn.style.background = activeStoryTextBg ? 'var(--accent)' : 'rgba(255,255,255,0.15)';
+  window.updateStoryTextLivePreview();
+};
+
+window.cycleOverlayTextAlign = () => {
+  if (activeStoryTextAlign === 'center') activeStoryTextAlign = 'left';
+  else if (activeStoryTextAlign === 'left') activeStoryTextAlign = 'right';
+  else activeStoryTextAlign = 'center';
+  window.updateStoryTextLivePreview();
+};
+
+window.setOverlayTextColor = (color) => {
+  activeStoryTextColor = color;
+  window.updateStoryTextLivePreview();
+};
 
 window.setStoryFont = (font, el) => {
   activeStoryFont = font;
@@ -3088,10 +3196,12 @@ window.closeStoryCreator = () => {
   selectedStoryMusicId = null;
   const stk = $('#storyStageMusicSticker');
   if (stk) stk.classList.add('hidden');
+  const stgText = $('#storyStageTextOverlay');
+  if (stgText) stgText.classList.add('hidden');
   const prev = $('#storyEditorPreviewImg');
   if (prev) { prev.src = ''; prev.classList.add('hidden'); }
   const fc = $('#storyFontControls'); if (fc) fc.classList.add('hidden');
-  activeStoryFont = 'modern';
+  activeStoryFont = 'modern'; activeStoryText = ''; activeStoryTextColor = '#ffffff'; activeStoryTextBg = false; activeStoryTextAlign = 'center'; activeStoryTextSize = 28;
   const ph = $('#storyEditorPlaceholder');
   if (ph) ph.classList.remove('hidden');
   const cap = $('#storyEditorCaptionInput');
@@ -3249,12 +3359,13 @@ window.removeStoryMusic = (e) => {
 };
 
 window.publishStoryWithMusic = async (isCf = false) => {
-  const text = ($('#storyEditorCaptionInput')?.value || '').trim();
+  const capVal = ($('#storyEditorCaptionInput')?.value || '').trim();
+  const text = activeStoryText || capVal;
   const imageUrl = State.storyCreatorImgUrl || null;
   let song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   if (!song) song = liveSearchResults.find(s => s.id === selectedStoryMusicId);
   const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art } : null;
-  const style = { font: activeStoryFont };
+  const style = { font: activeStoryFont, color: activeStoryTextColor, bg: activeStoryTextBg, align: activeStoryTextAlign, size: activeStoryTextSize };
 
   if (!text && !imageUrl) {
     toast('Pick a photo or type a text caption first!', 'error');

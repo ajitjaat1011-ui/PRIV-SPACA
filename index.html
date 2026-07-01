@@ -691,11 +691,13 @@
         </div>
         <button type="button" class="story-music-remove" onclick="removeStoryMusic(event)">✕</button>
       </div>
+
+      <div id="storyStageTextOverlay" class="story-stage-text-overlay hidden" onclick="openStoryTextEditor()"></div>
     </div>
 
     <!-- Right Sidebar Tools (No Effects button as requested) -->
     <div class="story-editor-tools">
-      <div class="story-tool-item" onclick="promptStoryCaption()">
+      <div class="story-tool-item" onclick="openStoryTextEditor()">
         <div class="story-tool-circle">Aa</div>
         <span class="story-tool-label">Text</span>
       </div>
@@ -709,16 +711,50 @@
       </div>
     </div>
 
+    <!-- ====== INSTAGRAM TEXT OVERLAY EDITOR MODE ====== -->
+    <div id="storyTextEditorScreen" class="story-text-editor-screen hidden">
+      <div class="story-text-top">
+        <button type="button" class="story-text-cancel" onclick="closeStoryTextEditor()">✕</button>
+        <button type="button" class="story-text-done" onclick="finishStoryTextEditor()">Done</button>
+      </div>
+
+      <div class="story-text-center">
+        <div class="story-size-slider-wrap">
+          <input type="range" id="storyTextSizeSlider" min="18" max="52" value="28" orient="vertical" oninput="updateStoryTextLivePreview()" />
+        </div>
+        <textarea id="storyTextOverlayInput" class="story-text-overlay-textarea" placeholder="Type story text..." oninput="updateStoryTextLivePreview()"></textarea>
+      </div>
+
+      <div class="story-text-bottom">
+        <div class="story-text-fonts-row">
+          <span class="story-font-pill active" style="font-family:system-ui,sans-serif;" onclick="setStoryFont('modern', this)">Modern</span>
+          <span class="story-font-pill" style="font-family:'Impact',sans-serif;font-weight:bold;" onclick="setStoryFont('SQUEEZE', this)">SQUEEZE</span>
+          <span class="story-font-pill" style="font-family:'Trebuchet MS',sans-serif;font-weight:700;" onclick="setStoryFont('Bubble', this)">Bubble</span>
+          <span class="story-font-pill" style="font-family:Georgia,serif;font-style:italic;" onclick="setStoryFont('Deco', this)">Deco</span>
+          <span class="story-font-pill" style="font-family:monospace;" onclick="setStoryFont('Typewriter', this)">Typewriter</span>
+        </div>
+
+        <div class="story-text-tools-bar">
+          <button type="button" class="story-fmt-btn" title="Color Picker" onclick="toggleTextColorsRow()">🌈</button>
+          <button type="button" class="story-fmt-btn" id="storyTextBgToggleBtn" title="Background Fill Box" onclick="toggleOverlayTextBg()">A<span style="font-size:11px;">★</span></button>
+          <button type="button" class="story-fmt-btn" id="storyTextAlignBtn" title="Alignment" onclick="cycleOverlayTextAlign()">≡</button>
+        </div>
+
+        <div id="storyTextColorsRow" class="story-colors-row hidden">
+          <span class="color-swatch" style="background:#ffffff;" onclick="setOverlayTextColor('#ffffff')"></span>
+          <span class="color-swatch" style="background:#000000;border:1px solid #fff;" onclick="setOverlayTextColor('#000000')"></span>
+          <span class="color-swatch" style="background:#ec4899;" onclick="setOverlayTextColor('#ec4899')"></span>
+          <span class="color-swatch" style="background:#38bdf8;" onclick="setOverlayTextColor('#38bdf8')"></span>
+          <span class="color-swatch" style="background:#10b981;" onclick="setOverlayTextColor('#10b981')"></span>
+          <span class="color-swatch" style="background:#fbbf24;" onclick="setOverlayTextColor('#fbbf24')"></span>
+          <span class="color-swatch" style="background:#a855f7;" onclick="setOverlayTextColor('#a855f7')"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- Bottom Bar -->
     <div class="story-editor-bottom">
-      <div id="storyFontControls" class="story-font-scroll hidden">
-        <span class="story-font-pill active" style="font-family:system-ui,sans-serif;" onclick="setStoryFont('modern', this)">Modern</span>
-        <span class="story-font-pill" style="font-family:'Impact','Arial Black',sans-serif;font-weight:bold;letter-spacing:1px;" onclick="setStoryFont('neon', this)">NEON</span>
-        <span class="story-font-pill" style="font-family:monospace;" onclick="setStoryFont('typewriter', this)">Typewriter</span>
-        <span class="story-font-pill" style="font-family:'Brush Script MT',Georgia,cursive;font-size:15px;" onclick="setStoryFont('script', this)">Script</span>
-        <span class="story-font-pill" style="font-family:'Trebuchet MS',sans-serif;font-weight:700;" onclick="setStoryFont('playful', this)">Playful</span>
-      </div>
-      <input type="text" id="storyEditorCaptionInput" class="story-caption-input" placeholder="Add a caption..." onfocus="$('#storyFontControls').classList.remove('hidden')" />
+      <input type="text" id="storyEditorCaptionInput" class="story-caption-input" placeholder="Add a caption..." />
       <div class="story-publish-row">
         <button type="button" class="story-pub-btn primary" onclick="publishStoryWithMusic()"><span id="storyPubMeInitials" class="story-me-badge">AJ</span> Your story</button>
         <button type="button" class="story-pub-btn cf" onclick="publishStoryWithMusic(true)">★ Close Friends</button>
