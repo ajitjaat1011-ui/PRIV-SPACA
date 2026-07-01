@@ -1726,6 +1726,8 @@ let _fastPollUntil = 0;
 function boostPolling(durationMs = 30000) { _fastPollUntil = Date.now() + durationMs; }
 function isFastPolling() { return Date.now() < _fastPollUntil; }
 
+let _lastFeedPollAt = 0;
+let _lastNotifPollAt = 0;
 function startPolls() {
   sendHeartbeat();
   loadMembers();
@@ -1734,24 +1736,34 @@ function startPolls() {
   pollRTCSignals();
   State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
   State.pollTimers.members = setInterval(loadMembers, 15000);
-  // MESSAGES: 1.5s on chat tab (fast feels live), 3s otherwise — unless SSE is alive
+  // MESSAGES: keep a polling backstop on Cloudflare Pages/Workers because an
+  // EventSource connection and the write request can land on different isolates.
   State.pollTimers.msg = setInterval(() => {
     if (State.currentTab !== 'chat') return;
-    if (_sseConnected) return;
+    if (_sseConnected && !_sseNeedsPollingBackstop) return;
     loadMessages(false);
   }, 1500);
   State.pollTimers.typing = setInterval(() => { if (State.currentTab === 'chat') pollTyping(); }, 2000);
-  // FEED: 4s on feed tab (or 1.5s during fast mode)
+  // FEED: same safety-net logic as chat so posts still appear even if SSE misses an event.
+  // Also make boostPolling() truly dynamic instead of locking the interval at startup.
   State.pollTimers.feed = setInterval(() => {
     if (State.currentTab !== 'feed') return;
-    if (_sseConnected) return;
+    if (_sseConnected && !_sseNeedsPollingBackstop) return;
+    const now = Date.now();
+    const minGap = isFastPolling() ? 1500 : 4000;
+    if ((now - _lastFeedPollAt) < minGap) return;
+    _lastFeedPollAt = now;
     loadPosts();
-  }, isFastPolling() ? 1500 : 4000);
-  // NOTIFICATIONS: 5s normally, 2s during fast mode (after sending a message etc)
+  }, 1500);
+  // NOTIFICATIONS: same dynamic fast-poll behavior as the feed.
   State.pollTimers.notif = setInterval(() => {
-    if (_sseConnected) return;
+    if (_sseConnected && !_sseNeedsPollingBackstop) return;
+    const now = Date.now();
+    const minGap = isFastPolling() ? 2000 : 5000;
+    if ((now - _lastNotifPollAt) < minGap) return;
+    _lastNotifPollAt = now;
     pollNotifications();
-  }, 5000);
+  }, 2000);
   // RTC call signaling must always poll as a Cloudflare fallback because SSE events can land on another isolate.
   State.pollTimers.rtc = setInterval(pollRTCSignals, 2500);
   // Try SSE — it'll auto-fall-back if not supported
@@ -1760,6 +1772,10 @@ function startPolls() {
 
 /* ========== Real-time Server-Sent Events ========== */
 let _sseConnected = false;
+// Cloudflare Pages/Workers can route concurrent requests to different isolates,
+// so the in-memory SSE fan-out may miss some events. Keep polling as a safety net.
+const _sseNeedsPollingBackstop =
+  location.hostname.endsWith('.pages.dev') || location.hostname.endsWith('.workers.dev');
 let _sseSource = null;
 let _sseLastEventId = null;
 let _sseReconnectTimer = null;
@@ -1922,6 +1938,7 @@ function markTabSeen(tab) {
 }
 
 let _lastNotif = { chatUnread: 0, feedUnread: 0 };
+let _lastPostsLoadedAt = 0;
 async function pollNotifications() {
   if (!State.token || !State.user) return;
   const meId = State.user.id;
@@ -1948,10 +1965,14 @@ async function pollNotifications() {
     });
   } catch (_) {}
 
-  // 3) Keep posts cached for stories rail + saved tab
+  // 3) Keep posts cached for stories rail + saved tab, but avoid re-fetching
+  // them on every notification poll if we already refreshed recently.
   try {
-    const r = await api('/posts');
-    State.posts = r.posts || State.posts;
+    if (!_lastPostsLoadedAt || (Date.now() - _lastPostsLoadedAt) > 10000) {
+      const r = await api('/posts');
+      State.posts = r.posts || State.posts;
+      _lastPostsLoadedAt = Date.now();
+    }
   } catch (_) {}
 
   // 4) Unviewed stories add to feed dot
@@ -2004,6 +2025,7 @@ async function loadPosts() {
   try {
     const data = await api('/posts');
     const newPosts = data.posts || [];
+    _lastPostsLoadedAt = Date.now();
     const sig = newPosts.map(p => p.id + ':' + p.likeCount + ':' + p.commentCount).join('|');
     if (sig === lastPostsSignature) return;
     lastPostsSignature = sig;
@@ -4052,7 +4074,8 @@ function updateRealtimeStatus() {
   const el = $('#rtStatus');
   if (!el) return;
   if (typeof _sseConnected !== 'undefined' && _sseConnected) {
-    el.textContent = 'Live'; el.className = 'settings-chip live';
+    el.textContent = _sseNeedsPollingBackstop ? 'Live+Polling' : 'Live';
+    el.className = 'settings-chip live';
   } else {
     el.textContent = 'Polling'; el.className = 'settings-chip';
   }
