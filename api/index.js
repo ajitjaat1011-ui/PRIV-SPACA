@@ -1579,7 +1579,8 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
         return { ...c, author: cAuth };
       });
       const pAuth = author ? sanitizeUser(author) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
-      return {
+      const isOwner = p.userId === req.userId;
+      const base = {
         ...p,
         likes: p.likes || [],
         likeCount: (p.likes || []).length,
@@ -1587,6 +1588,10 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
         commentCount: comments.length,
         author: pAuth
       };
+      // Privacy: only the author gets the raw viewer list / view count.
+      if (!isOwner) delete base.views;
+      if (isStoryRecord(p)) base.viewCount = isOwner ? (Array.isArray(p.views) ? p.views.length : 0) : undefined;
+      return base;
     });
   res.json({ posts: list });
 });
@@ -1777,6 +1782,73 @@ app.post('/api/posts/restore', authMiddleware, async (req, res) => {
   delete p.deletedAt;
   await saveDatabase(db, false);
   res.json({ ok: true });
+});
+
+// ---------- Story analytics: "Seen by" (parity with cf-worker.js) ----------
+app.post('/api/stories/:id/view', authMiddleware, async (req, res) => {
+  const postId = req.params.id;
+  const myId = req.userId;
+  const db = await fetchDatabase();
+  const p = db.posts.find(x => x.id === postId);
+  if (!p || !isStoryRecord(p)) return res.status(404).json({ error: 'Story not found' });
+  if (!canViewerSeeStory(p, myId, db)) return res.status(403).json({ error: 'Forbidden' });
+  if (p.userId === myId) return res.json({ ok: true, viewCount: (p.views || []).length });
+  p.views = Array.isArray(p.views) ? p.views : [];
+  const existing = p.views.find(v => v.userId === myId);
+  if (existing) existing.at = nowMs();
+  else p.views.push({ userId: myId, at: nowMs() });
+  await saveDatabase(db, true);
+  res.json({ ok: true, viewCount: p.views.length });
+});
+
+app.get('/api/stories/:id/viewers', authMiddleware, async (req, res) => {
+  const postId = req.params.id;
+  const myId = req.userId;
+  const db = await fetchDatabase();
+  const p = db.posts.find(x => x.id === postId);
+  if (!p || !isStoryRecord(p)) return res.status(404).json({ error: 'Story not found' });
+  if (p.userId !== myId) return res.status(403).json({ error: 'Forbidden' });
+  const views = (Array.isArray(p.views) ? p.views : []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+  const viewers = views.map(v => {
+    const u = db.users.find(x => x.id === v.userId);
+    const su = u ? sanitizeUser(u) : { id: v.userId, displayName: 'Member', username: (v.userId || 'm').slice(-6), photoUrl: '' };
+    return { ...su, at: v.at || 0 };
+  });
+  res.json({ viewers, viewCount: viewers.length });
+});
+
+// ---------- Reply to a story (delivered into DMs) ----------
+app.post('/api/stories/:id/reply', authMiddleware, async (req, res) => {
+  const postId = req.params.id;
+  const myId = req.userId;
+  const emoji = typeof (req.body || {}).emoji === 'string' ? req.body.emoji.slice(0, 8) : '';
+  const text = sanitizeText((req.body || {}).text || '', 500).trim();
+  if (!emoji && !text) return res.status(400).json({ error: 'Empty reply' });
+  const db = await fetchDatabase();
+  const p = db.posts.find(x => x.id === postId);
+  if (!p || !isStoryRecord(p)) return res.status(404).json({ error: 'Story not found' });
+  if (p.userId === myId) return res.status(400).json({ error: 'Cannot reply to your own story' });
+  if (!canViewerSeeStory(p, myId, db)) return res.status(403).json({ error: 'Forbidden' });
+  const roomId = dmRoomFor(myId, p.userId);
+  const author = db.users.find(u => u.id === myId);
+  const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
+  const storyRef = {
+    id: p.id, kind: 'story',
+    imageUrl: (Array.isArray(p.images) && p.images[0]) || p.imageUrl || null,
+    text: typeof p.text === 'string' ? p.text.slice(0, 120) : '',
+    username: (p.authorSnapshot && p.authorSnapshot.username) || '',
+  };
+  const bodyText = emoji ? (text ? emoji + ' ' + text : emoji) : text;
+  const msg = {
+    id: uid('msg'), roomId, userId: myId, text: bodyText, imageUrl: null,
+    storyReply: storyRef, replyTo: null, authorSnapshot: snap, createdAt: nowMs(),
+  };
+  db.messages.push(msg);
+  const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
+  _pushEvent(p.userId, 'new_message', { roomId, message: enriched });
+  pushNotification(db, p.userId, 'story_reply', myId, { text: bodyText.slice(0, 80), postId: p.id });
+  await saveDatabase(db, false);
+  res.json({ ok: true, message: enriched });
 });
 
 // ---------- 404 + Error handling ----------
