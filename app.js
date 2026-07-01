@@ -2951,7 +2951,9 @@ function openStoryFor(user) {
       const clr = st.color || '#ffffff';
       const aln = st.align || 'center';
       const bg = st.bg ? (clr === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
-      cap.style.cssText = `position:absolute; top:45%; left:50%; transform:translate(-50%,-50%); width:85%; color:${clr}; background:${bg}; padding:${st.bg?'8px 16px':'0'}; border-radius:${st.bg?'14px':'0'}; text-align:${aln}; font-size:${sz}px; font-weight:700; z-index:15; word-break:break-word;`;
+      const px = st.posX || 50;
+      const py = st.posY || 68;
+      cap.style.cssText = `position:absolute; top:${py}%; left:${px}%; transform:translate(-50%,-50%); width:85%; color:${clr}; background:${bg}; padding:${st.bg?'8px 16px':'0'}; border-radius:${st.bg?'14px':'0'}; text-align:${aln}; font-size:${sz}px; font-weight:700; z-index:15; word-break:break-word;`;
       cap.textContent = recent.text;
       if (st.font === 'SQUEEZE' || st.font === 'neon') { cap.style.fontFamily = "'Impact', sans-serif"; cap.style.textTransform = 'uppercase'; }
       else if (st.font === 'Bubble') { cap.style.fontFamily = "'Trebuchet MS', sans-serif"; cap.style.fontWeight = '800'; }
@@ -2989,7 +2991,11 @@ function openStoryFor(user) {
     const stk = document.createElement('div');
     stk.className = 'story-music-sticker';
     stk.style.position = 'absolute';
-    stk.style.bottom = '80px';
+    const mpx = recent.music.posX || 50;
+    const mpy = recent.music.posY || 32;
+    stk.style.left = mpx + '%';
+    stk.style.top = mpy + '%';
+    stk.style.transform = 'translate(-50%, -50%)';
     stk.innerHTML = `
       <img src="${recent.music.art || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=120&q=80'}" class="story-music-art" alt="art" />
       <div class="story-music-meta">
@@ -3003,6 +3009,7 @@ function openStoryFor(user) {
     content.appendChild(stk);
     if (player && recent.music.audio) {
       player.src = recent.music.audio;
+      player.currentTime = recent.music.startTime || 0;
       player.play().catch(() => {});
     }
   }
@@ -3050,6 +3057,74 @@ let activeStoryTextAlign = 'center';
 let activeStoryTextSize = 28;
 let activeStoryText = '';
 
+function makeStickerDraggable(el, onMoveCallback) {
+  if (!el || el._isDraggableAttached) return;
+  el._isDraggableAttached = true;
+  let isDragging = false;
+  let startX = 0, startY = 0;
+  let initialLeft = 0, initialTop = 0;
+
+  const getPos = (e) => {
+    const cx = e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches && e.touches[0] ? e.touches[0].clientY : e.clientY;
+    return { cx, cy };
+  };
+
+  const start = (e) => {
+    if (e.target.closest('button')) return;
+    isDragging = true;
+    const pos = getPos(e);
+    startX = pos.cx;
+    startY = pos.cy;
+    const rect = el.getBoundingClientRect();
+    const stageRect = el.parentElement.getBoundingClientRect();
+    initialLeft = rect.left - stageRect.left + rect.width / 2;
+    initialTop = rect.top - stageRect.top + rect.height / 2;
+    el.style.transition = 'none';
+  };
+
+  const move = (e) => {
+    if (!isDragging) return;
+    if (e.cancelable) e.preventDefault();
+    const pos = getPos(e);
+    const dx = pos.cx - startX;
+    const dy = pos.cy - startY;
+    const stageRect = el.parentElement.getBoundingClientRect();
+    let newLeft = Math.max(30, Math.min(stageRect.width - 30, initialLeft + dx));
+    let newTop = Math.max(40, Math.min(stageRect.height - 40, initialTop + dy));
+
+    const centerX = stageRect.width / 2;
+    const guideEl = $('#storyAlignGuide');
+    if (Math.abs(newLeft - centerX) < 14) {
+      newLeft = centerX;
+      if (guideEl) guideEl.classList.remove('hidden');
+    } else {
+      if (guideEl) guideEl.classList.add('hidden');
+    }
+
+    const pctX = Math.round((newLeft / stageRect.width) * 100);
+    const pctY = Math.round((newTop / stageRect.height) * 100);
+    el.style.left = pctX + '%';
+    el.style.top = pctY + '%';
+    if (onMoveCallback) onMoveCallback(pctX, pctY);
+  };
+
+  const end = () => {
+    if (!isDragging) return;
+    isDragging = false;
+    el.style.transition = 'transform 0.15s ease';
+    const guideEl = $('#storyAlignGuide');
+    if (guideEl) guideEl.classList.add('hidden');
+  };
+
+  el.addEventListener('mousedown', start);
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  el.addEventListener('touchstart', start, { passive: false });
+  window.addEventListener('touchmove', move, { passive: false });
+  window.addEventListener('touchend', end);
+}
+
 window.openStoryTextEditor = () => {
   const screen = $('#storyTextEditorScreen');
   if (!screen) return;
@@ -3086,7 +3161,10 @@ window.finishStoryTextEditor = () => {
       if (activeStoryFont === 'Bubble') { stg.style.fontFamily = "'Trebuchet MS', sans-serif"; stg.style.fontWeight = '800'; }
       if (activeStoryFont === 'Deco') { stg.style.fontFamily = 'Georgia, serif'; stg.style.fontStyle = 'italic'; }
       if (activeStoryFont === 'Typewriter') { stg.style.fontFamily = 'monospace'; }
+      stg.style.left = (State.textPosX || 50) + '%';
+      stg.style.top = (State.textPosY || 68) + '%';
       stg.classList.remove('hidden');
+      makeStickerDraggable(stg, (px, py) => { State.textPosX = px; State.textPosY = py; });
     }
   }
   const cap = $('#storyEditorCaptionInput');
@@ -3198,10 +3276,14 @@ window.closeStoryCreator = () => {
   if (stk) stk.classList.add('hidden');
   const stgText = $('#storyStageTextOverlay');
   if (stgText) stgText.classList.add('hidden');
+  const trim = $('#storyMusicTrimmer');
+  if (trim) trim.classList.add('hidden');
   const prev = $('#storyEditorPreviewImg');
   if (prev) { prev.src = ''; prev.classList.add('hidden'); }
   const fc = $('#storyFontControls'); if (fc) fc.classList.add('hidden');
   activeStoryFont = 'modern'; activeStoryText = ''; activeStoryTextColor = '#ffffff'; activeStoryTextBg = false; activeStoryTextAlign = 'center'; activeStoryTextSize = 28;
+  State.musicPosX = 50; State.musicPosY = 32; State.musicStartTime = 0;
+  State.textPosX = 50; State.textPosY = 68;
   const ph = $('#storyEditorPlaceholder');
   if (ph) ph.classList.remove('hidden');
   const cap = $('#storyEditorCaptionInput');
@@ -3337,16 +3419,50 @@ window.pickStoryMusic = (id) => {
   if (!song) return;
   selectedStoryMusicId = id;
   const player = $('#storyBgAudioPlayer');
-  if (player) { player.src = song.audio; player.play().catch(() => {}); }
+  if (player) { player.src = song.audio; player.currentTime = State.musicStartTime || 0; player.play().catch(() => {}); }
   
   const stk = $('#storyStageMusicSticker');
   if (stk) {
     $('#storyStageMusicArt').src = song.art;
     $('#storyStageMusicTitle').textContent = song.title;
     $('#storyStageMusicArtist').textContent = song.artist;
+    stk.style.left = (State.musicPosX || 50) + '%';
+    stk.style.top = (State.musicPosY || 32) + '%';
     stk.classList.remove('hidden');
+    makeStickerDraggable(stk, (px, py) => { State.musicPosX = px; State.musicPosY = py; });
   }
   window.closeStoryMusicSheet();
+
+  const trim = $('#storyMusicTrimmer');
+  if (trim) {
+    $('#trimmerSongTitle').textContent = song.title + ' · ' + song.artist;
+    const bars = $('#trimmerWaveformBars');
+    if (bars) {
+      let html = '';
+      for (let i = 0; i < 35; i++) {
+        const h = Math.floor(Math.random() * 22) + 8;
+        html += `<div class="waveform-bar-item ${i < 8 ? 'active' : ''}" style="height:${h}px;"></div>`;
+      }
+      bars.innerHTML = html;
+    }
+    trim.classList.remove('hidden');
+  }
+};
+
+window.updateMusicStartTime = (val) => {
+  const sec = parseInt(val, 10) || 0;
+  State.musicStartTime = sec;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  const lbl = $('#musicStartTimeLbl');
+  if (lbl) lbl.textContent = `${m}:${s < 10 ? '0' : ''}${s}`;
+  const player = $('#storyBgAudioPlayer');
+  if (player && !player.paused) player.currentTime = sec;
+};
+
+window.closeMusicTrimmer = () => {
+  const trim = $('#storyMusicTrimmer');
+  if (trim) trim.classList.add('hidden');
 };
 
 window.removeStoryMusic = (e) => {
@@ -3364,8 +3480,8 @@ window.publishStoryWithMusic = async (isCf = false) => {
   const imageUrl = State.storyCreatorImgUrl || null;
   let song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   if (!song) song = liveSearchResults.find(s => s.id === selectedStoryMusicId);
-  const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art } : null;
-  const style = { font: activeStoryFont, color: activeStoryTextColor, bg: activeStoryTextBg, align: activeStoryTextAlign, size: activeStoryTextSize };
+  const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art, posX: State.musicPosX || 50, posY: State.musicPosY || 32, startTime: State.musicStartTime || 0 } : null;
+  const style = { font: activeStoryFont, color: activeStoryTextColor, bg: activeStoryTextBg, align: activeStoryTextAlign, size: activeStoryTextSize, posX: State.textPosX || 50, posY: State.textPosY || 68 };
 
   if (!text && !imageUrl) {
     toast('Pick a photo or type a text caption first!', 'error');
