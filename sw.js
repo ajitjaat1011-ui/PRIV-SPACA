@@ -5,7 +5,7 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v16-story-perf';
+const SW_VERSION = 'priv-spaca-v17-story-progress';
 const STATIC_CACHE = 'priv-spaca-static-' + SW_VERSION;
 const RUNTIME_CACHE = 'priv-spaca-runtime-' + SW_VERSION;
 
@@ -13,7 +13,7 @@ const APP_SHELL = [
   '/',
   '/index.html',
   '/style.css',
-  '/app.js?v=16-story-perf',
+  '/app.js?v=17-story-progress',
   '/manifest.json',
 ];
 
