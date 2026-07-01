@@ -645,6 +645,9 @@ function openPostComposer() {
 function closePostComposer() {
   const card = $('#inlineComposerCard');
   if (card) card.classList.add('hidden');
+  const inp = $('#postInput');
+  if (inp) inp.value = '';
+  if (typeof clearPostAttach === 'function') clearPostAttach();
   const pm = $('#postComposerModal');
   if (pm) pm.classList.add('hidden');
 }
@@ -659,6 +662,10 @@ function bindTabs() {
   // New IG-style top "+" — jump to feed, focus composer, open photo picker
   const ta = $('#topAddBtn');
   if (ta) ta.addEventListener('click', openPostComposer);
+  const icb = $('#inlineComposerCloseBtn');
+  if (icb) icb.addEventListener('click', closePostComposer);
+  const icab = $('#inlineComposerCancelBtn');
+  if (icab) icab.addEventListener('click', closePostComposer);
   const pmc = $('#postModalClose');
   if (pmc) pmc.addEventListener('click', closePostComposer);
   const pm = $('#postComposerModal');
