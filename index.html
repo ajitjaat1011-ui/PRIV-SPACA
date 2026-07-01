@@ -679,8 +679,8 @@
 
       <div id="storyAlignGuide" class="story-align-guide hidden"></div>
 
-      <!-- Draggable Music Sticker on Story Stage -->
-      <div class="story-music-sticker hidden" id="storyStageMusicSticker" style="top:32%; left:50%;">
+      <!-- Draggable & Resizable Music Sticker on Story Stage -->
+      <div class="story-music-sticker sticker hidden" id="storyStageMusicSticker" style="top:32%; left:50%;" onclick="selectStorySticker(event, this)">
         <img src="" class="story-music-art" id="storyStageMusicArt" alt="Album" />
         <div class="story-music-meta">
           <div class="story-music-title" id="storyStageMusicTitle">Song</div>
@@ -692,9 +692,13 @@
           <div class="story-eq-bar"></div>
         </div>
         <button type="button" class="story-music-remove" onclick="removeStoryMusic(event)">✕</button>
+        <div class="story-resize-handle" onmousedown="startStickerScale(event, 'storyStageMusicSticker')" ontouchstart="startStickerScale(event, 'storyStageMusicSticker')">↘</div>
       </div>
 
-      <div id="storyStageTextOverlay" class="story-stage-text-overlay hidden" style="top:68%; left:50%;" onclick="openStoryTextEditor()"></div>
+      <div id="storyStageTextOverlay" class="story-stage-text-overlay sticker hidden" style="top:68%; left:50%;" onclick="selectStorySticker(event, this)">
+        <span id="storyStageTextSpan">Text</span>
+        <div class="story-resize-handle" onmousedown="startStickerScale(event, 'storyStageTextOverlay')" ontouchstart="startStickerScale(event, 'storyStageTextOverlay')">↘</div>
+      </div>
     </div>
 
     <!-- Instagram Music Section Trimmer Scrubber -->
@@ -703,13 +707,22 @@
         <span class="trimmer-song-title" id="trimmerSongTitle">Song Name</span>
         <button type="button" class="story-text-done" onclick="closeMusicTrimmer()">Done</button>
       </div>
+      <div style="display:flex; align-items:center; justify-content:space-between; font-size:12.5px; color:#a3a3a3; font-weight:600;">
+        <span>Clip Length:</span>
+        <div style="display:flex; gap:6px;">
+          <span class="dur-pill" onclick="setMusicClipDuration(10, this)">10s</span>
+          <span class="dur-pill" onclick="setMusicClipDuration(15, this)">15s</span>
+          <span class="dur-pill" onclick="setMusicClipDuration(20, this)">20s</span>
+          <span class="dur-pill active" onclick="setMusicClipDuration(30, this)">30s</span>
+        </div>
+      </div>
       <div class="trimmer-waveform-box">
         <div class="waveform-bars" id="trimmerWaveformBars"></div>
         <input type="range" id="musicStartTimeSlider" class="music-scrubber-range" min="0" max="180" value="0" step="1" oninput="updateMusicStartTime(this.value)" />
       </div>
       <div class="trimmer-time-lbl">
         <span>Start time: <strong id="musicStartTimeLbl">0:00</strong></span>
-        <span>Clip length: <strong>30s</strong></span>
+        <span>Clip length: <strong id="musicClipDurLbl">30s</strong></span>
       </div>
     </div>
 

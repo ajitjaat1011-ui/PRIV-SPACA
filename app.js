@@ -3056,6 +3056,55 @@ let activeStoryTextBg = false;
 let activeStoryTextAlign = 'center';
 let activeStoryTextSize = 28;
 let activeStoryText = '';
+let activeStickerScales = { storyStageMusicSticker: 1.0, storyStageTextOverlay: 1.0 };
+let activeMusicClipDur = 30;
+
+window.selectStorySticker = (e, el) => {
+  if (e) e.stopPropagation();
+  $$('#storyEditorStage .sticker').forEach(s => s.classList.remove('active-sticker'));
+  if (el) el.classList.add('active-sticker');
+};
+
+window.startStickerScale = (e, id) => {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  const el = document.getElementById(id);
+  if (!el) return;
+  const startPos = e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX;
+  const startScale = activeStickerScales[id] || 1.0;
+
+  const move = (ev) => {
+    const curPos = ev.touches && ev.touches[0] ? ev.touches[0].clientX : ev.clientX;
+    const diff = curPos - startPos;
+    let newScale = Math.max(0.5, Math.min(2.5, startScale + diff * 0.008));
+    activeStickerScales[id] = newScale;
+    el.style.transform = `translate(-50%, -50%) scale(${newScale.toFixed(2)})`;
+    if (id === 'storyStageMusicSticker') State.musicScale = newScale;
+    if (id === 'storyStageTextOverlay') State.textScale = newScale;
+  };
+
+  const end = () => {
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', end);
+    window.removeEventListener('touchmove', move);
+    window.removeEventListener('touchend', end);
+  };
+
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  window.addEventListener('touchmove', move, { passive: false });
+  window.addEventListener('touchend', end);
+};
+
+window.setMusicClipDuration = (dur, el) => {
+  activeMusicClipDur = dur;
+  State.musicClipDur = dur;
+  $$('#storyMusicTrimmer .dur-pill').forEach(p => p.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const lbl = $('#musicClipDurLbl');
+  if (lbl) lbl.textContent = dur + 's';
+  const slider = $('#musicStartTimeSlider');
+  if (slider) window.updateMusicStartTime(slider.value);
+};
 
 function makeStickerDraggable(el, onMoveCallback) {
   if (!el || el._isDraggableAttached) return;
@@ -3071,7 +3120,8 @@ function makeStickerDraggable(el, onMoveCallback) {
   };
 
   const start = (e) => {
-    if (e.target.closest('button')) return;
+    if (e.target.closest('button') || e.target.classList.contains('story-resize-handle')) return;
+    window.selectStorySticker(e, el);
     isDragging = true;
     const pos = getPos(e);
     startX = pos.cx;
@@ -3480,8 +3530,8 @@ window.publishStoryWithMusic = async (isCf = false) => {
   const imageUrl = State.storyCreatorImgUrl || null;
   let song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   if (!song) song = liveSearchResults.find(s => s.id === selectedStoryMusicId);
-  const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art, posX: State.musicPosX || 50, posY: State.musicPosY || 32, startTime: State.musicStartTime || 0 } : null;
-  const style = { font: activeStoryFont, color: activeStoryTextColor, bg: activeStoryTextBg, align: activeStoryTextAlign, size: activeStoryTextSize, posX: State.textPosX || 50, posY: State.textPosY || 68 };
+  const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art, posX: State.musicPosX || 50, posY: State.musicPosY || 32, startTime: State.musicStartTime || 0, clipDur: State.musicClipDur || 30, scale: State.musicScale || 1.0 } : null;
+  const style = { font: activeStoryFont, color: activeStoryTextColor, bg: activeStoryTextBg, align: activeStoryTextAlign, size: activeStoryTextSize, posX: State.textPosX || 50, posY: State.textPosY || 68, scale: State.textScale || 1.0 };
 
   if (!text && !imageUrl) {
     toast('Pick a photo or type a text caption first!', 'error');

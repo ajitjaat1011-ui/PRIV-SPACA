@@ -282,27 +282,34 @@ img{user-select:none;-webkit-user-drag:none}
 .profile-titlebar .ghost-btn i{width:24px;height:24px;stroke-width:2}
 .profile-titlebar .ghost-btn:hover{background:var(--bg-soft);color:var(--text)}
 
-/* ===== Bottom Navigation (IG-style) ===== */
+/* ===== Bottom Navigation (Floating Glass Pill) ===== */
 .bottom-nav{
-  display:flex;align-items:stretch;justify-content:space-around;
-  background:var(--bg-2);border-top:1px solid var(--line);
-  height:58px;z-index:10;
-  padding:0 4px env(safe-area-inset-bottom, 0);
+  position:fixed;bottom:14px;left:14px;right:14px;max-width:480px;margin:0 auto;
+  height:62px;display:flex;align-items:center;justify-content:space-around;
+  background:rgba(22,30,46,0.85);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  border:1px solid rgba(255,255,255,0.18);border-radius:9999px;
+  box-shadow:0 18px 45px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,0,0,0.3);
+  z-index:60;padding:0 8px;
 }
 .bn-btn{
-  flex:1;display:flex;align-items:center;justify-content:center;
-  background:transparent;border:0;cursor:pointer;color:var(--text);
-  padding:8px 4px;transition:transform .12s;
-  position:relative;
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:transparent;border:0;cursor:pointer;color:var(--muted);
+  padding:8px 4px;border-radius:9999px;transition:all 0.25s cubic-bezier(0.2,0.8,0.2,1);
+  position:relative;gap:2px;
 }
-.bn-btn:active{transform:scale(.92)}
-.bn-btn i{width:26px;height:26px;stroke-width:1.8;transition:transform .15s}
+.bn-btn:hover{color:var(--text)}
+.bn-btn:active{transform:scale(0.92)}
+.bn-btn.active{
+  background:linear-gradient(135deg,rgba(56,189,248,0.24),rgba(236,72,153,0.24));
+  color:#fff;box-shadow:0 4px 14px rgba(56,189,248,0.25);
+}
+.bn-btn i{width:22px;height:22px;stroke-width:2;transition:transform 0.2s}
 .bn-btn .i-filled{display:none}
 .bn-btn.active .i-outline{display:none}
 .bn-btn.active .i-filled{display:inline-block}
-.bn-btn.active i{stroke-width:2.4;color:var(--text)}
+.bn-btn.active i{stroke-width:2.5;color:#fff;transform:scale(1.1)}
 .bn-btn .bn-avatar{
-  width:28px;height:28px;border-radius:50%;
+  width:26px;height:26px;border-radius:50%;
   background-size:cover;background-position:center;
   background-color:var(--bg-soft);
   display:inline-flex;align-items:center;justify-content:center;
@@ -310,13 +317,13 @@ img{user-select:none;-webkit-user-drag:none}
   border:1.5px solid transparent;
   transition:border .15s;
 }
-.bn-btn.active .bn-avatar{border-color:var(--text)}
+.bn-btn.active .bn-avatar{border-color:#fff}
 /* Reels button is a placeholder for now */
 #bnReelsBtn i{color:var(--text)}
 
 /* Notification dot */
 .bn-btn .dot{
-  position:absolute;top:8px;right:calc(50% - 16px);
+  position:absolute;top:6px;right:calc(50% - 14px);
   width:8px;height:8px;background:var(--red);border-radius:50%;
   border:1.5px solid var(--bg-2);
   animation:dot-pop .25s cubic-bezier(.2,.8,.2,1) both;
@@ -328,6 +335,7 @@ img{user-select:none;-webkit-user-drag:none}
   border:1.5px solid var(--bg-2);
   animation:dot-pop .25s cubic-bezier(.2,.8,.2,1) both;
 }
+.view.active{padding-bottom:88px}
 @keyframes dot-pop{
   0%{transform:scale(0);opacity:0}
   60%{transform:scale(1.3)}
@@ -1098,8 +1106,14 @@ img{user-select:none;-webkit-user-drag:none}
 .story-tool-circle.music-highlight{background:linear-gradient(135deg,#ec4899,#8b5cf6);border-color:#fff;animation:pulse 1.5s infinite}
 .story-tool-label{font-size:11px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.8)}
 .story-align-guide{position:absolute;top:0;bottom:0;left:50%;width:1px;background:linear-gradient(to bottom,transparent,#fbbf24,#fbbf24,transparent);z-index:22;pointer-events:none;border-left:1px dashed #fff}
-.story-music-sticker{position:absolute;top:32%;left:50%;transform:translate(-50%,-50%);z-index:30;background:rgba(255,255,255,0.95);color:#0f172a;padding:8px 14px;border-radius:99px;display:flex;align-items:center;gap:10px;box-shadow:0 15px 35px rgba(0,0,0,0.6);animation:popIn 0.25s ease;max-width:85%;cursor:move;user-select:none}
-.story-music-sticker:hover{transform:translate(-50%,-50%) scale(1.04)}
+.sticker{position:absolute;z-index:30;cursor:move}
+.sticker.active-sticker{outline:2px dashed rgba(255,255,255,0.85);outline-offset:6px;z-index:45}
+.story-resize-handle{position:absolute;bottom:-14px;right:-14px;width:28px;height:28px;background:var(--accent);color:#fff;border:2px solid #fff;border-radius:50%;display:none;align-items:center;justify-content:center;font-size:13px;font-weight:bold;cursor:nwse-resize;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,0.8)}
+.sticker.active-sticker .story-resize-handle{display:flex}
+.dur-pill{background:#262626;color:#fff;border:1px solid #333;padding:4px 10px;border-radius:99px;cursor:pointer;font-weight:700;font-size:11px;transition:all 0.15s}
+.dur-pill.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.story-music-sticker{top:32%;left:50%;transform:translate(-50%,-50%) scale(1);background:rgba(255,255,255,0.95);color:#0f172a;padding:8px 14px;border-radius:99px;display:flex;align-items:center;gap:10px;box-shadow:0 15px 35px rgba(0,0,0,0.6);animation:popIn 0.25s ease;max-width:85%}
+.story-music-sticker:hover{transform:translate(-50%,-50%) scale(1.03)}
 .story-music-trimmer{position:absolute;bottom:0;left:0;right:0;z-index:75;background:#1e293b;border-top-left-radius:24px;border-top-right-radius:24px;padding:16px;box-shadow:0 -10px 30px rgba(0,0,0,0.8);display:flex;flex-direction:column;gap:12px;animation:slideUp 0.25s ease}
 .trimmer-top{display:flex;justify-content:space-between;align-items:center}
 .trimmer-song-title{font-weight:800;font-size:15px;color:#fff}
