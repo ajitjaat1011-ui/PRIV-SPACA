@@ -278,7 +278,13 @@
           </div>
         </div>
         <div class="composer-card-actions">
-          <button id="postAttachBtn" type="button" class="ghost-btn"><i data-lucide="image"></i> Photo</button>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button id="postAttachBtn" type="button" class="ghost-btn"><i data-lucide="image"></i> Photo</button>
+            <label class="ghost-btn sm" style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px; user-select:none;">
+              <input type="checkbox" id="postScratchCheckbox" style="accent-color:var(--accent); width:15px; height:15px;" />
+              <span>✨ Scratch-Off Secret</span>
+            </label>
+          </div>
           <input type="file" id="postFileInput" accept="image/*" multiple hidden />
           <div style="display:flex; gap:8px; align-items:center;">
             <button id="inlineComposerCancelBtn" type="button" class="ghost-btn sm">Cancel</button>
