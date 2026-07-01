@@ -166,6 +166,7 @@ let localCache = {
   notifications: [],   // { id, userId (recipient), kind, fromUserId, postId?, commentId?, text?, createdAt, seenAt? }
   typing: {},          // { roomId: { userId: timestamp } }
   heartbeat: {},       // { userId: timestamp }
+  rtcSignals: [],      // { id, targetId, payload, createdAt, expiresAt } — WebRTC call signaling (SSE fallback poll)
 };
 
 let cacheTimestamp = 0;
@@ -353,6 +354,7 @@ async function fetchDatabase() {
       notifications: Array.isArray(remote.notifications) ? remote.notifications : [],
       typing: remote.typing && typeof remote.typing === 'object' ? remote.typing : {},
       heartbeat: remote.heartbeat && typeof remote.heartbeat === 'object' ? remote.heartbeat : {},
+      rtcSignals: Array.isArray(remote.rtcSignals) ? remote.rtcSignals : [],
     };
   }
   cacheTimestamp = now;
@@ -1686,8 +1688,43 @@ app.post('/api/rtc/signal', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
   const me = db.users.find(u => u.id === req.userId);
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: req.userId, displayName: 'Member', username: 'member' };
-  _pushEvent(targetId, 'rtc_signal', { fromId: req.userId, author, signal });
+  const payload = { fromId: req.userId, author, signal };
+  // Persist the signal so a client relying on the /api/rtc/signals poll
+  // fallback (when SSE is unavailable) still receives it. Mirrors cf-worker.js.
+  db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals : [];
+  if (signal.type === 'end' || signal.type === 'reject' || signal.type === 'busy') {
+    // Terminal signals also clear any pending offer/answer between the pair.
+    db.rtcSignals = db.rtcSignals.filter(x => !(
+      (x.targetId === targetId && x.payload && x.payload.fromId === req.userId) ||
+      (x.targetId === req.userId && x.payload && x.payload.fromId === targetId)
+    ));
+  }
+  const expiresAt = nowMs() + (signal.type === 'offer' ? 20000 : 60000);
+  db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt });
+  if (db.rtcSignals.length > 200) db.rtcSignals = db.rtcSignals.slice(-200);
+  // Fan out instantly to any live SSE subscriber too.
+  _pushEvent(targetId, 'rtc_signal', payload);
+  // Signaling must be durable but is high-frequency; ephemeral save keeps
+  // in-memory instant while throttling remote writes.
+  await saveDatabase(db, true);
   res.json({ ok: true });
+});
+
+// GET /api/rtc/signals — poll fallback for WebRTC signaling when SSE is down.
+// Returns recent signals addressed to the caller since `?since=<ms>`, matching
+// the cf-worker.js contract the frontend's pollRTCSignals() expects.
+app.get('/api/rtc/signals', authMiddleware, async (req, res) => {
+  const since = Number(req.query.since || 0) || 0;
+  const myId = req.userId;
+  const db = await fetchDatabase();
+  const now = nowMs();
+  db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
+  const signals = db.rtcSignals
+    .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 20000))
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    .slice(-30)
+    .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
+  res.json({ signals, now });
 });
 
 app.post('/api/posts/comment', authMiddleware, async (req, res) => {
