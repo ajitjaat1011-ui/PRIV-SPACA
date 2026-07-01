@@ -1,20 +1,21 @@
+# Cloudflare Pages config — Node compat for our Hono API (served via _worker.js Advanced Mode)
 name = "priv-spaca"
-main = "worker-entry.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "."
 
-[assets]
-directory = "."
-binding = "ASSETS"
-
+# Non-secret defaults only. Never put JWT_SECRET / GITHUB_PAT / DATABASE_URL /
+# passwords here — this file is committed to a PUBLIC repo. Set those as
+# encrypted Pages secrets instead:
+#   wrangler pages secret put JWT_SECRET --project-name priv-spaca
+#   wrangler pages secret put GITHUB_PAT --project-name priv-spaca
+#   wrangler pages secret put DATABASE_URL --project-name priv-spaca
+# (or via the Cloudflare dashboard: Pages project → Settings → Environment variables → Encrypt)
 [vars]
 GH_REPO = "ajitjaat1011-ui/PRIV-SPACA"
 GH_BRANCH = "data"
 GH_FILE = "db.json"
-JWT_SECRET = "priv-spaca-dev-secret-change-me"
 ADMIN_USERS = "Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com"
 OWNER_EMAIL = "ajitjaat1011@gmail.com"
 OWNER_USERNAME = "Arvindjaat1011"
-OWNER_DEFAULT_PASSWORD = "Priv@2026Reset"
-OWNER_DEFAULT_PIN = "7391"
 
