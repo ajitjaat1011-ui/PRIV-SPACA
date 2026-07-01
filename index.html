@@ -13,7 +13,7 @@
 <title>PRIV SPACA — Private Chat & Community</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Dancing+Script:wght@600;700&family=Bebas+Neue&family=Baloo+2:wght@600;700&family=Playfair+Display:ital,wght@1,600&display=swap" rel="stylesheet" />
 <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 <!-- Motion One v10 - lightweight (~3 KB gz) Framer-Motion-style animations for vanilla JS -->
 <script defer src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.min.js"></script>
@@ -581,7 +581,12 @@
       <button class="ghost-btn" data-close-close-friends aria-label="Close"><i data-lucide="x"></i></button>
     </div>
     <div class="sheet-body">
-      <div class="cf-headline">Only these people can see your Close Friends stories.</div>
+      <div class="cf-headline">Only people on this list can see stories you share to Close Friends. They won't be notified that you added them.</div>
+      <div class="cf-summary" id="cfSummaryRow"></div>
+      <div class="cf-search-box">
+        <i data-lucide="search"></i>
+        <input type="text" id="cfSearchInput" placeholder="Search people…" autocomplete="off" />
+      </div>
       <ul id="closeFriendsList" class="cf-list"></ul>
     </div>
   </div>
@@ -599,6 +604,9 @@
       </div>
     </div>
     <div class="sheet-body">
+      <div class="story-manage-header-row">
+        <span class="cnt" id="storyManageCountLbl"></span>
+      </div>
       <ul id="storyManageList" class="story-manage-list"></ul>
     </div>
   </div>
@@ -654,19 +662,25 @@
 
 <!-- ====== STORY VIEWER ====== -->
 <div id="storyViewer" class="story-viewer hidden" role="dialog" aria-modal="true">
-  <div class="story-progress" id="storyProgress"></div>
-  <button class="story-manage ghost-btn hidden" id="storyManageBtn" aria-label="Manage story"><i data-lucide="more-horizontal"></i></button>
-  <button class="story-close ghost-btn" id="storyClose" aria-label="Close"><i data-lucide="x"></i></button>
-  <div class="story-author">
-    <span id="storyAvatar" class="avatar md"></span>
-    <div>
-      <div id="storyName" class="story-name"></div>
-      <div id="storyMeta" class="story-meta"></div>
+  <div class="story-frame">
+    <div class="story-progress" id="storyProgress"></div>
+    <button class="story-manage ghost-btn hidden" id="storyManageBtn" aria-label="Manage story"><i data-lucide="more-horizontal"></i></button>
+    <button class="story-close ghost-btn" id="storyClose" aria-label="Close"><i data-lucide="x"></i></button>
+    <div class="story-author">
+      <span id="storyAvatar" class="avatar md"></span>
+      <div>
+        <div id="storyName" class="story-name"></div>
+        <div id="storyMeta" class="story-meta"></div>
+      </div>
     </div>
+    <div class="story-content" id="storyContent"></div>
+    <div class="story-edge-flash left" id="storyEdgeFlashLeft"></div>
+    <div class="story-edge-flash right" id="storyEdgeFlashRight"></div>
+    <div class="story-loading-spinner" id="storyLoadingSpinner"><span class="ring"></span></div>
+    <div class="story-hold-hint">Holding — playback paused</div>
+    <button class="story-prev" id="storyPrev" aria-label="Previous"></button>
+    <button class="story-next" id="storyNext" aria-label="Next"></button>
   </div>
-  <div class="story-content" id="storyContent"></div>
-  <button class="story-prev" id="storyPrev" aria-label="Previous"></button>
-  <button class="story-next" id="storyNext" aria-label="Next"></button>
 </div>
 
 <!-- ====== LIGHTBOX ====== -->
@@ -704,7 +718,7 @@
   <div class="story-editor-container">
     <div class="story-editor-top">
       <button type="button" class="story-editor-close" onclick="closeStoryCreator()">✕</button>
-      <span style="font-weight:700; font-size:15px; color:#fff;">Create Story</span>
+      <span class="story-editor-step-label" id="storyEditorStepLabel">Create Story</span>
       <div style="width:38px;"></div>
     </div>
 
@@ -716,10 +730,16 @@
       <img id="storyEditorPreviewImg" class="story-editor-img hidden" alt="Story preview" />
       <input type="file" id="storyEditorFileInput" accept="image/*" hidden />
 
+      <!-- Safe-area guide: text/music placed inside here stay clear of the top progress/header and bottom caption/publish bar -->
+      <div id="storySafeAreaGuide" class="story-safe-area-guide hidden"></div>
+
+      <div id="storyEditorImgLoading" class="story-editor-img-loading hidden"><span class="ring"></span></div>
+
       <div id="storyAlignGuide" class="story-align-guide hidden"></div>
+      <div id="storyAlignGuideH" class="story-align-guide-h hidden"></div>
 
       <!-- Draggable & Resizable Music Sticker on Story Stage -->
-      <div class="story-music-sticker sticker hidden" id="storyStageMusicSticker" style="top:32%; left:50%;" onclick="selectStorySticker(event, this)">
+      <div class="story-music-sticker layout-pill sticker hidden" id="storyStageMusicSticker" style="top:32%; left:50%;" onclick="selectStorySticker(event, this)">
         <img src="" class="story-music-art" id="storyStageMusicArt" alt="Album" />
         <div class="story-music-meta">
           <div class="story-music-title" id="storyStageMusicTitle">Song</div>
@@ -730,12 +750,13 @@
           <div class="story-eq-bar"></div>
           <div class="story-eq-bar"></div>
         </div>
-        <button type="button" class="story-music-remove" onclick="removeStoryMusic(event)">✕</button>
+        <button type="button" class="story-music-remove" onclick="removeStoryMusic(event)" aria-label="Remove music">✕</button>
         <div class="story-resize-handle" onmousedown="startStickerScale(event, 'storyStageMusicSticker')" ontouchstart="startStickerScale(event, 'storyStageMusicSticker')">↘</div>
       </div>
 
       <div id="storyStageTextOverlay" class="story-stage-text-overlay sticker hidden" style="top:68%; left:50%;" onclick="selectStorySticker(event, this)">
         <span id="storyStageTextSpan">Text</span>
+        <div class="sticker-del-handle" onclick="removeStoryTextOverlay(event)" aria-label="Remove text">✕</div>
         <div class="story-resize-handle" onmousedown="startStickerScale(event, 'storyStageTextOverlay')" ontouchstart="startStickerScale(event, 'storyStageTextOverlay')">↘</div>
       </div>
     </div>
@@ -746,7 +767,12 @@
         <span class="trimmer-song-title" id="trimmerSongTitle">Song Name</span>
         <button type="button" class="story-text-done" onclick="closeMusicTrimmer()">Done</button>
       </div>
-      <div style="display:flex; align-items:center; justify-content:space-between; font-size:12.5px; color:#a3a3a3; font-weight:600;">
+      <div class="story-music-layout-row" id="storyMusicLayoutRow">
+        <button type="button" class="music-layout-btn pill active" onclick="setStoryMusicLayout('pill', this)"><span class="swatch"></span><span class="music-layout-lbl">Pill</span></button>
+        <button type="button" class="music-layout-btn card" onclick="setStoryMusicLayout('card', this)"><span class="swatch"></span><span class="music-layout-lbl">Card</span></button>
+        <button type="button" class="music-layout-btn minimal" onclick="setStoryMusicLayout('minimal', this)"><span class="swatch"></span><span class="music-layout-lbl">Minimal</span></button>
+      </div>
+      <div style="display:flex; align-items:center; justify-content:space-between; font-size:12.5px; color:#a3a3a3; font-weight:600; margin-top:8px;">
         <span>Clip Length:</span>
         <div style="display:flex; gap:6px;">
           <span class="dur-pill" onclick="setMusicClipDuration(10, this)">10s</span>
@@ -768,11 +794,11 @@
     <!-- Right Sidebar Tools (No Effects button as requested) -->
     <div class="story-editor-tools">
       <div class="story-tool-item" onclick="openStoryTextEditor()">
-        <div class="story-tool-circle">Aa</div>
+        <div class="story-tool-circle" id="storyTextToolCircle">Aa</div>
         <span class="story-tool-label">Text</span>
       </div>
       <div class="story-tool-item" onclick="openStoryMusicSheet()">
-        <div class="story-tool-circle music-highlight">🎵</div>
+        <div class="story-tool-circle music-highlight" id="storyMusicToolCircle">🎵</div>
         <span class="story-tool-label">Music</span>
       </div>
       <div class="story-tool-item" onclick="promptStoryMention()">
@@ -797,16 +823,17 @@
 
       <div class="story-text-bottom">
         <div class="story-text-fonts-row">
-          <span class="story-font-pill active" style="font-family:system-ui,sans-serif;" onclick="setStoryFont('modern', this)">Modern</span>
-          <span class="story-font-pill" style="font-family:'Impact',sans-serif;font-weight:bold;" onclick="setStoryFont('SQUEEZE', this)">SQUEEZE</span>
-          <span class="story-font-pill" style="font-family:'Trebuchet MS',sans-serif;font-weight:700;" onclick="setStoryFont('Bubble', this)">Bubble</span>
-          <span class="story-font-pill" style="font-family:Georgia,serif;font-style:italic;" onclick="setStoryFont('Deco', this)">Deco</span>
-          <span class="story-font-pill" style="font-family:monospace;" onclick="setStoryFont('Typewriter', this)">Typewriter</span>
+          <span class="story-font-pill active" style="font-family:'Inter',system-ui,sans-serif;" onclick="setStoryFont('modern', this)">Modern</span>
+          <span class="story-font-pill" style="font-family:'Bebas Neue',Impact,sans-serif;letter-spacing:1px;" onclick="setStoryFont('SQUEEZE', this)">SQUEEZE</span>
+          <span class="story-font-pill" style="font-family:'Baloo 2',cursive;font-weight:700;" onclick="setStoryFont('Bubble', this)">Bubble</span>
+          <span class="story-font-pill" style="font-family:'Playfair Display',Georgia,serif;font-style:italic;" onclick="setStoryFont('Deco', this)">Deco</span>
+          <span class="story-font-pill" style="font-family:'Courier New',monospace;" onclick="setStoryFont('Typewriter', this)">Typewriter</span>
+          <span class="story-font-pill" style="font-family:'Dancing Script',cursive;font-weight:700;" onclick="setStoryFont('script', this)">Script</span>
         </div>
 
         <div class="story-text-tools-bar">
           <button type="button" class="story-fmt-btn" title="Color Picker" onclick="toggleTextColorsRow()">🌈</button>
-          <button type="button" class="story-fmt-btn" id="storyTextBgToggleBtn" title="Background Fill Box" onclick="toggleOverlayTextBg()">A<span style="font-size:11px;">★</span></button>
+          <button type="button" class="story-fmt-btn" id="storyTextBgToggleBtn" title="Text background style" onclick="cycleOverlayTextBgMode()">A<span style="font-size:11px;">★</span></button>
           <button type="button" class="story-fmt-btn" id="storyTextAlignBtn" title="Alignment" onclick="cycleOverlayTextAlign()">≡</button>
         </div>
 
@@ -824,10 +851,10 @@
 
     <!-- Bottom Bar -->
     <div class="story-editor-bottom">
-      <input type="text" id="storyEditorCaptionInput" class="story-caption-input" placeholder="Add a caption..." />
+      <input type="text" id="storyEditorCaptionInput" class="story-caption-input" placeholder="Add a caption..." maxlength="200" />
       <div class="story-publish-row">
-        <button type="button" class="story-pub-btn primary" onclick="publishStoryWithMusic()"><span id="storyPubMeInitials" class="story-me-badge">AJ</span> Your story</button>
-        <button type="button" class="story-pub-btn cf" onclick="publishStoryWithMusic(true)">★ Close Friends</button>
+        <button type="button" class="story-pub-btn primary" id="storyPubBtnAll" onclick="publishStoryWithMusic()"><span id="storyPubMeInitials" class="story-me-badge">AJ</span> <span class="story-pub-btn-label">Your story</span></button>
+        <button type="button" class="story-pub-btn cf" id="storyPubBtnCf" onclick="publishStoryWithMusic(true)">★ <span class="story-pub-btn-label">Close Friends</span></button>
       </div>
     </div>
   </div>

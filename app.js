@@ -1895,7 +1895,7 @@ function handleRealtimeEvent(type, evt) {
     const post = data.post; if (!post) return;
     if (!State.posts.some(p => p.id === post.id)) {
       State.posts.unshift(post);
-      lastPostsSignature = '';
+      lastPostsSignature = null; // force next loadPosts() to re-render even if list becomes empty
       if (State.currentTab === 'feed') renderPosts();
     }
     pollNotifications();
@@ -2043,14 +2043,18 @@ function updateNotifDots() {
 }
 
 // ====== Feed ======
-let lastPostsSignature = '';
+// Sentinel (null, not '') so the very first load — where a brand-new user has
+// zero posts and the freshly-fetched signature is also '' — doesn't get
+// treated as "unchanged" and skip renderPosts()/renderStoriesRail(). Without
+// this fix, a new/empty account never sees the "Your story" cell appear.
+let lastPostsSignature = null;
 async function loadPosts() {
   try {
     const data = await api('/posts');
     const newPosts = data.posts || [];
     _lastPostsLoadedAt = Date.now();
     const sig = newPosts.map(p => p.id + ':' + p.likeCount + ':' + p.commentCount).join('|');
-    if (sig === lastPostsSignature) return;
+    if (lastPostsSignature !== null && sig === lastPostsSignature) return;
     lastPostsSignature = sig;
     State.posts = newPosts;
     renderPosts();
@@ -2863,11 +2867,11 @@ function openMoreMenu(p, isMine) {
       close();
       try {
         await api('/posts/delete', { method: 'POST', body: { postId: p.id } });
-        lastPostsSignature = ''; loadPosts();
+        lastPostsSignature = null; loadPosts(); // force re-render even if list becomes empty
         undoToast('Post deleted', async () => {
           try {
             await api('/posts/restore', { method: 'POST', body: { postId: p.id } });
-            lastPostsSignature = ''; loadPosts();
+            lastPostsSignature = null; loadPosts(); // force re-render even if list becomes empty
             toast('Restored', 'success');
           } catch (e) { toast(e.message || 'Restore failed', 'error'); }
         });
@@ -3007,29 +3011,39 @@ const storyPlayback = {
   rafId: 0,
   startedAt: 0,
   progressFill: null,
+  _pausedAt: 0,
 };
 
+// Single source of truth for story text typography — used identically by the
+// live editor preview AND the story viewer, so appearance is guaranteed to match.
+const STORY_FONT_PRESETS = {
+  modern:     { family: "'Inter', system-ui, -apple-system, sans-serif", weight: '700', style: 'normal', transform: 'none', spacing: '0',     shadow: '0 1px 8px rgba(0,0,0,.45)' },
+  SQUEEZE:    { family: "'Bebas Neue', Impact, sans-serif",               weight: '400', style: 'normal', transform: 'uppercase', spacing: '1.5px', shadow: '0 2px 10px rgba(0,0,0,.55)', stroke: '1px rgba(0,0,0,.35)' },
+  neon:       { family: "'Bebas Neue', Impact, sans-serif",               weight: '400', style: 'normal', transform: 'uppercase', spacing: '1.5px', shadow: '0 0 12px currentColor, 0 2px 10px rgba(0,0,0,.5)' },
+  Bubble:     { family: "'Baloo 2', 'Trebuchet MS', sans-serif",          weight: '700', style: 'normal', transform: 'none', spacing: '0',     shadow: '0 3px 0 rgba(0,0,0,.18), 0 1px 10px rgba(0,0,0,.35)' },
+  playful:    { family: "'Baloo 2', 'Trebuchet MS', sans-serif",          weight: '700', style: 'normal', transform: 'none', spacing: '0',     shadow: '0 3px 0 rgba(0,0,0,.18)' },
+  Deco:       { family: "'Playfair Display', Georgia, serif",             weight: '600', style: 'italic', transform: 'none', spacing: '0.2px', shadow: '0 1px 8px rgba(0,0,0,.5)' },
+  Typewriter: { family: "'Courier New', monospace",                       weight: '700', style: 'normal', transform: 'none', spacing: '0.5px', shadow: '0 1px 6px rgba(0,0,0,.5)' },
+  typewriter: { family: "'Courier New', monospace",                       weight: '700', style: 'normal', transform: 'none', spacing: '0.5px', shadow: '0 1px 6px rgba(0,0,0,.5)' },
+  script:     { family: "'Dancing Script', Georgia, cursive",             weight: '700', style: 'normal', transform: 'none', spacing: '0',     shadow: '0 2px 10px rgba(0,0,0,.4)' },
+};
 function applyStoryFontPreset(el, font = 'modern') {
   if (!el) return;
-  el.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-  el.style.fontWeight = '700';
-  el.style.fontStyle = 'normal';
-  el.style.textTransform = 'none';
-  el.style.letterSpacing = '0';
-  if (font === 'SQUEEZE' || font === 'neon') {
-    el.style.fontFamily = "'Impact', sans-serif";
-    el.style.textTransform = 'uppercase';
-    el.style.letterSpacing = '1px';
-  } else if (font === 'Bubble' || font === 'playful') {
-    el.style.fontFamily = "'Trebuchet MS', sans-serif";
-    el.style.fontWeight = '800';
-  } else if (font === 'Deco') {
-    el.style.fontFamily = 'Georgia, serif';
-    el.style.fontStyle = 'italic';
-  } else if (font === 'Typewriter' || font === 'typewriter') {
-    el.style.fontFamily = 'monospace';
-  } else if (font === 'script') {
-    el.style.fontFamily = "'Brush Script MT', Georgia, cursive";
+  const p = STORY_FONT_PRESETS[font] || STORY_FONT_PRESETS.modern;
+  el.style.fontFamily = p.family;
+  el.style.fontWeight = p.weight;
+  el.style.fontStyle = p.style;
+  el.style.textTransform = p.transform;
+  el.style.letterSpacing = p.spacing;
+  // Only apply the built-in readability shadow when the caller hasn't already
+  // set an explicit background box (bgMode !== 'none') — otherwise the text
+  // sits on a solid/soft fill and the drop shadow just looks muddy.
+  if (!el.dataset || el.dataset.storyBgActive !== '1') {
+    el.style.textShadow = p.shadow || '0 1px 8px rgba(0,0,0,.4)';
+    if (p.stroke) el.style.webkitTextStroke = p.stroke; else el.style.webkitTextStroke = '';
+  } else {
+    el.style.textShadow = 'none';
+    el.style.webkitTextStroke = '';
   }
 }
 
@@ -3051,6 +3065,8 @@ function stopStoryPlayback() {
   storyPlayback.rafId = 0;
   storyPlayback.startedAt = 0;
   storyPlayback.progressFill = null;
+  storyPlayback._pausedAt = 0;
+  _isHoldingStory = false;
 }
 function renderStoryProgressBars(total, activeIndex) {
   const progress = $('#storyProgress');
@@ -3084,6 +3100,16 @@ function startStoryProgress() {
   };
   storyPlayback.rafId = requestAnimationFrame(step);
 }
+// Small in-memory cache so we don't re-decode the same story image every time
+// the user re-opens a story, and so the "next" item can be warmed ahead of time.
+const _storyImagePreloadCache = new Set();
+function preloadStoryImage(url) {
+  if (!url || _storyImagePreloadCache.has(url)) return;
+  _storyImagePreloadCache.add(url);
+  const img = new Image();
+  img.src = url;
+}
+
 function renderStoryItem() {
   const user = storyPlayback.user;
   const recent = storyPlayback.items[storyPlayback.index];
@@ -3098,27 +3124,41 @@ function renderStoryItem() {
   $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
   const manageBtn = $('#storyManageBtn');
   if (manageBtn) manageBtn.classList.toggle('hidden', !(State.user && user.id === State.user.id));
+
+  // Only show a loading spinner + pause progress for image stories, and only
+  // if the image genuinely isn't cached yet (avoids a flash on repeat views).
+  const needsImageLoad = !!recent.imageUrl && !_storyImagePreloadCache.has(recent.imageUrl);
+  v.classList.toggle('is-loading', needsImageLoad);
+
   if (recent.imageUrl) {
     const imgWrap = document.createElement('div');
     imgWrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;';
     const img = document.createElement('img');
-    img.src = recent.imageUrl;
     img.alt = 'story';
-    img.style.cssText = 'object-fit:contain; width:100%; height:100%; max-height:82vh; border-radius:8px;';
+    img.style.cssText = 'object-fit:contain; width:100%; height:100%; max-height:82vh; border-radius:6px; opacity:0; transition:opacity .2s ease;';
+    img.onload = () => {
+      img.style.opacity = '1';
+      _storyImagePreloadCache.add(recent.imageUrl);
+      v.classList.remove('is-loading');
+      // Restart the progress timer only once the image is actually visible,
+      // so the bar doesn't race ahead of a slow-loading photo on weak networks.
+      if (needsImageLoad) startStoryProgress();
+    };
+    img.onerror = () => { v.classList.remove('is-loading'); img.style.opacity = '1'; };
+    img.src = recent.imageUrl;
     imgWrap.appendChild(img);
 
     if (recent.text) {
       const cap = document.createElement('div');
       cap.className = 'story-img-caption';
       const sz = st.size ? Math.min(52, Math.max(16, st.size)) : 22;
-      const clr = st.color || '#ffffff';
-      const aln = st.align || 'center';
-      const bg = st.bg ? (clr === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
       const px = st.posX || 50;
       const py = st.posY || 68;
       const scale = st.scale ? Math.max(0.5, Math.min(2.5, st.scale)) : 1;
-      cap.style.cssText = `position:absolute; top:${py}%; left:${px}%; transform:translate(-50%,-50%) scale(${scale}); transform-origin:center center; width:85%; color:${clr}; background:${bg}; padding:${st.bg ? '8px 16px' : '0'}; border-radius:${st.bg ? '14px' : '0'}; text-align:${aln}; font-size:${sz}px; font-weight:700; z-index:15; word-break:break-word;`;
+      cap.style.cssText = `position:absolute; top:${py}%; left:${px}%; transform:translate(-50%,-50%) scale(${scale}); transform-origin:center center; width:85%; font-size:${sz}px; z-index:15; word-break:break-word;`;
       cap.textContent = recent.text;
+      // Exact parity with the editor: same box-style + font-preset helpers.
+      applyStoryTextBoxStyle(cap, { color: st.color || '#ffffff', bgMode: st.bgMode || (st.bg ? 'solid' : 'none'), align: st.align || 'center' });
       applyStoryFontPreset(cap, st.font || 'modern');
       imgWrap.appendChild(cap);
     }
@@ -3128,15 +3168,10 @@ function renderStoryItem() {
     div.className = 'text-story';
     div.textContent = recent.text.slice(0, 280);
     const sz = st.size ? Math.min(52, Math.max(20, st.size)) : 28;
-    const clr = st.color || '#ffffff';
     const scale = st.scale ? Math.max(0.5, Math.min(2.5, st.scale)) : 1;
     div.style.fontSize = sz + 'px';
-    div.style.color = clr;
-    div.style.textAlign = st.align || 'center';
     div.style.transform = `scale(${scale})`;
-    div.style.background = st.bg ? (clr === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
-    div.style.padding = st.bg ? '10px 16px' : '0';
-    div.style.borderRadius = st.bg ? '14px' : '0';
+    applyStoryTextBoxStyle(div, { color: st.color || '#ffffff', bgMode: st.bgMode || (st.bg ? 'solid' : 'none'), align: st.align || 'center' });
     applyStoryFontPreset(div, st.font || 'modern');
     content.appendChild(div);
   }
@@ -3145,7 +3180,8 @@ function renderStoryItem() {
   if (player) { player.pause(); player.src = ''; }
   if (recent.music && recent.music.title) {
     const stk = document.createElement('div');
-    stk.className = 'story-music-sticker';
+    const layout = ['pill', 'card', 'minimal'].includes(recent.music.layout) ? recent.music.layout : 'pill';
+    stk.className = `story-music-sticker layout-${layout}`;
     stk.style.position = 'absolute';
     const mpx = recent.music.posX || 50;
     const mpy = recent.music.posY || 32;
@@ -3172,13 +3208,58 @@ function renderStoryItem() {
   }
   const contentEl = $('#storyContent');
   if (contentEl) motionAnimate(contentEl,
-    { opacity: [0, 1], transform: ['scale(.94)', 'scale(1)'] },
-    { duration: 0.32, easing: [0.2, 0.85, 0.2, 1] }
+    { opacity: [0, 1], transform: ['scale(.96)', 'scale(1)'] },
+    { duration: 0.28, easing: [0.2, 0.85, 0.2, 1] }
   );
   storyPlayback.durationMs = getStoryDurationMs(recent);
-  startStoryProgress();
+  // Don't start the progress countdown yet if we're still waiting on an image
+  // decode — img.onload above will kick it off once the pixels are visible.
+  if (!needsImageLoad) startStoryProgress();
+
+  // Preload the very next item (within this user, or the first item of the
+  // next user with an active story) so tapping forward feels instant.
+  const nextInSeq = storyPlayback.items[storyPlayback.index + 1];
+  if (nextInSeq && nextInSeq.imageUrl) preloadStoryImage(nextInSeq.imageUrl);
+  else {
+    const nextUser = getNextStoryUser(user.id);
+    const nextUserFirst = nextUser ? getStorySequence(nextUser.id)[0] : null;
+    if (nextUserFirst && nextUserFirst.imageUrl) preloadStoryImage(nextUserFirst.imageUrl);
+  }
   refreshIcons();
 }
+// Ordered list of users that currently have an active story, in the same
+// order they appear in the stories rail (me first, then others by recency).
+// Lets the viewer advance from one user's last story straight into the next
+// user's stories, like Instagram does, instead of just closing.
+function getStoryUserOrder() {
+  if (!State.user || !Array.isArray(State.members)) return [];
+  const meId = State.user.id;
+  const me = State.members.find(m => m.id === meId) || State.user;
+  const others = State.members
+    .filter(m => m.id !== meId && hasActiveStory(m.id))
+    .sort((a, b) => {
+      const bt = (getLatestStory(b.id)?.createdAt || 0) - (getLatestStory(a.id)?.createdAt || 0);
+      if (bt !== 0) return bt;
+      return (b.online ? 1 : 0) - (a.online ? 1 : 0);
+    });
+  const order = [];
+  if (hasActiveStory(meId)) order.push(me);
+  order.push(...others);
+  return order;
+}
+function getNextStoryUser(currentUserId) {
+  const order = getStoryUserOrder();
+  const idx = order.findIndex(u => u.id === currentUserId);
+  if (idx === -1 || idx === order.length - 1) return null;
+  return order[idx + 1];
+}
+function getPrevStoryUser(currentUserId) {
+  const order = getStoryUserOrder();
+  const idx = order.findIndex(u => u.id === currentUserId);
+  if (idx <= 0) return null;
+  return order[idx - 1];
+}
+
 function openStoryFor(user, startIndex = 0) {
   const items = getStorySequence(user.id);
   if (!items.length) {
@@ -3197,6 +3278,14 @@ function prevStoryItem() {
   if (storyPlayback.index > 0) {
     storyPlayback.index--;
     renderStoryItem();
+    return;
+  }
+  // At the first story of this user — Instagram steps back to the *previous*
+  // user's stories (their last unseen item) rather than closing outright.
+  const prevUser = storyPlayback.user && getPrevStoryUser(storyPlayback.user.id);
+  if (prevUser) {
+    const items = getStorySequence(prevUser.id);
+    openStoryFor(prevUser, items.length - 1);
   } else {
     closeStory();
   }
@@ -3206,6 +3295,13 @@ function nextStoryItem() {
   if (storyPlayback.index < storyPlayback.items.length - 1) {
     storyPlayback.index++;
     renderStoryItem();
+    return;
+  }
+  // Last story for this user — advance straight into the next user with an
+  // active story, matching Instagram's continuous story-to-story flow.
+  const nextUser = storyPlayback.user && getNextStoryUser(storyPlayback.user.id);
+  if (nextUser) {
+    openStoryFor(nextUser, 0);
   } else {
     closeStory();
   }
@@ -3217,15 +3313,96 @@ function closeStory() {
   storyPlayback.index = 0;
   const player = $('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
-  $('#storyViewer').classList.add('hidden');
+  const v = $('#storyViewer');
+  v.classList.add('hidden');
+  v.classList.remove('is-loading', 'holding', 'paused');
   if (typeof renderStoriesRail === 'function') renderStoriesRail();
 }
+
+// ---- Hold-to-pause + edge tap feedback ----
+// A press-and-hold anywhere on the story content pauses the progress bar and
+// the background music (Instagram-style "hold to pause"), and releasing
+// resumes both. A quick tap on the left/right 35% zones (via the existing
+// .story-prev/.story-next buttons) still navigates as before; we only treat
+// presses longer than a short threshold as a "hold".
+const HOLD_THRESHOLD_MS = 180;
+let _holdTimer = null;
+let _isHoldingStory = false;
+
+function pauseStoryForHold() {
+  if (_isHoldingStory) return;
+  _isHoldingStory = true;
+  const v = $('#storyViewer');
+  if (v) v.classList.add('holding', 'paused');
+  if (storyPlayback.rafId) cancelAnimationFrame(storyPlayback.rafId);
+  storyPlayback.rafId = 0;
+  storyPlayback._pausedAt = performance.now();
+  const player = $('#storyBgAudioPlayer');
+  if (player && !player.paused) { player.pause(); player._resumeAfterHold = true; }
+}
+function resumeStoryFromHold() {
+  if (!_isHoldingStory) return;
+  _isHoldingStory = false;
+  const v = $('#storyViewer');
+  if (v) v.classList.remove('holding', 'paused');
+  if (storyPlayback._pausedAt && storyPlayback.startedAt) {
+    // Shift the "started at" reference forward by exactly how long we paused,
+    // so the remaining time (and the visual fill) picks up seamlessly.
+    const pausedFor = performance.now() - storyPlayback._pausedAt;
+    storyPlayback.startedAt += pausedFor;
+  }
+  storyPlayback._pausedAt = 0;
+  const player = $('#storyBgAudioPlayer');
+  if (player && player._resumeAfterHold) { player.play().catch(() => {}); player._resumeAfterHold = false; }
+  resumeStoryProgressLoop();
+}
+function resumeStoryProgressLoop() {
+  const fill = storyPlayback.progressFill;
+  if (!fill) return;
+  const step = (now) => {
+    if (_isHoldingStory) return; // loop stops; resumeStoryFromHold restarts it
+    const pct = Math.max(0, Math.min(1, (now - storyPlayback.startedAt) / storyPlayback.durationMs));
+    if (storyPlayback.progressFill) storyPlayback.progressFill.style.width = (pct * 100).toFixed(2) + '%';
+    if (pct >= 1) { nextStoryItem(); return; }
+    storyPlayback.rafId = requestAnimationFrame(step);
+  };
+  storyPlayback.rafId = requestAnimationFrame(step);
+}
+
+function flashStoryEdge(side) {
+  const el = $(side === 'left' ? '#storyEdgeFlashLeft' : '#storyEdgeFlashRight');
+  if (!el) return;
+  el.classList.add('show');
+  clearTimeout(el._hideTm);
+  el._hideTm = setTimeout(() => el.classList.remove('show'), 180);
+}
+
 function bindStoryViewer() {
   $('#storyClose').addEventListener('click', closeStory);
-  $('#storyPrev').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); prevStoryItem(); });
-  $('#storyNext').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); nextStoryItem(); });
+  $('#storyPrev').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); flashStoryEdge('left'); prevStoryItem(); });
+  $('#storyNext').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); flashStoryEdge('right'); nextStoryItem(); });
   $('#storyViewer').addEventListener('click', (e) => {
     if (e.target.id === 'storyViewer') closeStory();
+  });
+
+  // Hold-to-pause: works with both mouse and touch, on the media area only
+  // (not on the close/manage buttons or the invisible prev/next hit zones —
+  // those still handle their own click/tap for navigation).
+  const content = $('#storyContent');
+  if (content) {
+    let downAt = 0;
+    const onDown = () => { downAt = Date.now(); clearTimeout(_holdTimer); _holdTimer = setTimeout(pauseStoryForHold, HOLD_THRESHOLD_MS); };
+    const onUp = () => { clearTimeout(_holdTimer); if (Date.now() - downAt >= HOLD_THRESHOLD_MS) resumeStoryFromHold(); };
+    content.addEventListener('mousedown', onDown);
+    content.addEventListener('mouseup', onUp);
+    content.addEventListener('mouseleave', onUp);
+    content.addEventListener('touchstart', onDown, { passive: true });
+    content.addEventListener('touchend', onUp);
+    content.addEventListener('touchcancel', onUp);
+  }
+  // Also pause when the tab goes to background so audio/progress don't drift.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && storyPlayback.user) pauseStoryForHold();
   });
 }
 
@@ -3242,12 +3419,62 @@ let selectedStoryMusicId = null;
 
 let activeStoryFont = 'modern';
 let activeStoryTextColor = '#ffffff';
-let activeStoryTextBg = false;
+let activeStoryTextBg = false;       // legacy flag, kept in sync with bgMode !== 'none' for back-compat
+let activeStoryTextBgMode = 'none';  // 'none' | 'solid' | 'soft' | 'outline'
 let activeStoryTextAlign = 'center';
 let activeStoryTextSize = 28;
 let activeStoryText = '';
 let activeStickerScales = { storyStageMusicSticker: 1.0, storyStageTextOverlay: 1.0 };
 let activeMusicClipDur = 30;
+let activeStoryMusicLayout = 'pill';
+
+/**
+ * Single source of truth for the text overlay's background/fill styling —
+ * used identically by the live editor stage, the live editor textarea preview,
+ * and the story viewer so appearance always matches exactly.
+ */
+function applyStoryTextBoxStyle(el, { color = '#ffffff', bgMode = 'none', align = 'center' } = {}) {
+  if (!el) return;
+  el.style.textAlign = align;
+  const isDark = color === '#000000';
+  if (!el.dataset) el.dataset = {};
+  if (bgMode === 'solid') {
+    el.dataset.storyBgActive = '1';
+    el.style.color = color;
+    el.style.background = isDark ? '#ffffff' : '#000000';
+    el.style.border = 'none';
+    el.style.borderRadius = '14px';
+    el.style.padding = '9px 16px';
+    el.style.boxShadow = '0 6px 20px rgba(0,0,0,.3)';
+  } else if (bgMode === 'soft') {
+    el.dataset.storyBgActive = '1';
+    el.style.color = color;
+    el.style.background = isDark ? 'rgba(255,255,255,0.82)' : 'rgba(0,0,0,0.55)';
+    el.style.border = 'none';
+    el.style.borderRadius = '14px';
+    el.style.padding = '9px 16px';
+    el.style.boxShadow = '0 6px 18px rgba(0,0,0,.22)';
+    el.style.backdropFilter = 'blur(6px)';
+  } else if (bgMode === 'outline') {
+    el.dataset.storyBgActive = '1';
+    el.style.color = color;
+    el.style.background = 'transparent';
+    el.style.border = `2px solid ${color}`;
+    el.style.borderRadius = '14px';
+    el.style.padding = '7px 14px';
+    el.style.boxShadow = 'none';
+    el.style.backdropFilter = 'none';
+  } else {
+    el.dataset.storyBgActive = '0';
+    el.style.color = color;
+    el.style.background = 'transparent';
+    el.style.border = 'none';
+    el.style.borderRadius = '0';
+    el.style.padding = '0';
+    el.style.boxShadow = 'none';
+    el.style.backdropFilter = 'none';
+  }
+}
 
 window.selectStorySticker = (e, el) => {
   if (e) e.stopPropagation();
@@ -3263,6 +3490,8 @@ window.startStickerScale = (e, id) => {
   const startScale = activeStickerScales[id] || 1.0;
   let rafId = 0;
   let pendingScale = startScale;
+  const guide = $('#storySafeAreaGuide');
+  if (guide) guide.classList.remove('hidden');
 
   const flush = () => {
     rafId = 0;
@@ -3284,6 +3513,7 @@ window.startStickerScale = (e, id) => {
   const end = () => {
     if (rafId) cancelAnimationFrame(rafId);
     flush();
+    if (guide) guide.classList.add('hidden');
     window.removeEventListener('mousemove', move);
     window.removeEventListener('mouseup', end);
     window.removeEventListener('touchmove', move);
@@ -3294,6 +3524,17 @@ window.startStickerScale = (e, id) => {
   window.addEventListener('mouseup', end);
   window.addEventListener('touchmove', move, { passive: false });
   window.addEventListener('touchend', end);
+};
+
+window.setStoryMusicLayout = (layout, el) => {
+  activeStoryMusicLayout = layout;
+  $$('#storyMusicLayoutRow .music-layout-btn').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const stk = $('#storyStageMusicSticker');
+  if (stk) {
+    stk.classList.remove('layout-pill', 'layout-card', 'layout-minimal');
+    stk.classList.add('layout-' + layout);
+  }
 };
 
 window.setMusicClipDuration = (dur, el) => {
@@ -3330,8 +3571,10 @@ function makeStickerDraggable(el, onMoveCallback) {
     if (onMoveCallback) onMoveCallback(pendingPctX, pendingPctY);
   };
 
+  let snappedX = false, snappedY = false;
+
   const start = (e) => {
-    if (e.target.closest('button') || e.target.classList.contains('story-resize-handle')) return;
+    if (e.target.closest('button') || e.target.classList.contains('story-resize-handle') || e.target.classList.contains('sticker-del-handle')) return;
     window.selectStorySticker(e, el);
     isDragging = true;
     const pos = getPos(e);
@@ -3342,6 +3585,10 @@ function makeStickerDraggable(el, onMoveCallback) {
     initialLeft = rect.left - stageRect.left + rect.width / 2;
     initialTop = rect.top - stageRect.top + rect.height / 2;
     el.style.transition = 'none';
+    const stageEl = el.closest('.story-editor-stage');
+    if (stageEl) stageEl.classList.add('dragging-active');
+    const guide = $('#storySafeAreaGuide');
+    if (guide) guide.classList.remove('hidden');
   };
 
   const move = (e) => {
@@ -3355,12 +3602,29 @@ function makeStickerDraggable(el, onMoveCallback) {
     let newTop = Math.max(40, Math.min(stageRect.height - 40, initialTop + dy));
 
     const centerX = stageRect.width / 2;
-    const guideEl = $('#storyAlignGuide');
+    const centerY = stageRect.height / 2;
+    const guideV = $('#storyAlignGuide');
+    const guideH = $('#storyAlignGuideH');
+    const wasSnappedX = snappedX, wasSnappedY = snappedY;
     if (Math.abs(newLeft - centerX) < 14) {
       newLeft = centerX;
-      if (guideEl) guideEl.classList.remove('hidden');
-    } else if (guideEl) {
-      guideEl.classList.add('hidden');
+      snappedX = true;
+      if (guideV) guideV.classList.remove('hidden');
+    } else {
+      snappedX = false;
+      if (guideV) guideV.classList.add('hidden');
+    }
+    if (Math.abs(newTop - centerY) < 14) {
+      newTop = centerY;
+      snappedY = true;
+      if (guideH) guideH.classList.remove('hidden');
+    } else {
+      snappedY = false;
+      if (guideH) guideH.classList.add('hidden');
+    }
+    // Subtle haptic tick on snap-in, if the device supports it (no-op elsewhere).
+    if ((snappedX && !wasSnappedX) || (snappedY && !wasSnappedY)) {
+      try { if (navigator.vibrate) navigator.vibrate(8); } catch (_) {}
     }
 
     pendingPctX = Math.round((newLeft / stageRect.width) * 100);
@@ -3374,8 +3638,15 @@ function makeStickerDraggable(el, onMoveCallback) {
     if (rafId) cancelAnimationFrame(rafId);
     applyMove();
     el.style.transition = 'transform 0.15s ease';
-    const guideEl = $('#storyAlignGuide');
-    if (guideEl) guideEl.classList.add('hidden');
+    const guideV = $('#storyAlignGuide');
+    const guideH = $('#storyAlignGuideH');
+    if (guideV) guideV.classList.add('hidden');
+    if (guideH) guideH.classList.add('hidden');
+    snappedX = false; snappedY = false;
+    const stageEl = el.closest('.story-editor-stage');
+    if (stageEl) stageEl.classList.remove('dragging-active');
+    const guide = $('#storySafeAreaGuide');
+    if (guide) guide.classList.add('hidden');
   };
 
   el.addEventListener('mousedown', start);
@@ -3413,15 +3684,13 @@ window.finishStoryTextEditor = () => {
       stg.classList.add('hidden');
     } else {
       if (txt) txt.textContent = activeStoryText;
-      stg.style.color = activeStoryTextBg && activeStoryTextColor === '#ffffff' ? '#ffffff' : (activeStoryTextBg && activeStoryTextColor === '#000000' ? '#000000' : activeStoryTextColor);
       stg.style.fontSize = activeStoryTextSize + 'px';
-      stg.style.textAlign = activeStoryTextAlign;
-      stg.style.background = activeStoryTextBg ? (activeStoryTextColor === '#ffffff' ? '#000000' : '#ffffff') : 'transparent';
-      stg.style.borderRadius = activeStoryTextBg ? '14px' : '0';
-      stg.style.padding = activeStoryTextBg ? '8px 14px' : '0';
       stg.style.left = (State.textPosX || 50) + '%';
       stg.style.top = (State.textPosY || 68) + '%';
       stg.style.transform = `translate(-50%, -50%) scale(${State.textScale || 1})`;
+      // Box style first (sets dataset.storyBgActive), then font preset reads
+      // that flag to decide whether to draw the readability drop-shadow.
+      applyStoryTextBoxStyle(stg, { color: activeStoryTextColor, bgMode: activeStoryTextBgMode, align: activeStoryTextAlign });
       applyStoryFontPreset(stg, activeStoryFont || 'modern');
       stg.classList.remove('hidden');
       makeStickerDraggable(stg, (px, py) => { State.textPosX = px; State.textPosY = py; });
@@ -3430,17 +3699,22 @@ window.finishStoryTextEditor = () => {
   window.closeStoryTextEditor();
 };
 
+window.removeStoryTextOverlay = (e) => {
+  if (e) e.stopPropagation();
+  const stg = $('#storyStageTextOverlay');
+  if (stg) stg.classList.add('hidden');
+  activeStoryText = '';
+  const inp = $('#storyTextOverlayInput');
+  if (inp) inp.value = '';
+};
+
 window.updateStoryTextLivePreview = () => {
   const inp = $('#storyTextOverlayInput');
   const slider = $('#storyTextSizeSlider');
   if (!inp) return;
   if (slider) activeStoryTextSize = parseInt(slider.value, 10) || 28;
   inp.style.fontSize = activeStoryTextSize + 'px';
-  inp.style.color = activeStoryTextColor;
-  inp.style.textAlign = activeStoryTextAlign;
-  inp.style.background = activeStoryTextBg ? (activeStoryTextColor === '#ffffff' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : 'transparent';
-  inp.style.borderRadius = activeStoryTextBg ? '12px' : '0';
-  inp.style.padding = activeStoryTextBg ? '8px 14px' : '0';
+  applyStoryTextBoxStyle(inp, { color: activeStoryTextColor, bgMode: activeStoryTextBgMode, align: activeStoryTextAlign });
   applyStoryFontPreset(inp, activeStoryFont || 'modern');
 };
 
@@ -3456,12 +3730,23 @@ window.toggleTextColorsRow = () => {
   if (row) row.classList.toggle('hidden');
 };
 
-window.toggleOverlayTextBg = () => {
-  activeStoryTextBg = !activeStoryTextBg;
+const STORY_TEXT_BG_MODES = ['none', 'solid', 'soft', 'outline'];
+window.cycleOverlayTextBgMode = () => {
+  const idx = STORY_TEXT_BG_MODES.indexOf(activeStoryTextBgMode);
+  activeStoryTextBgMode = STORY_TEXT_BG_MODES[(idx + 1) % STORY_TEXT_BG_MODES.length];
+  activeStoryTextBg = activeStoryTextBgMode !== 'none'; // legacy flag kept for back-compat consumers
   const btn = $('#storyTextBgToggleBtn');
-  if (btn) btn.style.background = activeStoryTextBg ? 'var(--accent)' : 'rgba(255,255,255,0.15)';
+  if (btn) {
+    btn.classList.toggle('active-toggle', activeStoryTextBgMode !== 'none');
+    const labels = { none: 'Aa', solid: 'Fill', soft: 'Soft', outline: 'Outline' };
+    btn.innerHTML = activeStoryTextBgMode === 'none'
+      ? 'A<span style="font-size:11px;">★</span>'
+      : `<span style="font-size:10.5px;">${labels[activeStoryTextBgMode]}</span>`;
+  }
   window.updateStoryTextLivePreview();
 };
+// Back-compat alias — some older bound handlers may still reference this name.
+window.toggleOverlayTextBg = window.cycleOverlayTextBgMode;
 
 window.cycleOverlayTextAlign = () => {
   if (activeStoryTextAlign === 'center') activeStoryTextAlign = 'left';
@@ -3499,19 +3784,29 @@ window.openStoryCreator = () => {
   const inp = $('#storyEditorFileInput');
   const ph = $('#storyEditorPlaceholder');
   const prev = $('#storyEditorPreviewImg');
+  const loadingEl = $('#storyEditorImgLoading');
+  const stepLbl = $('#storyEditorStepLabel');
+  if (stepLbl) stepLbl.textContent = 'Create Story';
   if (ph && inp) {
     ph.onclick = () => inp.click();
   }
   if (inp) {
     inp.onchange = async (e) => {
       const f = e.target.files && e.target.files[0];
+      e.target.value = ''; // allow re-picking the same file later
       if (!f) return;
+      if (!f.type || !f.type.startsWith('image/')) { toast('Please pick an image file', 'error'); return; }
+      if (f.size > 20 * 1024 * 1024) { toast('Image too large (max 20MB)', 'error'); return; }
       if (ph) ph.classList.add('hidden');
+      if (loadingEl) loadingEl.classList.remove('hidden');
       try {
         // Use a compressed preview instead of the raw camera image to avoid
-        // mobile freezes / memory spikes on large photos.
+        // mobile freezes / memory spikes on large photos. Resize runs via
+        // canvas + createImageBitmap where available so the main thread isn't
+        // blocked decoding a multi-megapixel camera photo synchronously.
         const previewDataUrl = await resizeImageToDataUrl(f, 1280, 0.82);
         if (prev) { prev.src = previewDataUrl; prev.classList.remove('hidden'); }
+        if (loadingEl) loadingEl.classList.add('hidden');
         const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: previewDataUrl, kind: 'post' } });
         State.storyCreatorImgUrl = res.url || previewDataUrl;
       } catch(err) {
@@ -3526,6 +3821,8 @@ window.openStoryCreator = () => {
             State.storyCreatorImgUrl = localUrl;
           } catch (_) {}
         }
+      } finally {
+        if (loadingEl) loadingEl.classList.add('hidden');
       }
     };
   }
@@ -3533,6 +3830,11 @@ window.openStoryCreator = () => {
   if (initSpan && State.user) {
     initSpan.textContent = (State.user.displayName || State.user.username || 'AJ').slice(0,2).toUpperCase();
   }
+  // Show the safe-area guide only while a sticker is actively being dragged/scaled
+  // (see makeStickerDraggable / startStickerScale) — kept hidden by default so the
+  // canvas looks clean, matching the "cleaner preview/publish flow" goal.
+  const guide = $('#storySafeAreaGuide');
+  if (guide) guide.classList.add('hidden');
 };
 
 window.closeStoryCreator = () => {
@@ -3548,6 +3850,7 @@ window.closeStoryCreator = () => {
     stk.style.top = '32%';
     stk.style.transform = 'translate(-50%, -50%) scale(1)';
     stk.classList.remove('active-sticker');
+    stk.className = 'story-music-sticker layout-pill sticker hidden';
   }
   const stgText = $('#storyStageTextOverlay');
   const stgTextSpan = $('#storyStageTextSpan');
@@ -3556,9 +3859,8 @@ window.closeStoryCreator = () => {
     stgText.style.left = '50%';
     stgText.style.top = '68%';
     stgText.style.transform = 'translate(-50%, -50%) scale(1)';
-    stgText.style.background = 'transparent';
-    stgText.style.padding = '8px 14px';
     stgText.classList.remove('active-sticker');
+    applyStoryTextBoxStyle(stgText, { color: '#ffffff', bgMode: 'none', align: 'center' });
     applyStoryFontPreset(stgText, 'modern');
   }
   if (stgTextSpan) stgTextSpan.textContent = 'Text';
@@ -3566,10 +3868,15 @@ window.closeStoryCreator = () => {
   if (trim) trim.classList.add('hidden');
   const prev = $('#storyEditorPreviewImg');
   if (prev) { prev.src = ''; prev.classList.add('hidden'); }
+  const loadingEl = $('#storyEditorImgLoading'); if (loadingEl) loadingEl.classList.add('hidden');
   const fc = $('#storyFontControls'); if (fc) fc.classList.add('hidden');
   const colorRow = $('#storyTextColorsRow'); if (colorRow) colorRow.classList.add('hidden');
   const slider = $('#storyTextSizeSlider'); if (slider) slider.value = '28';
-  activeStoryFont = 'modern'; activeStoryText = ''; activeStoryTextColor = '#ffffff'; activeStoryTextBg = false; activeStoryTextAlign = 'center'; activeStoryTextSize = 28;
+  const guide = $('#storySafeAreaGuide'); if (guide) guide.classList.add('hidden');
+  $$('#storyMusicLayoutRow .music-layout-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
+  activeStoryFont = 'modern'; activeStoryText = ''; activeStoryTextColor = '#ffffff';
+  activeStoryTextBg = false; activeStoryTextBgMode = 'none'; activeStoryTextAlign = 'center'; activeStoryTextSize = 28;
+  activeStoryMusicLayout = 'pill';
   activeStickerScales = { storyStageMusicSticker: 1.0, storyStageTextOverlay: 1.0 };
   State.musicPosX = 50; State.musicPosY = 32; State.musicStartTime = 0; State.musicScale = 1.0; State.musicClipDur = 30;
   State.textPosX = 50; State.textPosY = 68; State.textScale = 1.0;
@@ -3578,6 +3885,8 @@ window.closeStoryCreator = () => {
   const cap = $('#storyEditorCaptionInput');
   if (cap) { cap.value = ''; cap.style.fontFamily = ''; cap.style.fontWeight = ''; cap.style.fontStyle = ''; cap.style.textTransform = ''; cap.style.letterSpacing = ''; }
   State.storyCreatorImgUrl = null;
+  const pubAll = $('#storyPubBtnAll'); if (pubAll) pubAll.disabled = false;
+  const pubCf = $('#storyPubBtnCf'); if (pubCf) pubCf.disabled = false;
 };
 
 window.promptStoryCaption = () => {
@@ -3717,7 +4026,8 @@ window.pickStoryMusic = (id) => {
     $('#storyStageMusicArtist').textContent = song.artist;
     stk.style.left = (State.musicPosX || 50) + '%';
     stk.style.top = (State.musicPosY || 32) + '%';
-    stk.classList.remove('hidden');
+    stk.classList.remove('hidden', 'layout-pill', 'layout-card', 'layout-minimal');
+    stk.classList.add('layout-' + (activeStoryMusicLayout || 'pill'));
     makeStickerDraggable(stk, (px, py) => { State.musicPosX = px; State.musicPosY = py; });
   }
   window.closeStoryMusicSheet();
@@ -3769,8 +4079,16 @@ window.publishStoryWithMusic = async (isCf = false) => {
   const imageUrl = State.storyCreatorImgUrl || null;
   let song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   if (!song) song = liveSearchResults.find(s => s.id === selectedStoryMusicId);
-  const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art, posX: State.musicPosX || 50, posY: State.musicPosY || 32, startTime: State.musicStartTime || 0, clipDur: State.musicClipDur || 30, scale: State.musicScale || 1.0 } : null;
-  const style = { font: activeStoryFont, color: activeStoryTextColor, bg: activeStoryTextBg, align: activeStoryTextAlign, size: activeStoryTextSize, posX: State.textPosX || 50, posY: State.textPosY || 68, scale: State.textScale || 1.0 };
+  const music = song ? {
+    id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art,
+    posX: State.musicPosX || 50, posY: State.musicPosY || 32, startTime: State.musicStartTime || 0,
+    clipDur: State.musicClipDur || 30, scale: State.musicScale || 1.0, layout: activeStoryMusicLayout || 'pill',
+  } : null;
+  const style = {
+    font: activeStoryFont, color: activeStoryTextColor, bg: activeStoryTextBg, bgMode: activeStoryTextBgMode,
+    align: activeStoryTextAlign, size: activeStoryTextSize, posX: State.textPosX || 50, posY: State.textPosY || 68,
+    scale: State.textScale || 1.0,
+  };
 
   if (!text && !imageUrl) {
     toast('Pick a photo or type a text caption first!', 'error');
@@ -3781,6 +4099,13 @@ window.publishStoryWithMusic = async (isCf = false) => {
     setTimeout(() => openCloseFriendsSheet(), 120);
     return;
   }
+  const pubAll = $('#storyPubBtnAll');
+  const pubCf = $('#storyPubBtnCf');
+  const targetBtn = isCf ? pubCf : pubAll;
+  const originalHtml = targetBtn ? targetBtn.innerHTML : '';
+  if (pubAll) pubAll.disabled = true;
+  if (pubCf) pubCf.disabled = true;
+  if (targetBtn) targetBtn.innerHTML = '<span class="story-pub-spinner"></span> Posting…';
   try {
     await api('/posts/create', {
       method: 'POST',
@@ -3799,6 +4124,9 @@ window.publishStoryWithMusic = async (isCf = false) => {
     toast(music ? `🎉 Story published with 30s background song "${music.title}"!` : '🎉 Story published!', 'success');
   } catch (e) {
     toast(e.message || 'Story publish failed', 'error');
+    if (pubAll) pubAll.disabled = false;
+    if (pubCf) pubCf.disabled = false;
+    if (targetBtn) targetBtn.innerHTML = originalHtml;
   }
 };
 
@@ -3886,7 +4214,7 @@ function bindFeedComposer() {
       $('#postInput').value = '';
       if (chk) chk.checked = false;
       clearPostAttach();
-      lastPostsSignature = '';
+      lastPostsSignature = null; // force next loadPosts() to re-render even if list becomes empty
       loadPosts();
       closePostComposer();
       toast('Posted!', 'success');
@@ -3912,6 +4240,36 @@ function clearPostAttach() {
  * @param {number} quality — 0..1
  */
 function resizeImageToDataUrl(file, maxDim = 600, quality = 0.85) {
+  // Prefer createImageBitmap: on most mobile browsers it decodes off the main
+  // thread, which avoids the "page freezes for a second" feeling that a
+  // synchronous <img>.decode-on-load can cause for large camera photos
+  // (e.g. 12MP+ shots) right when the story editor is trying to stay responsive.
+  if (typeof createImageBitmap === 'function') {
+    return createImageBitmap(file).then((bitmap) => {
+      try {
+        let width = bitmap.width, height = bitmap.height;
+        if (width > maxDim || height > maxDim) {
+          if (width >= height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+          else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        bitmap.close && bitmap.close();
+        return canvas.toDataURL('image/jpeg', quality);
+      } catch (e) {
+        bitmap.close && bitmap.close();
+        throw e;
+      }
+    }).catch(() => resizeImageToDataUrlLegacy(file, maxDim, quality));
+  }
+  return resizeImageToDataUrlLegacy(file, maxDim, quality);
+}
+
+function resizeImageToDataUrlLegacy(file, maxDim = 600, quality = 0.85) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const reader = new FileReader();
@@ -4394,7 +4752,23 @@ function renderCloseFriendsSheet() {
   const list = $('#closeFriendsList');
   if (!list) return;
   const meId = State.user && State.user.id;
+  const q = ($('#cfSearchInput')?.value || '').trim().toLowerCase();
+  const selectedCount = (State.closeFriends || []).length;
+
+  const summary = $('#cfSummaryRow');
+  if (summary) {
+    summary.innerHTML = selectedCount > 0
+      ? `<span class="cf-summary-count"><i data-lucide="star"></i> ${selectedCount} close friend${selectedCount === 1 ? '' : 's'}</span>`
+      : `<span class="cf-summary-empty">No close friends added yet — stories shared to this list stay private to them.</span>`;
+    refreshIcons();
+  }
+
   const users = (State.members || []).filter(u => u.id !== meId)
+    .filter(u => {
+      if (!q) return true;
+      const hay = `${u.displayName || ''} ${u.username || ''}`.toLowerCase();
+      return hay.includes(q);
+    })
     .slice()
     .sort((a, b) => {
       const aSel = (State.closeFriends || []).includes(a.id) ? 1 : 0;
@@ -4407,13 +4781,17 @@ function renderCloseFriendsSheet() {
   if (!users.length) {
     const empty = document.createElement('li');
     empty.className = 'empty';
-    empty.textContent = 'No other visible members yet.';
+    empty.innerHTML = q
+      ? `<i data-lucide="search-x"></i><span>No members match "${escapeHtml(q)}"</span>`
+      : `<i data-lucide="users"></i><span>No other visible members yet.</span>`;
     list.appendChild(empty);
+    refreshIcons();
     return;
   }
   users.forEach(u => {
     const li = document.createElement('li');
-    li.className = 'cf-row';
+    const active = (State.closeFriends || []).includes(u.id);
+    li.className = 'cf-row' + (active ? ' is-selected' : '');
     const av = document.createElement('span');
     av.className = 'avatar md';
     renderAvatar(av, u, { showStatus: true, online: !!u.online });
@@ -4421,13 +4799,13 @@ function renderCloseFriendsSheet() {
     meta.className = 'meta';
     meta.innerHTML = `<div class="nm">${escapeHtml(u.displayName || u.username)}</div><div class="sub">@${escapeHtml(u.username || '')}${u.online ? ' · online' : ''}</div>`;
     const btn = document.createElement('button');
-    const active = (State.closeFriends || []).includes(u.id);
     btn.className = 'cf-toggle-btn' + (active ? ' active' : '');
-    btn.textContent = active ? 'Close Friend' : 'Add';
+    btn.innerHTML = active ? '<i data-lucide="check"></i> Added' : '<i data-lucide="plus"></i> Add';
     btn.addEventListener('click', () => toggleCloseFriend(u.id));
     li.appendChild(av); li.appendChild(meta); li.appendChild(btn);
     list.appendChild(li);
   });
+  refreshIcons();
 }
 function getOwnActiveStories() {
   if (!State.user) return [];
@@ -4449,16 +4827,27 @@ function closeStoryManageSheet() {
   const sheet = $('#storyManageSheet');
   if (sheet) sheet.classList.add('hidden');
 }
+function hoursUntilExpiry(story) {
+  const exp = storyExpiresAt(story);
+  if (!exp) return null;
+  const ms = exp - Date.now();
+  if (ms <= 0) return 0;
+  return Math.max(1, Math.round(ms / 3600000));
+}
+
 function renderStoryManageSheet() {
   const list = $('#storyManageList');
+  const countLbl = $('#storyManageCountLbl');
   if (!list) return;
   const stories = getOwnActiveStories();
+  if (countLbl) countLbl.textContent = stories.length ? `${stories.length} active` : '';
   list.innerHTML = '';
   if (!stories.length) {
     const empty = document.createElement('li');
     empty.className = 'empty';
-    empty.textContent = 'No active stories right now.';
+    empty.innerHTML = '<i data-lucide="film"></i><span>No active stories right now — tap + to add one.</span>';
     list.appendChild(empty);
+    refreshIcons();
     return;
   }
   stories.forEach((story) => {
@@ -4470,33 +4859,75 @@ function renderStoryManageSheet() {
       const img = document.createElement('img');
       img.src = story.imageUrl;
       img.alt = 'story';
+      img.loading = 'lazy';
       thumb.appendChild(img);
     } else {
       thumb.textContent = (story.text || 'Story').slice(0, 24);
     }
+    if (story.music && story.music.title) {
+      const badge = document.createElement('span');
+      badge.className = 'thumb-music-badge';
+      badge.textContent = '🎵';
+      thumb.appendChild(badge);
+    }
     const meta = document.createElement('div');
     meta.className = 'meta';
     const chipCls = (story.audience === 'close_friends') ? 'story-audience-chip cf' : 'story-audience-chip';
-    const chipLabel = (story.audience === 'close_friends') ? '★ Close Friends' : 'Your story';
-    meta.innerHTML = `<div class="nm">${escapeHtml((story.text || 'Photo story').slice(0, 42) || 'Story')}</div><div class="sub">${escapeHtml(timeAgo(story.createdAt))}</div><div class="${chipCls}">${chipLabel}</div>`;
+    const chipLabel = (story.audience === 'close_friends') ? '★ Close Friends' : '🌐 Your story';
+    const hrsLeft = hoursUntilExpiry(story);
+    meta.innerHTML = `<div class="nm">${escapeHtml((story.text || 'Photo story').slice(0, 42) || 'Story')}</div>
+      <div class="story-manage-stats">
+        <span>${escapeHtml(timeAgo(story.createdAt))}</span>
+        ${hrsLeft != null ? `<span>· expires in ${hrsLeft}h</span>` : ''}
+      </div>
+      <div class="${chipCls}">${chipLabel}</div>`;
     const actions = document.createElement('div');
     actions.className = 'story-manage-actions';
     const viewBtn = document.createElement('button');
-    viewBtn.className = 'story-mini-btn';
-    viewBtn.textContent = 'View';
+    viewBtn.className = 'story-mini-btn icon-only';
+    viewBtn.title = 'View';
+    viewBtn.innerHTML = '<i data-lucide="eye"></i>';
     viewBtn.addEventListener('click', () => {
       closeStoryManageSheet();
       openStoryFor(State.user, Math.max(0, getStorySequence(State.user.id).findIndex(x => x.id === story.id)));
     });
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'story-mini-btn icon-only';
+    saveBtn.title = 'Save media';
+    saveBtn.innerHTML = '<i data-lucide="download"></i>';
+    saveBtn.addEventListener('click', () => saveStoryMedia(story));
+    if (!story.imageUrl) saveBtn.style.display = 'none';
     const delBtn = document.createElement('button');
-    delBtn.className = 'story-mini-btn danger';
-    delBtn.textContent = 'Delete';
+    delBtn.className = 'story-mini-btn icon-only danger';
+    delBtn.title = 'Delete';
+    delBtn.innerHTML = '<i data-lucide="trash-2"></i>';
     delBtn.addEventListener('click', () => deleteStoryItem(story.id));
     actions.appendChild(viewBtn);
+    actions.appendChild(saveBtn);
     actions.appendChild(delBtn);
     li.appendChild(thumb); li.appendChild(meta); li.appendChild(actions);
     list.appendChild(li);
   });
+  refreshIcons();
+}
+
+// "Save media" — downloads the story's photo locally. A lightweight nicety
+// requested as an optional extra; text-only stories have nothing to save.
+function saveStoryMedia(story) {
+  if (!story || !story.imageUrl) { toast('Nothing to save for a text-only story', 'error'); return; }
+  try {
+    const a = document.createElement('a');
+    a.href = story.imageUrl;
+    a.download = `priv-spaca-story-${story.id || Date.now()}.jpg`;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('Saving photo…', 'success');
+  } catch (_) {
+    toast('Could not save this photo', 'error');
+  }
 }
 async function deleteStoryItem(postId) {
   if (!postId) return;
@@ -4504,7 +4935,7 @@ async function deleteStoryItem(postId) {
   try {
     await api('/posts/delete', { method: 'POST', body: { postId } });
     State.posts = (State.posts || []).filter(p => p.id !== postId);
-    lastPostsSignature = '';
+    lastPostsSignature = null; // force next loadPosts() to re-render even if list becomes empty
     _lastStoriesSig = '';
     const idx = storyPlayback.items.findIndex(x => x.id === postId);
     if (idx !== -1) {
@@ -4534,6 +4965,8 @@ function bindCloseFriendsAndStoryManage() {
   if (smb) smb.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openStoryManageSheet(); });
   const smc = $('#storyManageCreateBtn');
   if (smc) smc.addEventListener('click', () => { closeStoryManageSheet(); openStoryCreator(); });
+  const cfSearch = $('#cfSearchInput');
+  if (cfSearch) cfSearch.addEventListener('input', () => renderCloseFriendsSheet());
 }
 
 function bindNotifSheet() {

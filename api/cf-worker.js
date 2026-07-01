@@ -1521,11 +1521,13 @@ app.post('/api/posts/create', requireAuth, async (c) => {
       startTime: Math.max(0, Math.min(180, Number(music.startTime) || 0)),
       clipDur: Math.max(10, Math.min(30, Number(music.clipDur) || 30)),
       scale: Math.max(0.5, Math.min(2.5, Number(music.scale) || 1)),
+      layout: ['pill','card','minimal'].includes(music.layout) ? music.layout : 'pill',
     } : null;
     const cleanStyle = style && typeof style === 'object' ? {
       font: String(style.font || 'modern').slice(0,32),
       color: String(style.color || '#ffffff').slice(0,32),
       bg: !!style.bg,
+      bgMode: ['none','solid','soft','outline'].includes(style.bgMode) ? style.bgMode : (style.bg ? 'solid' : 'none'),
       align: ['left','center','right'].includes(style.align) ? style.align : 'center',
       size: Math.max(16, Math.min(52, Number(style.size) || 28)),
       posX: Math.max(0, Math.min(100, Number(style.posX) || 50)),
