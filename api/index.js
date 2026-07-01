@@ -1540,20 +1540,57 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
 
 app.post('/api/posts/create', authMiddleware, async (req, res) => {
   try {
-    const { text, imageUrl } = req.body || {};
+    const { text, imageUrl, images, isScratch, music, style, story, storyExpiresAt, audience } = req.body || {};
     const cleanText = sanitizeText(text, 2000);
     const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
-    if (!cleanText && !cleanImage) return res.status(400).json({ error: 'Empty post' });
+    const cleanImages = Array.isArray(images)
+      ? images.filter(u => typeof u === 'string' && u.length <= 4096).slice(0, 3)
+      : (cleanImage ? [cleanImage] : []);
+    const mainImage = cleanImages[0] || cleanImage || null;
+    if (!cleanText && !mainImage && cleanImages.length === 0) return res.status(400).json({ error: 'Empty post' });
     const db = await fetchDatabase();
     const author = db.users.find(u => u.id === req.userId);
     const snapshot = author ? {
       id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || ''
     } : null;
+    const cleanMusic = music && typeof music === 'object' && music.title ? {
+      id: music.id,
+      title: String(music.title).slice(0, 60),
+      artist: String(music.artist).slice(0, 60),
+      audio: String(music.audio).slice(0, 1024),
+      art: String(music.art).slice(0, 1024),
+      posX: Math.max(0, Math.min(100, Number(music.posX) || 50)),
+      posY: Math.max(0, Math.min(100, Number(music.posY) || 32)),
+      startTime: Math.max(0, Math.min(180, Number(music.startTime) || 0)),
+      clipDur: Math.max(10, Math.min(30, Number(music.clipDur) || 30)),
+      scale: Math.max(0.5, Math.min(2.5, Number(music.scale) || 1)),
+    } : null;
+    const cleanStyle = style && typeof style === 'object' ? {
+      font: String(style.font || 'modern').slice(0, 32),
+      color: String(style.color || '#ffffff').slice(0, 32),
+      bg: !!style.bg,
+      align: ['left', 'center', 'right'].includes(style.align) ? style.align : 'center',
+      size: Math.max(16, Math.min(52, Number(style.size) || 28)),
+      posX: Math.max(0, Math.min(100, Number(style.posX) || 50)),
+      posY: Math.max(0, Math.min(100, Number(style.posY) || 68)),
+      scale: Math.max(0.5, Math.min(2.5, Number(style.scale) || 1)),
+    } : null;
+    const isStory = story === true;
+    const expiresAt = isStory
+      ? Math.max(nowMs() + 60_000, Math.min(nowMs() + (7 * 24 * 3600 * 1000), Number(storyExpiresAt) || (nowMs() + 24 * 3600 * 1000)))
+      : null;
     const post = {
       id: uid('post'),
       userId: req.userId,
       text: cleanText,
-      imageUrl: cleanImage,
+      imageUrl: mainImage,
+      images: cleanImages.length > 0 ? cleanImages : (mainImage ? [mainImage] : []),
+      music: cleanMusic,
+      style: cleanStyle,
+      story: isStory,
+      storyExpiresAt: expiresAt,
+      audience: isStory ? (audience === 'close_friends' ? 'close_friends' : 'all') : null,
+      isScratch: !!isScratch,
       likes: [],
       comments: [],
       authorSnapshot: snapshot,

@@ -1452,7 +1452,7 @@ app.get('/api/posts', requireAuth, async (c) => {
 app.post('/api/posts/create', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { text, imageUrl, images, isScratch, music } = body;
+    const { text, imageUrl, images, isScratch, music, style, story, storyExpiresAt, audience } = body;
     const ct = sanitizeText(text, 2000);
     const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
     const cimgs = Array.isArray(images) ? images.filter(u => typeof u === 'string' && u.length <= 4096).slice(0, 3) : (ci ? [ci] : []);
@@ -1462,8 +1462,39 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     const db = await fetchDatabase();
     const author = db.users.find(u => u.id === myId);
     const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
-    const cleanMusic = music && typeof music === 'object' && music.title ? { id: music.id, title: String(music.title).slice(0,60), artist: String(music.artist).slice(0,60), audio: String(music.audio).slice(0,1024), art: String(music.art).slice(0,1024) } : null;
-    const post = { id: uid('post'), userId: myId, text: ct, imageUrl: mainImg, images: cimgs.length > 0 ? cimgs : (mainImg ? [mainImg] : []), music: cleanMusic, isScratch: !!isScratch, likes: [], comments: [], authorSnapshot: snap, createdAt: nowMs() };
+    const cleanMusic = music && typeof music === 'object' && music.title ? {
+      id: music.id,
+      title: String(music.title).slice(0,60),
+      artist: String(music.artist).slice(0,60),
+      audio: String(music.audio).slice(0,1024),
+      art: String(music.art).slice(0,1024),
+      posX: Math.max(0, Math.min(100, Number(music.posX) || 50)),
+      posY: Math.max(0, Math.min(100, Number(music.posY) || 32)),
+      startTime: Math.max(0, Math.min(180, Number(music.startTime) || 0)),
+      clipDur: Math.max(10, Math.min(30, Number(music.clipDur) || 30)),
+      scale: Math.max(0.5, Math.min(2.5, Number(music.scale) || 1)),
+    } : null;
+    const cleanStyle = style && typeof style === 'object' ? {
+      font: String(style.font || 'modern').slice(0,32),
+      color: String(style.color || '#ffffff').slice(0,32),
+      bg: !!style.bg,
+      align: ['left','center','right'].includes(style.align) ? style.align : 'center',
+      size: Math.max(16, Math.min(52, Number(style.size) || 28)),
+      posX: Math.max(0, Math.min(100, Number(style.posX) || 50)),
+      posY: Math.max(0, Math.min(100, Number(style.posY) || 68)),
+      scale: Math.max(0.5, Math.min(2.5, Number(style.scale) || 1)),
+    } : null;
+    const isStory = story === true;
+    const expiresAt = isStory
+      ? Math.max(nowMs() + 60_000, Math.min(nowMs() + (7 * 24 * 3600 * 1000), Number(storyExpiresAt) || (nowMs() + 24 * 3600 * 1000)))
+      : null;
+    const post = {
+      id: uid('post'), userId: myId, text: ct, imageUrl: mainImg,
+      images: cimgs.length > 0 ? cimgs : (mainImg ? [mainImg] : []),
+      music: cleanMusic, style: cleanStyle, story: isStory, storyExpiresAt: expiresAt,
+      audience: isStory ? (audience === 'close_friends' ? 'close_friends' : 'all') : null,
+      isScratch: !!isScratch, likes: [], comments: [], authorSnapshot: snap, createdAt: nowMs()
+    };
     db.posts.push(post);
     const enriched = { ...post, likeCount: 0, commentCount: 0, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
     _broadcastEvent('new_post', { post: enriched }, myId);
