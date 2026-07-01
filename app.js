@@ -796,23 +796,31 @@ function refreshSecretChatUI() {
   const room = State.currentRoom;
   const btn = $('#secretChatBtn');
   const banner = $('#secretBanner');
-  if (!btn || !banner) return;
-  // Secret chat only available in DMs (1-to-1)
+  const disRow = $('#disappearRow');
+  if (banner) banner.classList.add('hidden');
+  if (!btn) return;
   if (!room || room.kind !== 'dm' || !room.target) {
     btn.style.display = 'none';
-    banner.classList.add('hidden');
+    if (disRow) disRow.style.display = 'none';
     return;
   }
   btn.style.display = '';
   const on = isSecretChatOn(room.id);
   btn.classList.toggle('active', on);
-  btn.title = on ? 'Secret Chat is ON (tap to turn off)' : 'Turn on Secret Chat (end-to-end encrypted)';
+  btn.innerHTML = `<i data-lucide="lock"></i> <span>${on ? 'Turn OFF Secret Chat' : 'Toggle Secret Chat'}</span>`;
+  
+  const target = room.target;
+  const sub = $('#chatSubtitle');
+  if (sub && target) {
+    sub.innerHTML = `@${target.username}${target.online ? ' · online' : ' · offline'}${on ? ' <strong style="color:#10b981;">· 🔒 E2E Secret Mode</strong>' : ''}`;
+  }
+
   if (on) {
-    banner.classList.remove('hidden');
+    if (disRow) disRow.style.display = 'flex';
     const sel = $('#disappearSelect');
     if (sel) sel.value = String(getDisappearMs(room.id) || 0);
   } else {
-    banner.classList.add('hidden');
+    if (disRow) disRow.style.display = 'none';
   }
   refreshIcons();
 }
@@ -1631,24 +1639,32 @@ function showAttachPreview(att) {
     audioBox.id = 'attachAudioBox';
     imgEl.parentElement.insertBefore(audioBox, imgEl.nextSibling);
   }
+  const infoEl = imgEl ? imgEl.parentElement.querySelector('.attach-info') : null;
 
   if (isAudio) {
     if (imgEl) imgEl.style.display = 'none';
+    if (infoEl) infoEl.style.display = 'none';
     if (audioBox) {
       audioBox.style.display = 'flex';
       audioBox.style.alignItems = 'center';
-      audioBox.style.gap = '10px';
+      audioBox.style.justifyContent = 'space-between';
+      audioBox.style.flex = '1';
+      audioBox.style.minWidth = '0';
+      audioBox.style.gap = '8px';
       audioBox.innerHTML = `
-        <div style="width:38px; height:38px; border-radius:50%; background:rgba(236,72,153,0.2); color:#ec4899; display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0;">🎙️</div>
-        <audio controls src="${att.url}" style="height:34px; max-width:180px; outline:none;"></audio>
+        <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:0;">
+          <div style="width:34px; height:34px; border-radius:50%; background:rgba(236,72,153,0.2); color:#ec4899; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;">🎙️</div>
+          <div style="font-weight:600; font-size:13px; color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Voice Note</div>
+          <audio controls src="${att.url}" style="height:32px; flex:1; min-width:140px; max-width:210px; outline:none;"></audio>
+        </div>
       `;
     }
-    $('#attachName').textContent = '🎙️ Voice Note · recorded & ready';
   } else {
     if (imgEl) {
       imgEl.style.display = 'block';
       imgEl.src = att.url;
     }
+    if (infoEl) infoEl.style.display = '';
     if (audioBox) {
       audioBox.style.display = 'none';
       audioBox.innerHTML = '';
@@ -1662,7 +1678,13 @@ function showAttachPreview(att) {
 function clearAttach() {
   State.attach = null;
   $('#attachPreview').classList.add('hidden');
-  const imgEl = $('#attachThumb'); if (imgEl) { imgEl.src = ''; imgEl.style.display = 'block'; }
+  const imgEl = $('#attachThumb');
+  if (imgEl) {
+    imgEl.src = '';
+    imgEl.style.display = 'block';
+    const infoEl = imgEl.parentElement.querySelector('.attach-info');
+    if (infoEl) infoEl.style.display = '';
+  }
   const audioBox = $('#attachAudioBox'); if (audioBox) { audioBox.style.display = 'none'; audioBox.innerHTML = ''; }
   $('#attachName').textContent = '';
   $('#attachProgress').style.width = '0%';
