@@ -551,6 +551,12 @@
         <button id="settingsEditProfile" class="settings-row">
           <i data-lucide="user"></i><span>Edit profile</span><i data-lucide="chevron-right" class="chev"></i>
         </button>
+        <button id="settingsCloseFriends" class="settings-row">
+          <i data-lucide="star"></i><span>Close Friends</span><span id="closeFriendsCount" class="settings-chip">0</span>
+        </button>
+        <button id="settingsManageStories" class="settings-row">
+          <i data-lucide="film"></i><span>Manage stories</span><i data-lucide="chevron-right" class="chev"></i>
+        </button>
         <button id="settingsViewTerms" class="settings-row">
           <i data-lucide="shield-check"></i><span>Terms &amp; Guidelines</span><i data-lucide="chevron-right" class="chev"></i>
         </button>
@@ -562,6 +568,38 @@
       <div class="settings-foot">
         PRIV SPACA · v1.0 · <a href="https://github.com/ajitjaat1011-ui/PRIV-SPACA" target="_blank" rel="noopener">GitHub</a>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="closeFriendsSheet" class="comments-sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-backdrop" data-close-close-friends></div>
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h3><i data-lucide="star"></i> Close Friends</h3>
+      <button class="ghost-btn" data-close-close-friends aria-label="Close"><i data-lucide="x"></i></button>
+    </div>
+    <div class="sheet-body">
+      <div class="cf-headline">Only these people can see your Close Friends stories.</div>
+      <ul id="closeFriendsList" class="cf-list"></ul>
+    </div>
+  </div>
+</div>
+
+<div id="storyManageSheet" class="comments-sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-backdrop" data-close-story-manage></div>
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h3><i data-lucide="film"></i> Manage stories</h3>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button id="storyManageCreateBtn" class="ghost-btn" title="Add story"><i data-lucide="plus"></i></button>
+        <button class="ghost-btn" data-close-story-manage aria-label="Close"><i data-lucide="x"></i></button>
+      </div>
+    </div>
+    <div class="sheet-body">
+      <ul id="storyManageList" class="story-manage-list"></ul>
     </div>
   </div>
 </div>
@@ -617,6 +655,7 @@
 <!-- ====== STORY VIEWER ====== -->
 <div id="storyViewer" class="story-viewer hidden" role="dialog" aria-modal="true">
   <div class="story-progress" id="storyProgress"></div>
+  <button class="story-manage ghost-btn hidden" id="storyManageBtn" aria-label="Manage story"><i data-lucide="more-horizontal"></i></button>
   <button class="story-close ghost-btn" id="storyClose" aria-label="Close"><i data-lucide="x"></i></button>
   <div class="story-author">
     <span id="storyAvatar" class="avatar md"></span>

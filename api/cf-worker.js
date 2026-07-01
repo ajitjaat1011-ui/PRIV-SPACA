@@ -78,6 +78,23 @@ function sanitizeText(s, max = 4000) {
           .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '')
           .slice(0, max);
 }
+function isStoryRecord(post) {
+  if (!post) return false;
+  return !!(post.story === true || post.kind === 'story' || post.storyExpiresAt || post.style || post.music);
+}
+function storyExpiresAt(post) {
+  return Number(post && post.storyExpiresAt) || ((post && post.createdAt) ? (post.createdAt + 24 * 60 * 60 * 1000) : 0);
+}
+function canViewerSeeStory(post, viewerId, db) {
+  if (!isStoryRecord(post)) return true;
+  if (!post || post.deletedAt) return false;
+  if (storyExpiresAt(post) <= nowMs()) return false;
+  if (post.userId === viewerId) return true;
+  if ((post.audience || 'all') !== 'close_friends') return true;
+  const author = (db.users || []).find(u => u.id === post.userId);
+  const closeFriends = Array.isArray(author && author.closeFriends) ? author.closeFriends : [];
+  return closeFriends.includes(viewerId);
+}
 function sanitizeUser(u) {
   if (!u) return null;
   return { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
@@ -884,7 +901,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     const newUser = {
       id: uid('usr'), email: emailLower, username, displayName: cleanDN,
       bio: '', photoUrl: '', passwordHash, pinHash,
-      followers: [], following: [], blocked: [],
+      followers: [], following: [], blocked: [], closeFriends: [],
       termsAccepted: true, termsVersion: String(termsVersion || '1.0'),
       termsAcceptedAt: nowMs(), createdAt: nowMs(),
     };
@@ -1040,6 +1057,37 @@ app.post('/api/user/update', requireAuth, async (c) => {
     await saveDatabase(db, false);
     return c.json({ user: sanitizeUser(user) });
   } catch (e) { console.error('[user/update]', e); return c.json({ error: 'Update failed' }, 500); }
+});
+
+app.get('/api/user/close-friends', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === c.get('userId'));
+  if (!me) return c.json({ error: 'Not found' }, 404);
+  const ids = Array.isArray(me.closeFriends) ? me.closeFriends : [];
+  return c.json({ ids });
+});
+
+app.post('/api/user/close-friends', requireAuth, async (c) => {
+  try {
+    const { targetId, action } = await c.req.json().catch(() => ({}));
+    const myId = c.get('userId');
+    if (!targetId) return c.json({ error: 'targetId required' }, 400);
+    if (targetId === myId) return c.json({ error: 'You cannot add yourself' }, 400);
+    const db = await fetchDatabase();
+    const me = db.users.find(u => u.id === myId);
+    const target = db.users.find(u => u.id === targetId);
+    if (!me || !target) return c.json({ error: 'Not found' }, 404);
+    me.closeFriends = Array.isArray(me.closeFriends) ? me.closeFriends : [];
+    const set = new Set(me.closeFriends);
+    const mode = String(action || 'toggle');
+    if (mode === 'add') set.add(targetId);
+    else if (mode === 'remove') set.delete(targetId);
+    else if (set.has(targetId)) set.delete(targetId);
+    else set.add(targetId);
+    me.closeFriends = Array.from(set).slice(0, 500);
+    await saveDatabase(db, false);
+    return c.json({ ids: me.closeFriends, added: me.closeFriends.includes(targetId) });
+  } catch (e) { console.error('[close-friends]', e); return c.json({ error: 'Update failed' }, 500); }
 });
 
 // ---------- Users list ----------
@@ -1408,7 +1456,7 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
   const blockedMe = Array.isArray(target.blocked) && target.blocked.includes(myId);
   const iBlocked = me && Array.isArray(me.blocked) && me.blocked.includes(targetId);
   if (blockedMe) return c.json({ error: 'Profile unavailable' }, 403);
-  const posts = (db.posts || []).filter(p => p.userId === targetId && !p.deletedAt)
+  const posts = (db.posts || []).filter(p => p.userId === targetId && !p.deletedAt && !isStoryRecord(p))
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => ({ id: p.id, imageUrl: p.imageUrl, text: p.text, createdAt: p.createdAt, likeCount: (p.likes || []).length, commentCount: (p.comments || []).length }));
   return c.json({
@@ -1433,7 +1481,7 @@ app.get('/api/posts', requireAuth, async (c) => {
   const blockedMe = new Set();
   db.users.forEach(u => { if (u.id !== myId && Array.isArray(u.blocked) && u.blocked.includes(myId)) blockedMe.add(u.id); });
   const list = db.posts
-    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId))
+    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId) && canViewerSeeStory(p, myId, db))
     .slice().sort((a, b) => b.createdAt - a.createdAt)
     .map(p => {
       const author = db.users.find(u => u.id === p.userId);
