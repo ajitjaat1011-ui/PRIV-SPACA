@@ -680,6 +680,39 @@
     <div class="story-hold-hint">Holding — playback paused</div>
     <button class="story-prev" id="storyPrev" aria-label="Previous"></button>
     <button class="story-next" id="storyNext" aria-label="Next"></button>
+
+    <!-- Owner footer: "Seen by" viewer count (tap to open viewer list) -->
+    <button class="story-seen-by hidden" id="storySeenBy" aria-label="Story viewers">
+      <i data-lucide="eye"></i>
+      <span id="storySeenByCount">0</span>
+    </button>
+
+    <!-- Viewer footer: quick emoji reactions + reply-in-chat bar -->
+    <div class="story-reply-bar hidden" id="storyReplyBar">
+      <div class="story-quick-reacts" id="storyQuickReacts">
+        <button class="story-react-emoji" data-emoji="❤️" aria-label="Love">❤️</button>
+        <button class="story-react-emoji" data-emoji="🔥" aria-label="Fire">🔥</button>
+        <button class="story-react-emoji" data-emoji="😂" aria-label="Haha">😂</button>
+        <button class="story-react-emoji" data-emoji="😮" aria-label="Wow">😮</button>
+        <button class="story-react-emoji" data-emoji="👏" aria-label="Clap">👏</button>
+      </div>
+      <form class="story-reply-form" id="storyReplyForm" autocomplete="off">
+        <input type="text" id="storyReplyInput" class="story-reply-input" maxlength="500" placeholder="Send message…" />
+        <button type="submit" class="story-reply-send" id="storyReplySend" aria-label="Send reply"><i data-lucide="send"></i></button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ====== STORY VIEWERS ("Seen by") SHEET ====== -->
+<div id="storyViewersSheet" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h3 id="storyViewersTitle">Viewers</h3>
+      <button class="ghost-btn" id="storyViewersClose" aria-label="Close"><i data-lucide="x"></i></button>
+    </div>
+    <div class="story-viewers-list" id="storyViewersList"></div>
   </div>
 </div>
 

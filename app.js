@@ -1286,6 +1286,18 @@ function renderMessage(m, meId, grouped) {
     bubble.appendChild(q);
   }
 
+  // Story reply context: a small card showing the story this message replied to.
+  if (m.storyReply) {
+    const sr = document.createElement('div');
+    sr.className = 'story-reply-context';
+    const label = isMine ? 'You replied to their story' : 'Replied to your story';
+    const thumb = m.storyReply.imageUrl
+      ? `<img src="${escapeHtml(m.storyReply.imageUrl)}" class="story-reply-thumb" alt="story" />`
+      : `<span class="story-reply-thumb story-reply-thumb--text">Aa</span>`;
+    sr.innerHTML = `${thumb}<div class="story-reply-ctx-meta"><span class="story-reply-ctx-label">${label}</span>${m.storyReply.text ? `<span class="story-reply-ctx-text">${escapeHtml(m.storyReply.text.slice(0, 60))}</span>` : ''}</div>`;
+    bubble.appendChild(sr);
+  }
+
   // === Encrypted (E2E) message rendering ===
   if (m.encrypted) {
     const t = document.createElement('div');
@@ -3122,8 +3134,11 @@ function renderStoryItem() {
   renderAvatar($('#storyAvatar'), user);
   $('#storyName').textContent = user.displayName || user.username;
   $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
+  const isMyStory = !!(State.user && user.id === State.user.id);
   const manageBtn = $('#storyManageBtn');
-  if (manageBtn) manageBtn.classList.toggle('hidden', !(State.user && user.id === State.user.id));
+  if (manageBtn) manageBtn.classList.toggle('hidden', !isMyStory);
+  // Footer UI: owners see a "Seen by" pill; viewers get the reply bar.
+  updateStoryFooter(recent, isMyStory);
 
   // Only show a loading spinner + pause progress for image stories, and only
   // if the image genuinely isn't cached yet (avoids a flash on repeat views).
@@ -3225,8 +3240,140 @@ function renderStoryItem() {
     const nextUserFirst = nextUser ? getStorySequence(nextUser.id)[0] : null;
     if (nextUserFirst && nextUserFirst.imageUrl) preloadStoryImage(nextUserFirst.imageUrl);
   }
+  // Analytics: record that we viewed this story item (server ignores self-views).
+  if (!isMyStory) recordStoryView(recent);
   refreshIcons();
 }
+
+// ---- Story analytics + reply footer ----
+const _recordedStoryViews = new Set(); // client-side de-dupe within a session
+let _currentStoryItem = null;
+
+function recordStoryView(story) {
+  if (!story || !story.id || _recordedStoryViews.has(story.id)) return;
+  _recordedStoryViews.add(story.id);
+  api('/stories/' + encodeURIComponent(story.id) + '/view', { method: 'POST' }).catch(() => {
+    _recordedStoryViews.delete(story.id); // allow a retry next open on failure
+  });
+}
+
+function updateStoryFooter(story, isMyStory) {
+  _currentStoryItem = story;
+  const seenBtn = $('#storySeenBy');
+  const replyBar = $('#storyReplyBar');
+  if (isMyStory) {
+    if (replyBar) replyBar.classList.add('hidden');
+    if (seenBtn) {
+      const n = typeof story.viewCount === 'number' ? story.viewCount : (Array.isArray(story.views) ? story.views.length : 0);
+      const cnt = $('#storySeenByCount');
+      if (cnt) cnt.textContent = String(n);
+      seenBtn.classList.remove('hidden');
+    }
+  } else {
+    if (seenBtn) seenBtn.classList.add('hidden');
+    if (replyBar) replyBar.classList.remove('hidden');
+    const inp = $('#storyReplyInput');
+    if (inp) inp.value = '';
+  }
+}
+
+async function openStoryViewersSheet() {
+  const story = _currentStoryItem;
+  if (!story || !story.id) return;
+  const sheet = $('#storyViewersSheet');
+  const listEl = $('#storyViewersList');
+  const titleEl = $('#storyViewersTitle');
+  if (!sheet || !listEl) return;
+  // Pause story playback while the sheet is open so the timer doesn't advance.
+  pauseStoryForHold();
+  listEl.innerHTML = '<div class="story-viewers-empty">Loading…</div>';
+  sheet.classList.remove('hidden');
+  const card = sheet.querySelector('.sheet-card');
+  if (card) motionAnimate(card, { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] }, { duration: 0.34, easing: [0.2, 0.85, 0.15, 1] });
+  refreshIcons();
+  try {
+    const data = await api('/stories/' + encodeURIComponent(story.id) + '/viewers');
+    const viewers = data.viewers || [];
+    if (titleEl) titleEl.textContent = viewers.length ? ('Viewers · ' + viewers.length) : 'Viewers';
+    if (!viewers.length) {
+      listEl.innerHTML = '<div class="story-viewers-empty">No views yet. When people watch this story, they\'ll show up here.</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    viewers.forEach(v => {
+      const row = document.createElement('div');
+      row.className = 'story-viewer-row';
+      const av = document.createElement('span');
+      av.className = 'avatar sm';
+      renderAvatar(av, v);
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.innerHTML = `<div class="nm">${escapeHtml(v.displayName || v.username || 'Member')}</div><div class="sub">${escapeHtml(timeAgo(v.at))}</div>`;
+      row.appendChild(av); row.appendChild(meta);
+      listEl.appendChild(row);
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="story-viewers-empty">Couldn\'t load viewers.</div>';
+  }
+}
+function closeStoryViewersSheet() {
+  const sheet = $('#storyViewersSheet');
+  if (sheet) sheet.classList.add('hidden');
+  resumeStoryFromHold();
+}
+
+async function sendStoryReply(emoji, text) {
+  const story = _currentStoryItem;
+  if (!story || !story.id) return;
+  const body = {};
+  if (emoji) body.emoji = emoji;
+  if (text) body.text = text;
+  try {
+    await api('/stories/' + encodeURIComponent(story.id) + '/reply', { method: 'POST', body });
+    toast(emoji && !text ? 'Reaction sent' : 'Reply sent', 'success');
+  } catch (e) {
+    toast('Reply failed: ' + (e.message || ''), 'error');
+  }
+}
+
+function bindStoryReplyUI() {
+  const seenBtn = $('#storySeenBy');
+  if (seenBtn) seenBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openStoryViewersSheet(); });
+  const vClose = $('#storyViewersClose');
+  if (vClose) vClose.addEventListener('click', closeStoryViewersSheet);
+  const vSheet = $('#storyViewersSheet');
+  if (vSheet) vSheet.addEventListener('click', (e) => { if (e.target === vSheet) closeStoryViewersSheet(); });
+  // Quick emoji reactions
+  $$('#storyQuickReacts .story-react-emoji').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      btn.classList.remove('burst'); void btn.offsetWidth; btn.classList.add('burst');
+      sendStoryReply(btn.dataset.emoji, '');
+    });
+  });
+  // Reply text form
+  const form = $('#storyReplyForm');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const inp = $('#storyReplyInput');
+      const txt = (inp && inp.value || '').trim();
+      if (!txt) return;
+      if (inp) inp.value = '';
+      sendStoryReply('', txt);
+    });
+    // Pause playback while the reply input is focused so the story doesn't
+    // advance mid-typing; resume when the field is blurred.
+    const inp = $('#storyReplyInput');
+    if (inp) {
+      inp.addEventListener('focus', () => { try { pauseStoryForHold(); } catch (_) {} });
+      inp.addEventListener('blur', () => { try { resumeStoryFromHold(); } catch (_) {} });
+      // Stop taps in the input area from triggering next/prev navigation.
+      inp.addEventListener('click', (e) => e.stopPropagation());
+    }
+  }
+}
+
 // Ordered list of users that currently have an active story, in the same
 // order they appear in the stories rail (me first, then others by recency).
 // Lets the viewer advance from one user's last story straight into the next
@@ -3316,6 +3463,10 @@ function closeStory() {
   const v = $('#storyViewer');
   v.classList.add('hidden');
   v.classList.remove('is-loading', 'holding', 'paused');
+  const seenBtn = $('#storySeenBy'); if (seenBtn) seenBtn.classList.add('hidden');
+  const replyBar = $('#storyReplyBar'); if (replyBar) replyBar.classList.add('hidden');
+  const vSheet = $('#storyViewersSheet'); if (vSheet) vSheet.classList.add('hidden');
+  _currentStoryItem = null;
   if (typeof renderStoriesRail === 'function') renderStoriesRail();
 }
 
@@ -5579,7 +5730,7 @@ function boot() {
   const bindSteps = [
     bindTabs, bindRooms, bindComposer, bindFeedComposer, bindProfile,
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
-    bindStoryViewer, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
+    bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
   ];
   for (const step of bindSteps) {

@@ -1492,7 +1492,14 @@ app.get('/api/posts', requireAuth, async (c) => {
       });
       const pa = author ? sanitizeUser(author) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
       const images = Array.isArray(p.images) && p.images.length > 0 ? p.images : (p.imageUrl ? [p.imageUrl] : []);
-      return { ...p, imageUrl: images[0] || null, images, music: p.music || null, isScratch: !!p.isScratch, likes: p.likes || [], likeCount: (p.likes || []).length, comments, commentCount: comments.length, author: pa };
+      // Only the author receives the raw viewer list; everyone else just gets
+      // the count stripped out entirely (privacy: don't leak who saw a story).
+      const isOwner = p.userId === myId;
+      const viewCount = Array.isArray(p.views) ? p.views.length : 0;
+      const base = { ...p, imageUrl: images[0] || null, images, music: p.music || null, isScratch: !!p.isScratch, likes: p.likes || [], likeCount: (p.likes || []).length, comments, commentCount: comments.length, author: pa };
+      if (!isOwner) delete base.views;
+      if (isStoryRecord(p)) base.viewCount = isOwner ? viewCount : undefined;
+      return base;
     });
   return c.json({ posts: list });
 });
@@ -1668,6 +1675,82 @@ app.post('/api/posts/restore', requireAuth, async (c) => {
   delete p.deletedAt;
   await saveDatabase(db, false);
   return c.json({ ok: true });
+});
+
+// ---------- Story analytics: "Seen by" ----------
+// Record that the current user viewed a story item. Idempotent per viewer.
+// Author never counts as a viewer of their own story.
+app.post('/api/stories/:id/view', requireAuth, async (c) => {
+  const postId = c.req.param('id');
+  const myId = c.get('userId');
+  let db = await fetchDatabase();
+  let p = db.posts.find(x => x.id === postId);
+  if (!p) { cacheTimestamp = 0; db = await fetchDatabase(); p = db.posts.find(x => x.id === postId); }
+  if (!p || !isStoryRecord(p)) return c.json({ error: 'Story not found' }, 404);
+  // Only record views the viewer is actually allowed to see.
+  if (!canViewerSeeStory(p, myId, db)) return c.json({ error: 'Forbidden' }, 403);
+  if (p.userId === myId) return c.json({ ok: true, viewCount: (p.views || []).length }); // owner self-view ignored
+  p.views = Array.isArray(p.views) ? p.views : [];
+  const existing = p.views.find(v => v.userId === myId);
+  if (existing) { existing.at = nowMs(); }
+  else { p.views.push({ userId: myId, at: nowMs() }); }
+  await saveDatabase(db, true); // ephemeral: high-frequency, low-criticality
+  return c.json({ ok: true, viewCount: p.views.length });
+});
+
+// Owner-only viewer list for a story item (Instagram "Seen by").
+app.get('/api/stories/:id/viewers', requireAuth, async (c) => {
+  const postId = c.req.param('id');
+  const myId = c.get('userId');
+  const db = await fetchDatabase();
+  const p = db.posts.find(x => x.id === postId);
+  if (!p || !isStoryRecord(p)) return c.json({ error: 'Story not found' }, 404);
+  if (p.userId !== myId) return c.json({ error: 'Forbidden' }, 403); // only the author sees viewers
+  const views = (Array.isArray(p.views) ? p.views : []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+  const viewers = views.map(v => {
+    const u = db.users.find(x => x.id === v.userId);
+    const su = u ? sanitizeUser(u) : { id: v.userId, displayName: 'Member', username: (v.userId || 'm').slice(-6), photoUrl: '' };
+    return { ...su, at: v.at || 0 };
+  });
+  return c.json({ viewers, viewCount: viewers.length });
+});
+
+// ---------- Reply to a story (delivered into DMs) ----------
+app.post('/api/stories/:id/reply', requireAuth, async (c) => {
+  const postId = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  const myId = c.get('userId');
+  const emoji = typeof body.emoji === 'string' ? body.emoji.slice(0, 8) : '';
+  const text = sanitizeText(body.text || '', 500).trim();
+  if (!emoji && !text) return c.json({ error: 'Empty reply' }, 400);
+  let db = await fetchDatabase();
+  let p = db.posts.find(x => x.id === postId);
+  if (!p) { cacheTimestamp = 0; db = await fetchDatabase(); p = db.posts.find(x => x.id === postId); }
+  if (!p || !isStoryRecord(p)) return c.json({ error: 'Story not found' }, 404);
+  if (p.userId === myId) return c.json({ error: 'Cannot reply to your own story' }, 400);
+  if (!canViewerSeeStory(p, myId, db)) return c.json({ error: 'Forbidden' }, 403);
+  const roomId = dmRoomFor(myId, p.userId);
+  const author = db.users.find(u => u.id === myId);
+  const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
+  // A compact reference to the story so the DM bubble can show context.
+  const storyRef = {
+    id: p.id, kind: 'story',
+    imageUrl: (Array.isArray(p.images) && p.images[0]) || p.imageUrl || null,
+    text: typeof p.text === 'string' ? p.text.slice(0, 120) : '',
+    username: (p.authorSnapshot && p.authorSnapshot.username) || '',
+  };
+  const bodyText = emoji ? (text ? emoji + ' ' + text : emoji) : text;
+  const msg = {
+    id: uid('msg'), roomId, userId: myId, text: bodyText, imageUrl: null,
+    storyReply: storyRef, replyTo: null, authorSnapshot: snap, createdAt: nowMs(),
+  };
+  db.messages.push(msg);
+  const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
+  _pushEvent(p.userId, 'new_message', { roomId, message: enriched });
+  pushNotification(db, p.userId, 'story_reply', myId, { text: bodyText.slice(0, 80), postId: p.id });
+  const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id));
+  if (isPersist() && !persisted) return c.json({ error: 'Reply storage unavailable. Please retry.' }, 503);
+  return c.json({ ok: true, message: enriched });
 });
 
 // ---------- Admin panel removed by owner request ----------
