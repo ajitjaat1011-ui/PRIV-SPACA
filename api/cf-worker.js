@@ -1444,7 +1444,7 @@ app.get('/api/posts', requireAuth, async (c) => {
       });
       const pa = author ? sanitizeUser(author) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
       const images = Array.isArray(p.images) && p.images.length > 0 ? p.images : (p.imageUrl ? [p.imageUrl] : []);
-      return { ...p, imageUrl: images[0] || null, images, likes: p.likes || [], likeCount: (p.likes || []).length, comments, commentCount: comments.length, author: pa };
+      return { ...p, imageUrl: images[0] || null, images, isScratch: !!p.isScratch, likes: p.likes || [], likeCount: (p.likes || []).length, comments, commentCount: comments.length, author: pa };
     });
   return c.json({ posts: list });
 });
@@ -1452,7 +1452,7 @@ app.get('/api/posts', requireAuth, async (c) => {
 app.post('/api/posts/create', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { text, imageUrl, images } = body;
+    const { text, imageUrl, images, isScratch } = body;
     const ct = sanitizeText(text, 2000);
     const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
     const cimgs = Array.isArray(images) ? images.filter(u => typeof u === 'string' && u.length <= 4096).slice(0, 3) : (ci ? [ci] : []);
@@ -1462,7 +1462,7 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     const db = await fetchDatabase();
     const author = db.users.find(u => u.id === myId);
     const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
-    const post = { id: uid('post'), userId: myId, text: ct, imageUrl: mainImg, images: cimgs.length > 0 ? cimgs : (mainImg ? [mainImg] : []), likes: [], comments: [], authorSnapshot: snap, createdAt: nowMs() };
+    const post = { id: uid('post'), userId: myId, text: ct, imageUrl: mainImg, images: cimgs.length > 0 ? cimgs : (mainImg ? [mainImg] : []), isScratch: !!isScratch, likes: [], comments: [], authorSnapshot: snap, createdAt: nowMs() };
     db.posts.push(post);
     const enriched = { ...post, likeCount: 0, commentCount: 0, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
     _broadcastEvent('new_post', { post: enriched }, myId);

@@ -647,6 +647,8 @@ function closePostComposer() {
   if (card) card.classList.add('hidden');
   const inp = $('#postInput');
   if (inp) inp.value = '';
+  const chk = $('#postScratchCheckbox');
+  if (chk) chk.checked = false;
   if (typeof clearPostAttach === 'function') clearPostAttach();
   const pm = $('#postComposerModal');
   if (pm) pm.classList.add('hidden');
@@ -2103,6 +2105,83 @@ function renderPosts() {
   refreshIcons();
 }
 
+function attachScratchOverlay(wrap) {
+  const overlay = document.createElement('div');
+  overlay.className = 'scratch-overlay';
+  overlay.style.cssText = 'position:absolute; inset:0; z-index:5; display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action:none; border-radius:18px; overflow:hidden;';
+  
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText = 'width:100%; height:100%; display:block;';
+  overlay.appendChild(canvas);
+  wrap.appendChild(overlay);
+
+  const initCanvas = () => {
+    const w = wrap.clientWidth || 360;
+    const h = wrap.clientHeight || 360;
+    if (w <= 0 || h <= 0) { setTimeout(initCanvas, 100); return; }
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, '#334155'); grad.addColorStop(0.3, '#94a3b8'); grad.addColorStop(0.6, '#64748b'); grad.addColorStop(1, '#1e293b');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    // Sparkles
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    for (let i = 0; i < w; i += 18) {
+      for (let j = 0; j < h; j += 18) {
+        if ((i + j) % 36 === 0) { ctx.beginPath(); ctx.arc(i, j, 1.8, 0, Math.PI * 2); ctx.fill(); }
+      }
+    }
+    // Badge
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.roundRect(w/2 - 120, h/2 - 24, 240, 48, 24);
+    ctx.fill();
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '700 14px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('✨ Scratch to Reveal Secret! ✨', w/2, h/2);
+
+    let isScratching = false;
+    const scratchAt = (pos) => {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, 35, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    const checkDone = () => {
+      try {
+        const data = ctx.getImageData(0, 0, w, h).data;
+        let cleared = 0, total = 0;
+        for (let i = 3; i < data.length; i += 4 * 25) { total++; if (data[i] === 0) cleared++; }
+        if (cleared / total > 0.42) {
+          overlay.style.transition = 'opacity 0.65s ease, transform 0.65s ease';
+          overlay.style.opacity = '0';
+          overlay.style.transform = 'scale(1.05)';
+          setTimeout(() => overlay.remove(), 650);
+        }
+      } catch (_) {}
+    };
+    const getPos = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX;
+      const cy = e.touches && e.touches[0] ? e.touches[0].clientY : e.clientY;
+      return { x: cx - rect.left, y: cy - rect.top };
+    };
+    const start = (e) => { isScratching = true; scratchAt(getPos(e)); };
+    const move = (e) => { if (!isScratching) return; if (e.cancelable) e.preventDefault(); scratchAt(getPos(e)); };
+    const end = () => { if (isScratching) { isScratching = false; checkDone(); } };
+
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    canvas.addEventListener('touchstart', start, { passive: false });
+    canvas.addEventListener('touchmove', move, { passive: false });
+    window.addEventListener('touchend', end);
+  };
+  setTimeout(initCanvas, 50);
+}
+
 function renderPost(p) {
   const card = document.createElement('article');
   card.className = 'post-card';
@@ -2235,8 +2314,10 @@ function renderPost(p) {
       });
 
       wrap.appendChild(track);
+      if (p.isScratch) attachScratchOverlay(wrap);
       card.appendChild(wrap);
     }
+    if (imgs.length === 1 && p.isScratch) attachScratchOverlay(card.querySelector('.post-img-wrap'));
   } else {
     // Text-only post — no media to overlay onto, so put a classic header at top
     card.appendChild(buildHead(false));
@@ -2855,8 +2936,11 @@ function bindFeedComposer() {
     try {
       const images = validAttaches.map(a => a.url);
       const imageUrl = images[0] || null;
-      await api('/posts/create', { method: 'POST', body: { text, imageUrl, images } });
+      const chk = $('#postScratchCheckbox');
+      const isScratch = !!(chk && chk.checked);
+      await api('/posts/create', { method: 'POST', body: { text, imageUrl, images, isScratch } });
       $('#postInput').value = '';
+      if (chk) chk.checked = false;
       clearPostAttach();
       lastPostsSignature = '';
       loadPosts();
