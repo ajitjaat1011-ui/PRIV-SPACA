@@ -2935,15 +2935,27 @@ function openStoryFor(user) {
   $('#storyName').textContent = user.displayName || user.username;
   $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
   if (recent && recent.imageUrl) {
+    const imgWrap = document.createElement('div');
+    imgWrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;';
     const img = document.createElement('img');
     img.src = recent.imageUrl;
     img.alt = 'story';
-    const st = recent.style || {};
-    if (st.ratio === '4:5') { img.style.objectFit = 'cover'; img.style.width = '88%'; img.style.height = '74%'; img.style.borderRadius = '24px'; }
-    else if (st.ratio === '1:1') { img.style.objectFit = 'cover'; img.style.width = '88%'; img.style.aspectRatio = '1/1'; img.style.borderRadius = '24px'; }
-    else if (st.ratio === 'fit') { img.style.objectFit = 'contain'; img.style.width = '100%'; img.style.height = '100%'; }
-    if (st.zoom && st.zoom !== 1) img.style.transform = `scale(${st.zoom})`;
-    content.appendChild(img);
+    img.style.cssText = 'object-fit:contain; width:100%; height:100%; max-height:82vh; border-radius:8px;';
+    imgWrap.appendChild(img);
+
+    if (recent.text) {
+      const cap = document.createElement('div');
+      cap.className = 'story-img-caption';
+      cap.style.cssText = 'position:absolute; bottom:120px; left:20px; right:20px; background:rgba(0,0,0,0.65); color:#fff; padding:10px 18px; border-radius:20px; text-align:center; font-size:16px; backdrop-filter:blur(8px); z-index:10; word-break:break-word;';
+      cap.textContent = recent.text;
+      const st = recent.style || {};
+      if (st.font === 'neon') { cap.style.fontFamily = "'Impact', 'Arial Black', sans-serif"; cap.style.fontWeight = 'bold'; }
+      else if (st.font === 'typewriter') { cap.style.fontFamily = 'monospace'; }
+      else if (st.font === 'script') { cap.style.fontFamily = "'Brush Script MT', Georgia, cursive"; cap.style.fontSize = '20px'; }
+      else if (st.font === 'playful') { cap.style.fontFamily = "'Trebuchet MS', sans-serif"; }
+      imgWrap.appendChild(cap);
+    }
+    content.appendChild(imgWrap);
   } else if (recent && recent.text) {
     const div = document.createElement('div');
     div.className = 'text-story';
@@ -3021,29 +3033,7 @@ const storyMusicCatalog = [
 let activeStoryMusicCat = 'all';
 let selectedStoryMusicId = null;
 
-let activeStoryRatio = '9:16';
-let activeStoryZoom = 1.0;
 let activeStoryFont = 'modern';
-
-window.setStoryRatio = (ratio, el) => {
-  activeStoryRatio = ratio;
-  $$('#storyPhotoControls .story-pill-btn').forEach(b => b.classList.remove('active'));
-  if (el) el.classList.add('active');
-  const prev = $('#storyEditorPreviewImg');
-  if (!prev) return;
-  if (ratio === '9:16') { prev.style.objectFit = 'cover'; prev.style.width = '100%'; prev.style.height = '100%'; prev.style.borderRadius = '0'; }
-  if (ratio === '4:5') { prev.style.objectFit = 'cover'; prev.style.width = '88%'; prev.style.height = '74%'; prev.style.borderRadius = '24px'; }
-  if (ratio === '1:1') { prev.style.objectFit = 'cover'; prev.style.width = '88%'; prev.style.height = 'auto'; prev.style.aspectRatio = '1/1'; prev.style.borderRadius = '24px'; }
-  if (ratio === 'fit') { prev.style.objectFit = 'contain'; prev.style.width = '100%'; prev.style.height = '100%'; prev.style.borderRadius = '0'; }
-};
-
-window.adjustStoryZoom = (delta) => {
-  activeStoryZoom = Math.max(0.5, Math.min(2.5, activeStoryZoom + delta));
-  const prev = $('#storyEditorPreviewImg');
-  if (prev) prev.style.transform = `scale(${activeStoryZoom.toFixed(2)})`;
-  const val = $('#storyZoomVal');
-  if (val) val.textContent = Math.round(activeStoryZoom * 100) + '%';
-};
 
 window.setStoryFont = (font, el) => {
   activeStoryFont = font;
@@ -3075,7 +3065,6 @@ function openStoryCreator() {
       const localUrl = URL.createObjectURL(f);
       if (prev) { prev.src = localUrl; prev.classList.remove('hidden'); }
       if (ph) ph.classList.add('hidden');
-      const ctrl = $('#storyPhotoControls'); if (ctrl) ctrl.classList.remove('hidden');
       try {
         const res = await uploadPermanentImage(f, { kind: 'story', maxDim: 1200, quality: 0.82 });
         State.storyCreatorImgUrl = res.url;
@@ -3100,11 +3089,9 @@ function closeStoryCreator() {
   const stk = $('#storyStageMusicSticker');
   if (stk) stk.classList.add('hidden');
   const prev = $('#storyEditorPreviewImg');
-  if (prev) { prev.src = ''; prev.classList.add('hidden'); prev.style.transform = 'scale(1)'; prev.style.objectFit = 'cover'; prev.style.width = '100%'; prev.style.height = '100%'; }
-  const ctrl = $('#storyPhotoControls'); if (ctrl) ctrl.classList.add('hidden');
+  if (prev) { prev.src = ''; prev.classList.add('hidden'); }
   const fc = $('#storyFontControls'); if (fc) fc.classList.add('hidden');
-  activeStoryZoom = 1.0; activeStoryRatio = '9:16'; activeStoryFont = 'modern';
-  const val = $('#storyZoomVal'); if (val) val.textContent = '100%';
+  activeStoryFont = 'modern';
   const ph = $('#storyEditorPlaceholder');
   if (ph) ph.classList.remove('hidden');
   const cap = $('#storyEditorCaptionInput');
@@ -3228,7 +3215,7 @@ async function publishStoryWithMusic(isCf = false) {
   const imageUrl = State.storyCreatorImgUrl || null;
   const song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   const music = song ? { id: song.id, title: song.title, artist: song.artist, audio: song.audio, art: song.art } : null;
-  const style = { ratio: activeStoryRatio, zoom: activeStoryZoom, font: activeStoryFont };
+  const style = { font: activeStoryFont };
 
   if (!text && !imageUrl) {
     toast('Pick a photo or type a text caption first!', 'error');
