@@ -359,10 +359,14 @@ async function saveDatabase(data, isEphemeral = false) {
     return true;
   }
   if (isEphemeral && isNeonConfigured()) {
-    // Fire-and-forget fast path straight to Neon — no need for the full
-    // merge-with-remote dance below since typing/heartbeat data is small,
-    // per-user, and safely last-write-wins.
-    neonWriteDb(data).catch(() => {});
+    // Write directly to Neon and await it. We intentionally do NOT use a
+    // fire-and-forget pattern here: Cloudflare Workers can terminate
+    // un-awaited promises as soon as the HTTP response is sent, which was
+    // silently dropping heartbeat/typing writes. Neon writes are fast
+    // (single UPSERT), so awaiting adds negligible latency.
+    try {
+      await neonWriteDb(data);
+    } catch (_) { /* best-effort; ephemeral data, ok to lose occasionally */ }
     return true;
   }
   // Merge with the newest remote DB before writing. This prevents a later request
