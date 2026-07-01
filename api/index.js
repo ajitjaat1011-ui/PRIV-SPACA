@@ -125,6 +125,23 @@ function sanitizeText(s, maxLen = 4000) {
     .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '')        // strip zero-width chars (anti-impersonation)
     .slice(0, maxLen);
 }
+function isStoryRecord(post) {
+  if (!post) return false;
+  return !!(post.story === true || post.kind === 'story' || post.storyExpiresAt || post.style || post.music);
+}
+function storyExpiresAt(post) {
+  return Number(post && post.storyExpiresAt) || ((post && post.createdAt) ? (post.createdAt + 24 * 60 * 60 * 1000) : 0);
+}
+function canViewerSeeStory(post, viewerId, db) {
+  if (!isStoryRecord(post)) return true;
+  if (!post || post.deletedAt) return false;
+  if (storyExpiresAt(post) <= nowMs()) return false;
+  if (post.userId === viewerId) return true;
+  if ((post.audience || 'all') !== 'close_friends') return true;
+  const author = (db.users || []).find(u => u.id === post.userId);
+  const closeFriends = Array.isArray(author && author.closeFriends) ? author.closeFriends : [];
+  return closeFriends.includes(viewerId);
+}
 
 // ---------- Configuration ----------
 const JWT_SECRET = process.env.JWT_SECRET || 'priv-spaca-dev-secret-change-me-in-production';
@@ -769,6 +786,7 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
       followers: [],
       following: [],
       blocked: [],
+      closeFriends: [],
       termsAccepted: true,
       termsVersion: String(termsVersion || '1.0'),
       termsAcceptedAt: nowMs(),
@@ -968,6 +986,39 @@ app.post('/api/user/update', authMiddleware, async (req, res) => {
     }
     await saveDatabase(db, false);
     res.json({ user: sanitizeUser(user) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+app.get('/api/user/close-friends', authMiddleware, async (req, res) => {
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  if (!me) return res.status(404).json({ error: 'Not found' });
+  const ids = Array.isArray(me.closeFriends) ? me.closeFriends : [];
+  res.json({ ids });
+});
+
+app.post('/api/user/close-friends', authMiddleware, async (req, res) => {
+  try {
+    const { targetId, action } = req.body || {};
+    if (!targetId) return res.status(400).json({ error: 'targetId required' });
+    if (targetId === req.userId) return res.status(400).json({ error: 'You cannot add yourself' });
+    const db = await fetchDatabase();
+    const me = db.users.find(u => u.id === req.userId);
+    const target = db.users.find(u => u.id === targetId);
+    if (!me || !target) return res.status(404).json({ error: 'Not found' });
+    me.closeFriends = Array.isArray(me.closeFriends) ? me.closeFriends : [];
+    const set = new Set(me.closeFriends);
+    const mode = String(action || 'toggle');
+    if (mode === 'add') set.add(targetId);
+    else if (mode === 'remove') set.delete(targetId);
+    else if (set.has(targetId)) set.delete(targetId);
+    else set.add(targetId);
+    me.closeFriends = Array.from(set).slice(0, 500);
+    await saveDatabase(db, false);
+    res.json({ ids: me.closeFriends, added: me.closeFriends.includes(targetId) });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Update failed' });
@@ -1480,7 +1531,7 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
   const iBlocked = me && Array.isArray(me.blocked) && me.blocked.includes(targetId);
   if (blockedMe) return res.status(403).json({ error: 'Profile unavailable' });
   const posts = (db.posts || [])
-    .filter(p => p.userId === targetId)
+    .filter(p => p.userId === targetId && !p.deletedAt && !isStoryRecord(p))
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => ({
       id: p.id, imageUrl: p.imageUrl, text: p.text, createdAt: p.createdAt,
@@ -1515,7 +1566,7 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
     }
   });
   const list = db.posts
-    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId))
+    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId) && canViewerSeeStory(p, req.userId, db))
     .slice()
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => {

@@ -23,6 +23,7 @@ const State = {
   posts: [],
   scheduled: [],
   typingUsers: [],
+  closeFriends: safeJsonParse(safeLocalGet('ps_closeFriends', '[]'), []),
   replyTo: null,
   attach: null,
   postAttach: null,
@@ -384,6 +385,7 @@ function showApp() {
   switchTab('feed');
   startPolls();
   loadAll();
+  loadCloseFriends().catch(() => {});
   // Part 3: publish E2E public key so peers can DM us with Secret Chat
   if (window.crypto && crypto.subtle && window.indexedDB) {
     setTimeout(() => { E2E.publishPublicKey().catch(() => {}); }, 800);
@@ -439,11 +441,13 @@ function logout(silent) {
   State.messages = [];
   State.members = [];
   State.posts = [];
+  State.closeFriends = [];
   _previousMessageIds = new Set();
   _previousPostIds = new Set();
   _storiesRendered = false;
   try { localStorage.removeItem('ps_token'); } catch (_) {}
   try { localStorage.removeItem('ps_user'); } catch (_) {}
+  try { localStorage.removeItem('ps_closeFriends'); } catch (_) {}
   showAuth();
   if (!silent) toast('Signed out');
 }
@@ -1729,7 +1733,7 @@ function isFastPolling() { return Date.now() < _fastPollUntil; }
 let _lastFeedPollAt = 0;
 let _lastNotifPollAt = 0;
 function isStorySurfaceOpen() {
-  const ids = ['storyEditorModal', 'storyViewer', 'storyTextEditorScreen', 'storyMusicSheet'];
+  const ids = ['storyEditorModal', 'storyViewer', 'storyTextEditorScreen', 'storyMusicSheet', 'closeFriendsSheet', 'storyManageSheet'];
   return ids.some(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');
@@ -3092,6 +3096,8 @@ function renderStoryItem() {
   renderAvatar($('#storyAvatar'), user);
   $('#storyName').textContent = user.displayName || user.username;
   $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
+  const manageBtn = $('#storyManageBtn');
+  if (manageBtn) manageBtn.classList.toggle('hidden', !(State.user && user.id === State.user.id));
   if (recent.imageUrl) {
     const imgWrap = document.createElement('div');
     imgWrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;';
@@ -3770,6 +3776,11 @@ window.publishStoryWithMusic = async (isCf = false) => {
     toast('Pick a photo or type a text caption first!', 'error');
     return;
   }
+  if (isCf && (!Array.isArray(State.closeFriends) || State.closeFriends.length === 0)) {
+    toast('Add at least one Close Friend first', 'error');
+    setTimeout(() => openCloseFriendsSheet(), 120);
+    return;
+  }
   try {
     await api('/posts/create', {
       method: 'POST',
@@ -4275,6 +4286,8 @@ function openSettings() {
   $$('#settingsSheet [data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === accent));
   updatePushStatus();
   updateRealtimeStatus();
+  updateCloseFriendsStatus();
+  if (State.token && (!Array.isArray(State.closeFriends) || State.closeFriends.length === 0)) loadCloseFriends().catch(() => {});
   refreshIcons();
 }
 function closeSettings() {
@@ -4329,6 +4342,198 @@ function bindSettingsSheet() {
     if (confirm('Sign out of PRIV SPACA?')) { closeSettings(); logout(false); }
   });
   // Bottom-sheet rebind for theme/accent buttons that live inside #settingsSheet (rebound by bindThemeToggle)
+}
+
+function updateCloseFriendsStatus() {
+  const el = $('#closeFriendsCount');
+  if (!el) return;
+  el.textContent = String((State.closeFriends || []).length || 0);
+}
+async function loadCloseFriends() {
+  if (!State.token) return [];
+  try {
+    const data = await api('/user/close-friends');
+    State.closeFriends = Array.isArray(data.ids) ? data.ids : [];
+    try { localStorage.setItem('ps_closeFriends', JSON.stringify(State.closeFriends)); } catch (_) {}
+    updateCloseFriendsStatus();
+    return State.closeFriends;
+  } catch (_) {
+    updateCloseFriendsStatus();
+    return State.closeFriends || [];
+  }
+}
+function openCloseFriendsSheet() {
+  const sheet = $('#closeFriendsSheet');
+  if (!sheet) return;
+  renderCloseFriendsSheet();
+  sheet.classList.remove('hidden');
+  const card = sheet.querySelector('.sheet-card');
+  if (card) motionAnimate(card,
+    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
+    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
+  );
+  refreshIcons();
+}
+function closeCloseFriendsSheet() {
+  const sheet = $('#closeFriendsSheet');
+  if (sheet) sheet.classList.add('hidden');
+}
+async function toggleCloseFriend(targetId) {
+  try {
+    const data = await api('/user/close-friends', { method: 'POST', body: { targetId, action: 'toggle' } });
+    State.closeFriends = Array.isArray(data.ids) ? data.ids : [];
+    try { localStorage.setItem('ps_closeFriends', JSON.stringify(State.closeFriends)); } catch (_) {}
+    updateCloseFriendsStatus();
+    renderCloseFriendsSheet();
+    toast(data.added ? 'Added to Close Friends' : 'Removed from Close Friends', 'success');
+  } catch (e) {
+    toast(e.message || 'Update failed', 'error');
+  }
+}
+function renderCloseFriendsSheet() {
+  const list = $('#closeFriendsList');
+  if (!list) return;
+  const meId = State.user && State.user.id;
+  const users = (State.members || []).filter(u => u.id !== meId)
+    .slice()
+    .sort((a, b) => {
+      const aSel = (State.closeFriends || []).includes(a.id) ? 1 : 0;
+      const bSel = (State.closeFriends || []).includes(b.id) ? 1 : 0;
+      if (bSel !== aSel) return bSel - aSel;
+      if ((b.online ? 1 : 0) !== (a.online ? 1 : 0)) return (b.online ? 1 : 0) - (a.online ? 1 : 0);
+      return String(a.username || '').localeCompare(String(b.username || ''));
+    });
+  list.innerHTML = '';
+  if (!users.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'No other visible members yet.';
+    list.appendChild(empty);
+    return;
+  }
+  users.forEach(u => {
+    const li = document.createElement('li');
+    li.className = 'cf-row';
+    const av = document.createElement('span');
+    av.className = 'avatar md';
+    renderAvatar(av, u, { showStatus: true, online: !!u.online });
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = `<div class="nm">${escapeHtml(u.displayName || u.username)}</div><div class="sub">@${escapeHtml(u.username || '')}${u.online ? ' · online' : ''}</div>`;
+    const btn = document.createElement('button');
+    const active = (State.closeFriends || []).includes(u.id);
+    btn.className = 'cf-toggle-btn' + (active ? ' active' : '');
+    btn.textContent = active ? 'Close Friend' : 'Add';
+    btn.addEventListener('click', () => toggleCloseFriend(u.id));
+    li.appendChild(av); li.appendChild(meta); li.appendChild(btn);
+    list.appendChild(li);
+  });
+}
+function getOwnActiveStories() {
+  if (!State.user) return [];
+  return getStorySequence(State.user.id).slice().reverse();
+}
+function openStoryManageSheet() {
+  const sheet = $('#storyManageSheet');
+  if (!sheet) return;
+  renderStoryManageSheet();
+  sheet.classList.remove('hidden');
+  const card = sheet.querySelector('.sheet-card');
+  if (card) motionAnimate(card,
+    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
+    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
+  );
+  refreshIcons();
+}
+function closeStoryManageSheet() {
+  const sheet = $('#storyManageSheet');
+  if (sheet) sheet.classList.add('hidden');
+}
+function renderStoryManageSheet() {
+  const list = $('#storyManageList');
+  if (!list) return;
+  const stories = getOwnActiveStories();
+  list.innerHTML = '';
+  if (!stories.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'No active stories right now.';
+    list.appendChild(empty);
+    return;
+  }
+  stories.forEach((story) => {
+    const li = document.createElement('li');
+    li.className = 'story-manage-item';
+    const thumb = document.createElement('div');
+    thumb.className = 'story-manage-thumb';
+    if (story.imageUrl) {
+      const img = document.createElement('img');
+      img.src = story.imageUrl;
+      img.alt = 'story';
+      thumb.appendChild(img);
+    } else {
+      thumb.textContent = (story.text || 'Story').slice(0, 24);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const chipCls = (story.audience === 'close_friends') ? 'story-audience-chip cf' : 'story-audience-chip';
+    const chipLabel = (story.audience === 'close_friends') ? '★ Close Friends' : 'Your story';
+    meta.innerHTML = `<div class="nm">${escapeHtml((story.text || 'Photo story').slice(0, 42) || 'Story')}</div><div class="sub">${escapeHtml(timeAgo(story.createdAt))}</div><div class="${chipCls}">${chipLabel}</div>`;
+    const actions = document.createElement('div');
+    actions.className = 'story-manage-actions';
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'story-mini-btn';
+    viewBtn.textContent = 'View';
+    viewBtn.addEventListener('click', () => {
+      closeStoryManageSheet();
+      openStoryFor(State.user, Math.max(0, getStorySequence(State.user.id).findIndex(x => x.id === story.id)));
+    });
+    const delBtn = document.createElement('button');
+    delBtn.className = 'story-mini-btn danger';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => deleteStoryItem(story.id));
+    actions.appendChild(viewBtn);
+    actions.appendChild(delBtn);
+    li.appendChild(thumb); li.appendChild(meta); li.appendChild(actions);
+    list.appendChild(li);
+  });
+}
+async function deleteStoryItem(postId) {
+  if (!postId) return;
+  if (!confirm('Delete this story?')) return;
+  try {
+    await api('/posts/delete', { method: 'POST', body: { postId } });
+    State.posts = (State.posts || []).filter(p => p.id !== postId);
+    lastPostsSignature = '';
+    _lastStoriesSig = '';
+    const idx = storyPlayback.items.findIndex(x => x.id === postId);
+    if (idx !== -1) {
+      storyPlayback.items.splice(idx, 1);
+      if (!storyPlayback.items.length) closeStory();
+      else {
+        if (storyPlayback.index >= storyPlayback.items.length) storyPlayback.index = storyPlayback.items.length - 1;
+        renderStoryItem();
+      }
+    }
+    renderStoryManageSheet();
+    renderStoriesRail();
+    loadPosts();
+    toast('Story deleted', 'success');
+  } catch (e) {
+    toast(e.message || 'Delete failed', 'error');
+  }
+}
+function bindCloseFriendsAndStoryManage() {
+  $$('[data-close-close-friends]').forEach(b => b.addEventListener('click', closeCloseFriendsSheet));
+  $$('[data-close-story-manage]').forEach(b => b.addEventListener('click', closeStoryManageSheet));
+  const cf = $('#settingsCloseFriends');
+  if (cf) cf.addEventListener('click', () => { closeSettings(); openCloseFriendsSheet(); });
+  const ms = $('#settingsManageStories');
+  if (ms) ms.addEventListener('click', () => { closeSettings(); openStoryManageSheet(); });
+  const smb = $('#storyManageBtn');
+  if (smb) smb.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openStoryManageSheet(); });
+  const smc = $('#storyManageCreateBtn');
+  if (smc) smc.addEventListener('click', () => { closeStoryManageSheet(); openStoryCreator(); });
 }
 
 function bindNotifSheet() {
@@ -4542,7 +4747,7 @@ async function renderOwnProfile() {
     if (_profileTab === 'saved') {
       // Use the bookmark localStorage to filter ALL posts
       const saved = getSaved();
-      postsToShow = (State.posts || []).filter(p => saved[p.id]).map(p => ({
+      postsToShow = (State.posts || []).filter(p => !isStoryRecord(p) && saved[p.id]).map(p => ({
         id: p.id, imageUrl: p.imageUrl, text: p.text,
         likeCount: p.likeCount, commentCount: p.commentCount
       }));
@@ -4694,6 +4899,8 @@ function bindLightbox() {
       if (!$('#commentsSheet').classList.contains('hidden')) closeCommentsSheet();
       if (!$('#notifSheet').classList.contains('hidden')) closeNotifications();
       if (!$('#settingsSheet').classList.contains('hidden')) closeSettings();
+      if (!$('#closeFriendsSheet').classList.contains('hidden')) closeCloseFriendsSheet();
+      if (!$('#storyManageSheet').classList.contains('hidden')) closeStoryManageSheet();
       if (!$('#userProfileSheet').classList.contains('hidden')) closeUserProfile();
       if (!$('#storyViewer').classList.contains('hidden')) closeStory();
       const mm = document.querySelector('.more-menu'); if (mm) mm.remove();
@@ -4846,7 +5053,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=13').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=18-close-friends-story-manage').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
@@ -4939,7 +5146,7 @@ function boot() {
   const bindSteps = [
     bindTabs, bindRooms, bindComposer, bindFeedComposer, bindProfile,
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
-    bindStoryViewer, bindSearch, bindNotifSheet, bindUserProfileSheet,
+    bindStoryViewer, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
   ];
   for (const step of bindSteps) {
