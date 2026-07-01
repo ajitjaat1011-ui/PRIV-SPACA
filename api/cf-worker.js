@@ -936,7 +936,10 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     if (!pinOk) return c.json({ error: 'Incorrect PIN' }, 401);
     const oldHash = user.passwordHash;
     user.passwordHash = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
-    const persisted = await saveDatabaseVerified(db, d => (d.users || []).some(u => u.id === newUser.id));
+    const persisted = await saveDatabaseVerified(db, d => {
+      const u2 = (d.users || []).find(u => u.id === user.id);
+      return !!u2 && u2.passwordHash === user.passwordHash;
+    });
     if (isPersist() && !persisted) { user.passwordHash = oldHash; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
     const token = await signToken(user);
     return c.json({ ok: true, token, user: sanitizeUser(user) });
