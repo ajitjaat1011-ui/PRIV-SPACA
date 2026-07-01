@@ -660,6 +660,91 @@
   </div>
 </div>
 
+<!-- ====== INSTAGRAM STORY EDITOR MODAL ====== -->
+<div id="storyEditorModal" class="story-editor-modal hidden">
+  <div class="story-editor-container">
+    <div class="story-editor-top">
+      <button type="button" class="story-editor-close" onclick="closeStoryCreator()">✕</button>
+      <span style="font-weight:700; font-size:15px; color:#fff;">Create Story</span>
+      <div style="width:38px;"></div>
+    </div>
+
+    <div class="story-editor-stage" id="storyEditorStage">
+      <div id="storyEditorPlaceholder" class="story-placeholder">
+        <i data-lucide="image" style="width:48px;height:48px;color:#94a3b8;"></i>
+        <span>Tap to pick a story photo</span>
+      </div>
+      <img id="storyEditorPreviewImg" class="story-editor-img hidden" alt="Story preview" />
+      <input type="file" id="storyEditorFileInput" accept="image/*" hidden />
+
+      <!-- Draggable Music Sticker on Story Stage -->
+      <div class="story-music-sticker hidden" id="storyStageMusicSticker">
+        <img src="" class="story-music-art" id="storyStageMusicArt" alt="Album" />
+        <div class="story-music-meta">
+          <div class="story-music-title" id="storyStageMusicTitle">Song</div>
+          <div class="story-music-artist" id="storyStageMusicArtist">Artist</div>
+        </div>
+        <div class="story-eq-bars">
+          <div class="story-eq-bar"></div>
+          <div class="story-eq-bar"></div>
+          <div class="story-eq-bar"></div>
+        </div>
+        <button type="button" class="story-music-remove" onclick="removeStoryMusic(event)">✕</button>
+      </div>
+    </div>
+
+    <!-- Right Sidebar Tools (No Effects button as requested) -->
+    <div class="story-editor-tools">
+      <div class="story-tool-item" onclick="promptStoryCaption()">
+        <div class="story-tool-circle">Aa</div>
+        <span class="story-tool-label">Text</span>
+      </div>
+      <div class="story-tool-item" onclick="openStoryMusicSheet()">
+        <div class="story-tool-circle music-highlight">🎵</div>
+        <span class="story-tool-label">Music</span>
+      </div>
+      <div class="story-tool-item" onclick="promptStoryMention()">
+        <div class="story-tool-circle">@</div>
+        <span class="story-tool-label">Mention</span>
+      </div>
+    </div>
+
+    <!-- Bottom Bar -->
+    <div class="story-editor-bottom">
+      <input type="text" id="storyEditorCaptionInput" class="story-caption-input" placeholder="Add a caption..." />
+      <div class="story-publish-row">
+        <button type="button" class="story-pub-btn primary" onclick="publishStoryWithMusic()"><span id="storyPubMeInitials" class="story-me-badge">AJ</span> Your story</button>
+        <button type="button" class="story-pub-btn cf" onclick="publishStoryWithMusic(true)">★ Close Friends</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== MUSIC PICKER BOTTOM SHEET ====== -->
+<div id="storyMusicSheet" class="story-sheet-modal hidden" onclick="closeStoryMusicSheetOnBackdrop(event)">
+  <div class="story-sheet-card">
+    <div class="story-sheet-handle" onclick="closeStoryMusicSheet()"></div>
+    <div class="story-sheet-header">
+      <div class="story-search-box">
+        <span>🔍</span>
+        <input type="text" id="storyMusicSearchInput" class="story-search-input" placeholder="Search 30s music clips..." oninput="filterStorySongs()" />
+      </div>
+      <button type="button" class="story-sheet-close" onclick="closeStoryMusicSheet()">✕</button>
+    </div>
+
+    <div class="story-pills-scroll">
+      <span class="story-pill active" onclick="selectStoryMusicCategory('all', this)">For you</span>
+      <span class="story-pill" onclick="selectStoryMusicCategory('trending', this)">Trending 🔥</span>
+      <span class="story-pill" onclick="selectStoryMusicCategory('lofi', this)">Lofi Beats ☕</span>
+      <span class="story-pill" onclick="selectStoryMusicCategory('pop', this)">Pop Hits 🎤</span>
+      <span class="story-pill" onclick="selectStoryMusicCategory('acoustic', this)">Acoustic 🎸</span>
+    </div>
+
+    <div class="story-songs-list" id="storySongsListContainer"></div>
+  </div>
+</div>
+<audio id="storyBgAudioPlayer" style="display:none"></audio>
+
 <!-- ====== TOAST ====== -->
 <div id="toast" class="toast hidden"></div>
 
