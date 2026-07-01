@@ -2133,44 +2133,94 @@ function renderPost(p) {
     return head;
   };
 
+  const imgs = Array.isArray(p.images) && p.images.length > 0 ? p.images : (p.imageUrl ? [p.imageUrl] : []);
+
   // Image with double-tap to like — header is overlaid on top of the media
-  if (p.imageUrl) {
+  if (imgs.length > 0) {
     const wrap = document.createElement('div');
     wrap.className = 'post-img-wrap';
-    // IG-style overlay header sits ON the image
     wrap.appendChild(buildHead(true));
-    const img = lazyImg(p.imageUrl, 'post image', p.id);
-    img.className = 'post-img';
-    img.addEventListener('error', () => { wrap.style.display = 'none'; });
+
     const burst = document.createElement('div');
     burst.className = 'heart-burst';
     burst.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 21s-7-4.35-7-10a4.5 4.5 0 0 1 8-2.83A4.5 4.5 0 0 1 21 11c0 5.65-9 10-9 10z"/></svg>';
-    let lastTap = 0;
-    let tapTimer = null;
-    img.addEventListener('click', () => {
-      const now = Date.now();
-      if (now - lastTap < 300) {
-        if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
-        burst.classList.remove('show');
-        void burst.offsetWidth;
-        burst.classList.add('show');
-        motionAnimate(burst,
-          { opacity: [0, 1, 1, 0], transform: ['translate(-50%, -50%) scale(.4)', 'translate(-50%, -50%) scale(1.15)', 'translate(-50%, -50%) scale(1.0)', 'translate(-50%, -50%) scale(1.25)'] },
-          { duration: 0.85, easing: [0.2, 0.85, 0.2, 1] }
-        );
-        if (!Array.isArray(p.likes) || !p.likes.includes(meId)) {
-          toggleLike(p, card);
+
+    if (imgs.length === 1) {
+      const img = lazyImg(imgs[0], 'post image', p.id);
+      img.className = 'post-img';
+      img.addEventListener('error', () => { wrap.style.display = 'none'; });
+      let lastTap = 0, tapTimer = null;
+      img.addEventListener('click', () => {
+        const now = Date.now();
+        if (now - lastTap < 300) {
+          if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
+          burst.classList.remove('show'); void burst.offsetWidth; burst.classList.add('show');
+          motionAnimate(burst,
+            { opacity: [0, 1, 1, 0], transform: ['translate(-50%, -50%) scale(.4)', 'translate(-50%, -50%) scale(1.15)', 'translate(-50%, -50%) scale(1.0)', 'translate(-50%, -50%) scale(1.25)'] },
+            { duration: 0.85, easing: [0.2, 0.85, 0.2, 1] }
+          );
+          if (!Array.isArray(p.likes) || !p.likes.includes(meId)) toggleLike(p, card);
+          lastTap = 0;
+        } else {
+          lastTap = now;
+          if (tapTimer) clearTimeout(tapTimer);
+          tapTimer = setTimeout(() => { openLightbox(imgs[0], author.displayName); }, 290);
         }
-        lastTap = 0;
-      } else {
-        lastTap = now;
-        if (tapTimer) clearTimeout(tapTimer);
-        tapTimer = setTimeout(() => { openLightbox(p.imageUrl, author.displayName); }, 290);
-      }
-    });
-    wrap.appendChild(img);
-    wrap.appendChild(burst);
-    card.appendChild(wrap);
+      });
+      wrap.appendChild(img);
+      wrap.appendChild(burst);
+      card.appendChild(wrap);
+    } else {
+      // Instagram Multi-Photo Carousel
+      const track = document.createElement('div');
+      track.className = 'ig-carousel-track';
+      track.style.cssText = 'display:flex; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; width:100%; -webkit-overflow-scrolling:touch; scrollbar-width:none;';
+
+      const badge = document.createElement('div');
+      badge.className = 'ig-carousel-badge';
+      badge.style.cssText = 'position:absolute; top:14px; right:14px; background:rgba(0,0,0,0.75); color:#fff; font-size:12px; font-weight:700; padding:4px 9px; border-radius:12px; z-index:3; pointer-events:none;';
+      badge.textContent = `1/${imgs.length}`;
+      wrap.appendChild(badge);
+      wrap.appendChild(burst);
+
+      imgs.forEach((url, idx) => {
+        const slide = document.createElement('div');
+        slide.style.cssText = 'flex:0 0 100%; width:100%; scroll-snap-align:start; position:relative; display:flex; align-items:center; justify-content:center; background:#000;';
+        const img = lazyImg(url, `slide ${idx+1}`, `${p.id}_${idx}`);
+        img.className = 'post-img';
+        img.style.cssText = 'max-height:75vh; width:100%; object-fit:cover;';
+        let lastTap = 0, tapTimer = null;
+        img.addEventListener('click', () => {
+          const now = Date.now();
+          if (now - lastTap < 300) {
+            if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
+            burst.classList.remove('show'); void burst.offsetWidth; burst.classList.add('show');
+            motionAnimate(burst,
+              { opacity: [0, 1, 1, 0], transform: ['translate(-50%, -50%) scale(.4)', 'translate(-50%, -50%) scale(1.15)', 'translate(-50%, -50%) scale(1.0)', 'translate(-50%, -50%) scale(1.25)'] },
+              { duration: 0.85, easing: [0.2, 0.85, 0.2, 1] }
+            );
+            if (!Array.isArray(p.likes) || !p.likes.includes(meId)) toggleLike(p, card);
+            lastTap = 0;
+          } else {
+            lastTap = now;
+            if (tapTimer) clearTimeout(tapTimer);
+            tapTimer = setTimeout(() => { openLightbox(url, author.displayName); }, 290);
+          }
+        });
+        slide.appendChild(img);
+        track.appendChild(slide);
+      });
+
+      track.addEventListener('scroll', () => {
+        const idx = Math.round(track.scrollLeft / (track.clientWidth || 1));
+        badge.textContent = `${idx + 1}/${imgs.length}`;
+        const dots = card.querySelectorAll('.ig-carousel-dot');
+        dots.forEach((d, i) => d.style.background = (i === idx ? '#38bdf8' : 'rgba(255,255,255,0.3)'));
+      });
+
+      wrap.appendChild(track);
+      card.appendChild(wrap);
+    }
   } else {
     // Text-only post — no media to overlay onto, so put a classic header at top
     card.appendChild(buildHead(false));
@@ -2180,6 +2230,7 @@ function renderPost(p) {
   const actions = document.createElement('div');
   actions.className = 'post-actions';
   const left = document.createElement('div'); left.className = 'action-grp';
+  const center = document.createElement('div'); center.className = 'action-grp'; center.style.cssText = 'display:flex; gap:5px; align-items:center; justify-content:center; flex:1;';
   const right = document.createElement('div'); right.className = 'action-grp';
 
   const likeBtn = document.createElement('button');
@@ -2207,9 +2258,16 @@ function renderPost(p) {
   saveBtn.addEventListener('click', () => toggleSaved(p, saveBtn));
 
   left.appendChild(likeBtn); left.appendChild(commentBtn); left.appendChild(shareBtn);
-  const spacer = document.createElement('div'); spacer.className = 'spacer';
+  if (imgs.length > 1) {
+    imgs.forEach((_, idx) => {
+      const dot = document.createElement('span');
+      dot.className = 'ig-carousel-dot';
+      dot.style.cssText = `width:6px; height:6px; border-radius:50%; background:${idx === 0 ? '#38bdf8' : 'rgba(255,255,255,0.3)'}; transition:all 0.2s;`;
+      center.appendChild(dot);
+    });
+  }
   right.appendChild(saveBtn);
-  actions.appendChild(left); actions.appendChild(spacer); actions.appendChild(right);
+  actions.appendChild(left); actions.appendChild(center); actions.appendChild(right);
   card.appendChild(actions);
 
   // Liked-by row
@@ -2703,46 +2761,85 @@ function bindStoryViewer() {
 }
 
 
+function renderPostAttachGrid() {
+  const grid = $('#postAttachGrid');
+  const prev = $('#postAttachPreview');
+  const btn = $('#postAttachBtn');
+  if (!grid || !prev) return;
+  State.postAttaches = State.postAttaches || [];
+  if (State.postAttaches.length === 0) {
+    prev.classList.add('hidden');
+    if (btn) btn.innerHTML = '<i data-lucide="image"></i> Photo';
+    return;
+  }
+  prev.classList.remove('hidden');
+  if (btn) btn.innerHTML = `<i data-lucide="image"></i> Photo (${State.postAttaches.length}/3)`;
+  grid.innerHTML = State.postAttaches.map((item, idx) => `
+    <div style="position:relative; width:80px; height:80px; border-radius:10px; overflow:hidden; border:1px solid var(--line); flex-shrink:0; background:#000;">
+      <img src="${item.url || item.localUrl}" style="width:100%; height:100%; object-fit:cover;" />
+      <button type="button" onclick="window._removePostAttach(${idx})" style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.7); color:#fff; border:none; border-radius:50%; width:20px; height:20px; font-size:12px; display:flex; align-items:center; justify-content:center; cursor:pointer;">✕</button>
+    </div>
+  `).join('');
+  refreshIcons();
+}
+
+window._removePostAttach = (idx) => {
+  if (State.postAttaches && State.postAttaches[idx]) {
+    State.postAttaches.splice(idx, 1);
+    renderPostAttachGrid();
+  }
+};
+
 function bindFeedComposer() {
   $('#postAttachBtn').addEventListener('click', () => $('#postFileInput').click());
   $('#postFileInput').addEventListener('change', async (e) => {
-    const f = e.target.files && e.target.files[0]; e.target.value = '';
-    if (!f) return;
-    if (!f.type.startsWith('image/')) { toast('Only images', 'error'); return; }
-    if (f.size > 15 * 1024 * 1024) { toast('Max 15MB', 'error'); return; }
-    const localUrl = URL.createObjectURL(f);
-    $('#postAttachThumb').src = localUrl;
-    $('#postAttachName').textContent = f.name + ' · uploading…';
-    $('#postAttachProgress').style.width = '0%';
-    $('#postAttachPreview').classList.remove('hidden');
-    try {
-      // Use permanent GitHub-CDN upload (resize to 1200px max, JPEG 0.82)
-      const res = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => $('#postAttachProgress').style.width = p + '%' });
-      State.postAttach = { url: res.url, name: f.name };
-      $('#postAttachName').textContent = f.name + (res.persisted ? ' · ready (permanent)' : ' · ready (inline)');
-      $('#postAttachProgress').style.width = '100%';
-      refreshIcons();
-    } catch (err) {
-      // Final fallback to tmpfiles.org so the user is never stuck
+    const files = Array.from(e.target.files || []); e.target.value = '';
+    if (files.length === 0) return;
+    State.postAttaches = State.postAttaches || [];
+    if (State.postAttaches.length >= 3) { toast('Maximum 3 photos per post', 'error'); return; }
+    const availableSlot = 3 - State.postAttaches.length;
+    const toUpload = files.slice(0, availableSlot);
+
+    for (const f of toUpload) {
+      if (!f.type.startsWith('image/')) { toast('Only images allowed', 'error'); continue; }
+      if (f.size > 15 * 1024 * 1024) { toast('Max 15MB per image', 'error'); continue; }
+      const localUrl = URL.createObjectURL(f);
+      const tempItem = { localUrl, name: f.name };
+      State.postAttaches.push(tempItem);
+      renderPostAttachGrid();
+      const st = $('#postAttachStatus'); if (st) st.textContent = 'Uploading ' + f.name + '…';
+      const pr = $('#postAttachProgress'); if (pr) pr.style.width = '20%';
       try {
-        const res2 = await uploadImage(f, (p) => $('#postAttachProgress').style.width = p + '%');
-        State.postAttach = { url: res2.url, name: res2.name };
-        $('#postAttachName').textContent = f.name + ' · ready (temporary)';
-        $('#postAttachProgress').style.width = '100%';
-      } catch (err2) {
-        toast('Upload failed: ' + (err2.message || err.message), 'error');
-        clearPostAttach();
+        const res = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => { if (pr) pr.style.width = p + '%'; } });
+        tempItem.url = res.url;
+        if (st) st.textContent = 'Ready!';
+        if (pr) pr.style.width = '100%';
+      } catch (err) {
+        try {
+          const res2 = await uploadImage(f, (p) => { if (pr) pr.style.width = p + '%'; });
+          tempItem.url = res2.url;
+          if (st) st.textContent = 'Ready!';
+          if (pr) pr.style.width = '100%';
+        } catch (err2) {
+          toast('Failed to upload ' + f.name, 'error');
+          const i = State.postAttaches.indexOf(tempItem);
+          if (i >= 0) State.postAttaches.splice(i, 1);
+        }
       }
+      renderPostAttachGrid();
     }
   });
   $('#postCancelAttachBtn').addEventListener('click', clearPostAttach);
   $('#postSubmitBtn').addEventListener('click', async () => {
     const text = $('#postInput').value.trim();
-    if (!text && !State.postAttach) { toast('Write something or attach a photo', 'error'); return; }
+    const validAttaches = (State.postAttaches || []).filter(a => a.url);
+    if (!text && validAttaches.length === 0) { toast('Write something or attach up to 3 photos', 'error'); return; }
     const btn = $('#postSubmitBtn');
     btn.disabled = true;
     try {
-      await api('/posts/create', { method: 'POST', body: { text, imageUrl: State.postAttach ? State.postAttach.url : null } });
+      const images = validAttaches.map(a => a.url);
+      const imageUrl = images[0] || null;
+      await api('/posts/create', { method: 'POST', body: { text, imageUrl, images } });
       $('#postInput').value = '';
       clearPostAttach();
       lastPostsSignature = '';
@@ -2756,10 +2853,10 @@ function bindFeedComposer() {
 
 function clearPostAttach() {
   State.postAttach = null;
-  $('#postAttachPreview').classList.add('hidden');
-  $('#postAttachThumb').src = '';
-  $('#postAttachName').textContent = '';
-  $('#postAttachProgress').style.width = '0%';
+  State.postAttaches = [];
+  renderPostAttachGrid();
+  const st = $('#postAttachStatus'); if (st) st.textContent = '';
+  const pr = $('#postAttachProgress'); if (pr) pr.style.width = '0%';
 }
 
 // ====== Profile ======
