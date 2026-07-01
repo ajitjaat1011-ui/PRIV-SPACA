@@ -1501,7 +1501,11 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: myId, displayName: 'Member', username: 'member' };
   const payload = { fromId: myId, author, signal };
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals : [];
-  db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt: nowMs() + 120000 });
+  if (signal.type === 'end' || signal.type === 'reject' || signal.type === 'busy') {
+    db.rtcSignals = db.rtcSignals.filter(x => !( (x.targetId === targetId && x.payload?.fromId === myId) || (x.targetId === myId && x.payload?.fromId === targetId) ));
+  }
+  const expiresAt = nowMs() + (signal.type === 'offer' ? 20000 : 60000);
+  db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt });
   if (db.rtcSignals.length > 200) db.rtcSignals = db.rtcSignals.slice(-200);
   _pushEvent(targetId, 'rtc_signal', payload);
   const persisted = await saveDatabaseVerified(db, d => (d.rtcSignals || []).some(x => x.id === db.rtcSignals[db.rtcSignals.length - 1].id));
@@ -1517,7 +1521,7 @@ app.get('/api/rtc/signals', requireAuth, async (c) => {
   const now = nowMs();
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
   let signals = db.rtcSignals
-    .filter(x => x.targetId === myId && (x.createdAt || 0) > since)
+    .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 20000))
     .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
     .slice(-30)
     .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
@@ -1527,7 +1531,7 @@ app.get('/api/rtc/signals', requireAuth, async (c) => {
     const now2 = nowMs();
     db2.rtcSignals = Array.isArray(db2.rtcSignals) ? db2.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now2) : [];
     signals = db2.rtcSignals
-      .filter(x => x.targetId === myId && (x.createdAt || 0) > since)
+      .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now2 - (x.createdAt || 0) <= 20000))
       .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
       .slice(-30)
       .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
