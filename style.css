@@ -34,10 +34,10 @@
   --bg:#0b1620;
   --bg-2:#152030;
   --bg-soft:#1c2839;
-  --text:#e8edf2;
-  --text-2:#a9b4c0;
-  --muted:#7a8896;
-  --muted-2:#4d5c6c;
+  --text:#f5f8fb;
+  --text-2:#c3ccd6;
+  --muted:#9aa8b6;
+  --muted-2:#63707d;
   --line:#243245;
   --line-2:#2e3e54;
   --shadow-xs:0 1px 2px rgba(0,0,0,.4);
@@ -51,10 +51,10 @@
     --bg:#0b1620;
     --bg-2:#152030;
     --bg-soft:#1c2839;
-    --text:#e8edf2;
-    --text-2:#a9b4c0;
-    --muted:#7a8896;
-    --muted-2:#4d5c6c;
+    --text:#f5f8fb;
+    --text-2:#c3ccd6;
+    --muted:#9aa8b6;
+    --muted-2:#63707d;
     --line:#243245;
     --line-2:#2e3e54;
     --shadow-xs:0 1px 2px rgba(0,0,0,.4);
@@ -63,6 +63,7 @@
     --shadow-lg:0 24px 60px rgba(0,0,0,.6);
   }
 }
+
 
 /* Smooth transitions when switching themes */
 body, .post-card, .composer-card, .topbar, .bottom-nav, .chat-pane, .sheet-card, .modal-card,
@@ -80,13 +81,18 @@ body{
   -moz-osx-font-smoothing:grayscale;
   overflow:hidden;
   font-feature-settings:"cv02","cv03","cv04","cv11";
-  /* Slightly bolder default everywhere */
-  font-weight:500;
+  /* Bolder, more legible default everywhere */
+  font-weight:600;
+  font-size:15.5px;
 }
 /* Bolder default text weights across the app */
-input, textarea, select, button { font-weight:500 }
+input, textarea, select, button { font-weight:600 }
 strong, b { font-weight:800 }
 h1, h2, h3, h4 { font-weight:800; letter-spacing:-.2px }
+/* Placeholders and secondary/meta text were too pale to read comfortably;
+   bump weight + contrast a bit everywhere. */
+::placeholder { font-weight:600; opacity:.85 }
+.muted, .muted-pill, .chat-title small, .room-name, .settings-chip { font-weight:600 }
 .hidden{display:none !important}
 button{font-family:inherit}
 img{user-select:none;-webkit-user-drag:none}
