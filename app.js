@@ -1728,6 +1728,13 @@ function isFastPolling() { return Date.now() < _fastPollUntil; }
 
 let _lastFeedPollAt = 0;
 let _lastNotifPollAt = 0;
+function isStorySurfaceOpen() {
+  const ids = ['storyEditorModal', 'storyViewer', 'storyTextEditorScreen', 'storyMusicSheet'];
+  return ids.some(id => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  });
+}
 function startPolls() {
   sendHeartbeat();
   loadMembers();
@@ -1735,19 +1742,28 @@ function startPolls() {
   pollNotifications();
   pollRTCSignals();
   State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
-  State.pollTimers.members = setInterval(loadMembers, 15000);
+  State.pollTimers.members = setInterval(() => {
+    if (isStorySurfaceOpen()) return;
+    loadMembers();
+  }, 15000);
   // MESSAGES: keep a polling backstop on Cloudflare Pages/Workers because an
   // EventSource connection and the write request can land on different isolates.
   State.pollTimers.msg = setInterval(() => {
     if (State.currentTab !== 'chat') return;
+    if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
     loadMessages(false);
   }, 1500);
-  State.pollTimers.typing = setInterval(() => { if (State.currentTab === 'chat') pollTyping(); }, 2000);
+  State.pollTimers.typing = setInterval(() => {
+    if (State.currentTab !== 'chat') return;
+    if (isStorySurfaceOpen()) return;
+    pollTyping();
+  }, 2000);
   // FEED: same safety-net logic as chat so posts still appear even if SSE misses an event.
   // Also make boostPolling() truly dynamic instead of locking the interval at startup.
   State.pollTimers.feed = setInterval(() => {
     if (State.currentTab !== 'feed') return;
+    if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
     const now = Date.now();
     const minGap = isFastPolling() ? 1500 : 4000;
@@ -1757,6 +1773,7 @@ function startPolls() {
   }, 1500);
   // NOTIFICATIONS: same dynamic fast-poll behavior as the feed.
   State.pollTimers.notif = setInterval(() => {
+    if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
     const now = Date.now();
     const minGap = isFastPolling() ? 2000 : 5000;
@@ -1765,7 +1782,10 @@ function startPolls() {
     pollNotifications();
   }, 2000);
   // RTC call signaling must always poll as a Cloudflare fallback because SSE events can land on another isolate.
-  State.pollTimers.rtc = setInterval(pollRTCSignals, 2500);
+  State.pollTimers.rtc = setInterval(() => {
+    if (isStorySurfaceOpen()) return;
+    pollRTCSignals();
+  }, 2500);
   // Try SSE — it'll auto-fall-back if not supported
   connectSSE();
 }
@@ -3146,18 +3166,29 @@ window.startStickerScale = (e, id) => {
   if (!el) return;
   const startPos = e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX;
   const startScale = activeStickerScales[id] || 1.0;
+  let rafId = 0;
+  let pendingScale = startScale;
 
-  const move = (ev) => {
-    const curPos = ev.touches && ev.touches[0] ? ev.touches[0].clientX : ev.clientX;
-    const diff = curPos - startPos;
-    let newScale = Math.max(0.5, Math.min(2.5, startScale + diff * 0.008));
+  const flush = () => {
+    rafId = 0;
+    const newScale = Math.max(0.5, Math.min(2.5, pendingScale));
     activeStickerScales[id] = newScale;
     el.style.transform = `translate(-50%, -50%) scale(${newScale.toFixed(2)})`;
     if (id === 'storyStageMusicSticker') State.musicScale = newScale;
     if (id === 'storyStageTextOverlay') State.textScale = newScale;
   };
 
+  const move = (ev) => {
+    if (ev.cancelable) ev.preventDefault();
+    const curPos = ev.touches && ev.touches[0] ? ev.touches[0].clientX : ev.clientX;
+    const diff = curPos - startPos;
+    pendingScale = startScale + diff * 0.008;
+    if (!rafId) rafId = requestAnimationFrame(flush);
+  };
+
   const end = () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    flush();
     window.removeEventListener('mousemove', move);
     window.removeEventListener('mouseup', end);
     window.removeEventListener('touchmove', move);
@@ -3187,11 +3218,21 @@ function makeStickerDraggable(el, onMoveCallback) {
   let isDragging = false;
   let startX = 0, startY = 0;
   let initialLeft = 0, initialTop = 0;
+  let rafId = 0;
+  let pendingPctX = 50;
+  let pendingPctY = 50;
 
   const getPos = (e) => {
     const cx = e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX;
     const cy = e.touches && e.touches[0] ? e.touches[0].clientY : e.clientY;
     return { cx, cy };
+  };
+
+  const applyMove = () => {
+    rafId = 0;
+    el.style.left = pendingPctX + '%';
+    el.style.top = pendingPctY + '%';
+    if (onMoveCallback) onMoveCallback(pendingPctX, pendingPctY);
   };
 
   const start = (e) => {
@@ -3223,20 +3264,20 @@ function makeStickerDraggable(el, onMoveCallback) {
     if (Math.abs(newLeft - centerX) < 14) {
       newLeft = centerX;
       if (guideEl) guideEl.classList.remove('hidden');
-    } else {
-      if (guideEl) guideEl.classList.add('hidden');
+    } else if (guideEl) {
+      guideEl.classList.add('hidden');
     }
 
-    const pctX = Math.round((newLeft / stageRect.width) * 100);
-    const pctY = Math.round((newTop / stageRect.height) * 100);
-    el.style.left = pctX + '%';
-    el.style.top = pctY + '%';
-    if (onMoveCallback) onMoveCallback(pctX, pctY);
+    pendingPctX = Math.round((newLeft / stageRect.width) * 100);
+    pendingPctY = Math.round((newTop / stageRect.height) * 100);
+    if (!rafId) rafId = requestAnimationFrame(applyMove);
   };
 
   const end = () => {
     if (!isDragging) return;
     isDragging = false;
+    if (rafId) cancelAnimationFrame(rafId);
+    applyMove();
     el.style.transition = 'transform 0.15s ease';
     const guideEl = $('#storyAlignGuide');
     if (guideEl) guideEl.classList.add('hidden');
@@ -3370,15 +3411,26 @@ window.openStoryCreator = () => {
     inp.onchange = async (e) => {
       const f = e.target.files && e.target.files[0];
       if (!f) return;
-      const localUrl = URL.createObjectURL(f);
-      if (prev) { prev.src = localUrl; prev.classList.remove('hidden'); }
       if (ph) ph.classList.add('hidden');
       try {
-        const res = await uploadPermanentImage(f, { kind: 'story', maxDim: 1200, quality: 0.82 });
-        State.storyCreatorImgUrl = res.url;
+        // Use a compressed preview instead of the raw camera image to avoid
+        // mobile freezes / memory spikes on large photos.
+        const previewDataUrl = await resizeImageToDataUrl(f, 1280, 0.82);
+        if (prev) { prev.src = previewDataUrl; prev.classList.remove('hidden'); }
+        const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: previewDataUrl, kind: 'post' } });
+        State.storyCreatorImgUrl = res.url || previewDataUrl;
       } catch(err) {
-        try { const r2 = await uploadImage(f); State.storyCreatorImgUrl = r2.url; }
-        catch(_) { State.storyCreatorImgUrl = localUrl; }
+        try {
+          const r2 = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82 });
+          State.storyCreatorImgUrl = r2.url;
+          if (prev && !prev.src) { prev.src = r2.url; prev.classList.remove('hidden'); }
+        } catch(_) {
+          try {
+            const localUrl = URL.createObjectURL(f);
+            if (prev) { prev.src = localUrl; prev.classList.remove('hidden'); }
+            State.storyCreatorImgUrl = localUrl;
+          } catch (_) {}
+        }
       }
     };
   }
