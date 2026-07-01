@@ -629,6 +629,26 @@ function acceptSession(data) {
 
 
 // ====== Tabs ======
+// ====== New-post composer (top "+" button) ======
+// Reuses the inline composer card already built into the feed view.
+function openPostComposer() {
+  switchTab('feed');
+  const card = $('#inlineComposerCard');
+  if (card) {
+    card.classList.remove('hidden');
+    const ta = $('#postInput');
+    if (ta) setTimeout(() => ta.focus(), 50);
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  refreshIcons();
+}
+function closePostComposer() {
+  const card = $('#inlineComposerCard');
+  if (card) card.classList.add('hidden');
+  const pm = $('#postComposerModal');
+  if (pm) pm.classList.add('hidden');
+}
+
 function bindTabs() {
   $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   // Legacy top-chat button is gone; keep guard in case markup is cached
@@ -3775,26 +3795,21 @@ function boot() {
     }
   }, 5000);
   bindAuth();
-  bindTabs();
-  bindRooms();
-  bindComposer();
-  bindFeedComposer();
-  bindProfile();
-  bindSchedule();
-  bindLightbox();
-  bindCommentsSheet();
-  bindSecretChat();
-  bindStoryViewer();
-  bindSearch();
-  bindNotifSheet();
-  bindUserProfileSheet();
-  bindProfileView();
-  bindInstallPrompt();
-  bindThemeToggle();
-  bindSettingsSheet();
-  registerServiceWorker();
-  applyStoredTheme();
-  refreshIcons();
+  // Wrap each UI-binding step so a bug in any single one (e.g. a missing
+  // handler function) can't crash the whole boot sequence and silently skip
+  // session restore below — that was causing "logged out on every refresh".
+  const bindSteps = [
+    bindTabs, bindRooms, bindComposer, bindFeedComposer, bindProfile,
+    bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
+    bindStoryViewer, bindSearch, bindNotifSheet, bindUserProfileSheet,
+    bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
+  ];
+  for (const step of bindSteps) {
+    try { step(); } catch (e) { console.error('[boot] ' + (step.name || 'bind step') + ' failed:', e); }
+  }
+  try { registerServiceWorker(); } catch (e) { console.error('[boot] registerServiceWorker failed:', e); }
+  try { applyStoredTheme(); } catch (e) { console.error('[boot] applyStoredTheme failed:', e); }
+  try { refreshIcons(); } catch (e) { console.error('[boot] refreshIcons failed:', e); }
 
   // Pause/resume polls when the tab is hidden to save data
   document.addEventListener('visibilitychange', () => {
