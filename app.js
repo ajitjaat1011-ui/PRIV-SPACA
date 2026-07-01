@@ -3856,7 +3856,31 @@ let rtcRemoteStream = null;
 let rtcCurrentPeer = null; // targetId we are talking to
 let isVideoCall = false;
 
-const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+// STUN-only ICE config frequently fails to establish real media connections on
+// mobile data / carrier-grade NAT / strict corporate networks (STUN can only
+// help peers discover each other's public address; it can't relay media when
+// a direct path isn't possible). We add a free public TURN relay (Open Relay
+// Project) as a fallback so calls still connect in those cases. This is a
+// shared/free/rate-limited community relay — for real production use with
+//24/7 traffic, replace with account-specific TURN credentials (e.g. Twilio
+// Network Traversal Service, Metered.ca, or your own coturn server) via env
+// vars, but this unblocks calling immediately at zero cost.
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ],
+};
+
 
 function initWebRTC() {
   const btnAudio = $('#rtcAudioBtn');
@@ -3892,6 +3916,7 @@ async function startCall(video) {
     const offer = await rtcPeerConnection.createOffer();
     await rtcPeerConnection.setLocalDescription(offer);
     sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
+    _armCallTimeout();
   } catch (err) {
     toast('Failed to start call', 'error');
     endCall();
@@ -3919,6 +3944,7 @@ async function handleRTCSignal(data) {
     if (rtcPeerConnection && rtcCurrentPeer === peerId) {
       rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
       $('#callStatusText').textContent = 'Connected';
+      _disarmCallTimeout();
     }
   } else if (signal.type === 'candidate') {
     if (rtcPeerConnection && rtcCurrentPeer === peerId) {
@@ -3973,11 +3999,38 @@ function createPeerConnection() {
     $('#callStatusText').textContent = '';
   };
   rtcPeerConnection.oniceconnectionstatechange = () => {
-    if (rtcPeerConnection.iceConnectionState === 'disconnected' || rtcPeerConnection.iceConnectionState === 'failed') {
+    const st = rtcPeerConnection.iceConnectionState;
+    if (st === 'failed') {
+      toast('Call failed to connect (network/NAT issue). Try again or switch networks.', 'error');
       endCall(true);
+    } else if (st === 'disconnected') {
+      // Give a brief grace period — mobile networks often flicker to
+      // "disconnected" for a second before recovering on their own.
+      setTimeout(() => {
+        if (rtcPeerConnection && rtcPeerConnection.iceConnectionState === 'disconnected') {
+          toast('Call connection lost.', 'error');
+          endCall(true);
+        }
+      }, 6000);
     }
   };
 }
+
+// If a call never connects (peer offline, signal never arrives via the 2.5s
+// poll cycle, restrictive network, etc.) give the caller clear feedback
+// instead of leaving the "Calling..." UI hanging indefinitely.
+let _rtcConnectTimeout = null;
+function _armCallTimeout() {
+  clearTimeout(_rtcConnectTimeout);
+  _rtcConnectTimeout = setTimeout(() => {
+    if (rtcPeerConnection && rtcPeerConnection.iceConnectionState !== 'connected' && rtcPeerConnection.iceConnectionState !== 'completed') {
+      toast('No answer / call could not connect. They may be offline.', 'error');
+      endCall();
+    }
+  }, 30000);
+}
+function _disarmCallTimeout() { clearTimeout(_rtcConnectTimeout); _rtcConnectTimeout = null; }
+
 
 function showCallUI(status, user, incoming = false) {
   $('#callStatusText').textContent = status;
@@ -3989,6 +4042,7 @@ function showCallUI(status, user, incoming = false) {
 }
 
 function endCall(remote = false) {
+  _disarmCallTimeout();
   if (rtcPeerConnection) {
     rtcPeerConnection.close();
     rtcPeerConnection = null;
