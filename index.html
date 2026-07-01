@@ -761,7 +761,10 @@
         <span>Tap to pick a story photo</span>
       </div>
       <img id="storyEditorPreviewImg" class="story-editor-img hidden" alt="Story preview" />
-      <input type="file" id="storyEditorFileInput" accept="image/*" hidden />
+      <input type="file" id="storyEditorFileInput" accept="image/*" multiple hidden />
+      <!-- Multi-photo carousel: counter badge + thumbnail strip (up to 3) -->
+      <div id="storyEditorPhotoCount" class="story-editor-photo-count hidden">1/1</div>
+      <div id="storyEditorPhotoStrip" class="story-editor-photo-strip hidden"></div>
 
       <!-- Safe-area guide: text/music placed inside here stay clear of the top progress/header and bottom caption/publish bar -->
       <div id="storySafeAreaGuide" class="story-safe-area-guide hidden"></div>

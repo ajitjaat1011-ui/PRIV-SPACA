@@ -3140,28 +3140,74 @@ function renderStoryItem() {
   // Footer UI: owners see a "Seen by" pill; viewers get the reply bar.
   updateStoryFooter(recent, isMyStory);
 
+  // Normalize to a photo array so single- and multi-photo stories share one
+  // render path. Multi-photo items become an in-item swipeable carousel.
+  const storyImgs = Array.isArray(recent.images) && recent.images.length > 0
+    ? recent.images
+    : (recent.imageUrl ? [recent.imageUrl] : []);
+  const firstImg = storyImgs[0] || null;
+
   // Only show a loading spinner + pause progress for image stories, and only
   // if the image genuinely isn't cached yet (avoids a flash on repeat views).
-  const needsImageLoad = !!recent.imageUrl && !_storyImagePreloadCache.has(recent.imageUrl);
+  const needsImageLoad = !!firstImg && !_storyImagePreloadCache.has(firstImg);
   v.classList.toggle('is-loading', needsImageLoad);
 
-  if (recent.imageUrl) {
+  if (firstImg) {
     const imgWrap = document.createElement('div');
     imgWrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;';
     const img = document.createElement('img');
     img.alt = 'story';
     img.style.cssText = 'object-fit:contain; width:100%; height:100%; max-height:82vh; border-radius:6px; opacity:0; transition:opacity .2s ease;';
+    let carouselIdx = 0;
     img.onload = () => {
       img.style.opacity = '1';
-      _storyImagePreloadCache.add(recent.imageUrl);
+      _storyImagePreloadCache.add(firstImg);
       v.classList.remove('is-loading');
       // Restart the progress timer only once the image is actually visible,
       // so the bar doesn't race ahead of a slow-loading photo on weak networks.
       if (needsImageLoad) startStoryProgress();
     };
     img.onerror = () => { v.classList.remove('is-loading'); img.style.opacity = '1'; };
-    img.src = recent.imageUrl;
+    img.src = firstImg;
     imgWrap.appendChild(img);
+
+    // ---- Multi-photo carousel controls (dots + swipe), only when >1 photo ----
+    if (storyImgs.length > 1) {
+      // Preload the rest so switching is instant.
+      storyImgs.slice(1).forEach(preloadStoryImage);
+      const dots = document.createElement('div');
+      dots.className = 'story-carousel-dots';
+      storyImgs.forEach((_, i) => {
+        const d = document.createElement('span');
+        d.className = 'story-carousel-dot' + (i === 0 ? ' active' : '');
+        dots.appendChild(d);
+      });
+      imgWrap.appendChild(dots);
+      const showPhoto = (i) => {
+        carouselIdx = Math.max(0, Math.min(storyImgs.length - 1, i));
+        img.style.opacity = '0';
+        img.src = storyImgs[carouselIdx];
+        img.onload = () => { img.style.opacity = '1'; };
+        dots.querySelectorAll('.story-carousel-dot').forEach((el, k) => el.classList.toggle('active', k === carouselIdx));
+      };
+      // Swipe within the image switches photos without leaving the story item.
+      let sx = 0, sy = 0;
+      imgWrap.addEventListener('touchstart', (e) => { const t = e.changedTouches[0]; sx = t.clientX; sy = t.clientY; }, { passive: true });
+      imgWrap.addEventListener('touchend', (e) => {
+        const t = e.changedTouches[0];
+        const dx = t.clientX - sx, dy = t.clientY - sy;
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
+          e.stopPropagation();
+          showPhoto(carouselIdx + (dx < 0 ? 1 : -1));
+        }
+      });
+      // Dots are tappable too.
+      dots.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = Array.from(dots.children).indexOf(e.target);
+        if (idx >= 0) showPhoto(idx);
+      });
+    }
 
     if (recent.text) {
       const cap = document.createElement('div');
@@ -3943,38 +3989,41 @@ window.openStoryCreator = () => {
   }
   if (inp) {
     inp.onchange = async (e) => {
-      const f = e.target.files && e.target.files[0];
+      const files = Array.from(e.target.files || []);
       e.target.value = ''; // allow re-picking the same file later
-      if (!f) return;
-      if (!f.type || !f.type.startsWith('image/')) { toast('Please pick an image file', 'error'); return; }
-      if (f.size > 20 * 1024 * 1024) { toast('Image too large (max 20MB)', 'error'); return; }
+      if (!files.length) return;
+      // Multi-photo carousel: up to 3 images per story item. New picks are
+      // appended to any existing selection (respecting the 3-photo cap).
+      State.storyCreatorImages = Array.isArray(State.storyCreatorImages) ? State.storyCreatorImages : [];
+      const slotsLeft = 3 - State.storyCreatorImages.length;
+      if (slotsLeft <= 0) { toast('You can add up to 3 photos per story', 'error'); return; }
+      const batch = files.slice(0, slotsLeft);
+      if (files.length > slotsLeft) toast('Added first ' + slotsLeft + ' photo(s) — max 3 per story');
       if (ph) ph.classList.add('hidden');
       if (loadingEl) loadingEl.classList.remove('hidden');
-      try {
-        // Use a compressed preview instead of the raw camera image to avoid
-        // mobile freezes / memory spikes on large photos. Resize runs via
-        // canvas + createImageBitmap where available so the main thread isn't
-        // blocked decoding a multi-megapixel camera photo synchronously.
-        const previewDataUrl = await resizeImageToDataUrl(f, 1280, 0.82);
-        if (prev) { prev.src = previewDataUrl; prev.classList.remove('hidden'); }
-        if (loadingEl) loadingEl.classList.add('hidden');
-        const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: previewDataUrl, kind: 'post' } });
-        State.storyCreatorImgUrl = res.url || previewDataUrl;
-      } catch(err) {
+      for (const f of batch) {
+        if (!f.type || !f.type.startsWith('image/')) { toast('Skipped a non-image file', 'error'); continue; }
+        if (f.size > 20 * 1024 * 1024) { toast('Skipped a photo over 20MB', 'error'); continue; }
+        let url = null;
         try {
-          const r2 = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82 });
-          State.storyCreatorImgUrl = r2.url;
-          if (prev && !prev.src) { prev.src = r2.url; prev.classList.remove('hidden'); }
-        } catch(_) {
+          const previewDataUrl = await resizeImageToDataUrl(f, 1280, 0.82);
+          const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: previewDataUrl, kind: 'post' } });
+          url = res.url || previewDataUrl;
+        } catch (err) {
           try {
-            const localUrl = URL.createObjectURL(f);
-            if (prev) { prev.src = localUrl; prev.classList.remove('hidden'); }
-            State.storyCreatorImgUrl = localUrl;
-          } catch (_) {}
+            const r2 = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82 });
+            url = r2.url;
+          } catch (_) {
+            try { url = URL.createObjectURL(f); } catch (_) {}
+          }
         }
-      } finally {
-        if (loadingEl) loadingEl.classList.add('hidden');
+        if (url) State.storyCreatorImages.push(url);
       }
+      if (loadingEl) loadingEl.classList.add('hidden');
+      // First image is the primary preview + legacy single-image field.
+      State.storyCreatorImgUrl = State.storyCreatorImages[0] || null;
+      if (prev && State.storyCreatorImgUrl) { prev.src = State.storyCreatorImgUrl; prev.classList.remove('hidden'); }
+      renderStoryEditorPhotoStrip();
     };
   }
   const initSpan = $('#storyPubMeInitials');
@@ -3988,9 +4037,63 @@ window.openStoryCreator = () => {
   if (guide) guide.classList.add('hidden');
 };
 
+// Render the multi-photo thumbnail strip + counter in the story editor.
+// Tapping a thumb makes it the primary preview; the ✕ removes it; a trailing
+// "+" tile lets the user add more (up to 3).
+function renderStoryEditorPhotoStrip() {
+  const strip = $('#storyEditorPhotoStrip');
+  const countBadge = $('#storyEditorPhotoCount');
+  const imgs = Array.isArray(State.storyCreatorImages) ? State.storyCreatorImages : [];
+  if (!strip) return;
+  if (imgs.length <= 1) {
+    strip.classList.add('hidden');
+    strip.innerHTML = '';
+    if (countBadge) countBadge.classList.add('hidden');
+    return;
+  }
+  strip.classList.remove('hidden');
+  if (countBadge) { countBadge.classList.remove('hidden'); countBadge.textContent = '1/' + imgs.length; }
+  strip.innerHTML = '';
+  imgs.forEach((url, idx) => {
+    const t = document.createElement('div');
+    t.className = 'story-strip-thumb' + (idx === 0 ? ' active' : '');
+    t.innerHTML = `<img src="${String(url).replace(/"/g, '%22')}" alt="photo ${idx + 1}" />` +
+      `<button type="button" class="story-strip-del" aria-label="Remove photo">✕</button>`;
+    t.querySelector('img').addEventListener('click', () => {
+      const prev = $('#storyEditorPreviewImg');
+      if (prev) { prev.src = url; prev.classList.remove('hidden'); }
+      strip.querySelectorAll('.story-strip-thumb').forEach((el, i) => el.classList.toggle('active', i === idx));
+    });
+    t.querySelector('.story-strip-del').addEventListener('click', (e) => {
+      e.stopPropagation();
+      State.storyCreatorImages.splice(idx, 1);
+      State.storyCreatorImgUrl = State.storyCreatorImages[0] || null;
+      const prev = $('#storyEditorPreviewImg');
+      if (prev) {
+        if (State.storyCreatorImgUrl) { prev.src = State.storyCreatorImgUrl; prev.classList.remove('hidden'); }
+        else { prev.src = ''; prev.classList.add('hidden'); const phEl = $('#storyEditorPlaceholder'); if (phEl) phEl.classList.remove('hidden'); }
+      }
+      renderStoryEditorPhotoStrip();
+    });
+    strip.appendChild(t);
+  });
+  if (imgs.length < 3) {
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'story-strip-add';
+    add.textContent = '+';
+    add.setAttribute('aria-label', 'Add photo');
+    add.addEventListener('click', () => { const fi = $('#storyEditorFileInput'); if (fi) fi.click(); });
+    strip.appendChild(add);
+  }
+}
+
 window.closeStoryCreator = () => {
   const mod = $('#storyEditorModal');
   if (mod) mod.classList.add('hidden');
+  State.storyCreatorImages = [];
+  const strip = $('#storyEditorPhotoStrip'); if (strip) { strip.classList.add('hidden'); strip.innerHTML = ''; }
+  const countBadge = $('#storyEditorPhotoCount'); if (countBadge) countBadge.classList.add('hidden');
   const player = $('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
   selectedStoryMusicId = null;
@@ -4227,7 +4330,10 @@ window.removeStoryMusic = (e) => {
 window.publishStoryWithMusic = async (isCf = false) => {
   const capVal = ($('#storyEditorCaptionInput')?.value || '').trim();
   const text = activeStoryText || capVal;
-  const imageUrl = State.storyCreatorImgUrl || null;
+  const storyImages = Array.isArray(State.storyCreatorImages) && State.storyCreatorImages.length > 0
+    ? State.storyCreatorImages.slice(0, 3)
+    : (State.storyCreatorImgUrl ? [State.storyCreatorImgUrl] : []);
+  const imageUrl = storyImages[0] || State.storyCreatorImgUrl || null;
   let song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   if (!song) song = liveSearchResults.find(s => s.id === selectedStoryMusicId);
   const music = song ? {
@@ -4263,6 +4369,7 @@ window.publishStoryWithMusic = async (isCf = false) => {
       body: {
         text,
         imageUrl,
+        images: storyImages,
         music,
         style,
         story: true,
