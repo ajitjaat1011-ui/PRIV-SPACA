@@ -183,33 +183,22 @@
           <button type="button" id="chatMoreMenuBtn" class="action-circle-btn" title="More Options"><i data-lucide="more-vertical"></i></button>
           <div id="chatMoreDropdown" class="chat-dropdown hidden">
             <button type="button" id="secretChatBtn" class="dropdown-item" title="Secret Chat (E2E)"><i data-lucide="lock"></i> <span>Toggle Secret Chat</span></button>
+            <div id="disappearRow" class="dropdown-item" style="display:none; justify-content:space-between; cursor:default; padding:8px 12px;">
+              <span style="font-size:12.5px; color:var(--muted);">⏱️ Disappear:</span>
+              <select id="disappearSelect" style="background:var(--bg); color:white; border:1px solid var(--line); border-radius:6px; padding:3px 6px; font-size:12px; outline:none;">
+                <option value="0">Off</option>
+                <option value="10000">10s</option>
+                <option value="60000">1m</option>
+                <option value="300000">5m</option>
+                <option value="3600000">1h</option>
+                <option value="86400000">24h</option>
+              </select>
+            </div>
             <button type="button" id="scheduleBtn" class="dropdown-item" title="Scheduled messages"><i data-lucide="clock"></i> <span>Scheduled Messages</span></button>
           </div>
         </div>
       </div>
-      <div id="secretBanner" class="secret-banner hidden">
-        <div class="sb-left">
-          <i data-lucide="shield-check"></i>
-          <div>
-            <div class="sb-title">Secret Chat is ON</div>
-            <div class="sb-sub">Messages are end-to-end encrypted. Only you and your friend can read them.</div>
-          </div>
-        </div>
-        <div class="sb-right">
-          <label class="sb-disappear">
-            <i data-lucide="timer"></i>
-            <select id="disappearSelect">
-              <option value="0">Off</option>
-              <option value="10000">10 seconds</option>
-              <option value="60000">1 minute</option>
-              <option value="300000">5 minutes</option>
-              <option value="3600000">1 hour</option>
-              <option value="86400000">24 hours</option>
-            </select>
-          </label>
-          <button id="secretOffBtn" class="ghost-btn" title="Turn off"><i data-lucide="x"></i></button>
-        </div>
-      </div>
+      <div id="secretBanner" class="hidden" style="display:none;"></div>
 
       <div id="messagesScroll" class="messages-scroll">
         <div id="messagesList" class="messages-list"></div>
