@@ -29,8 +29,6 @@ let VAPID_SUBJECT = 'mailto:admin@priv-spaca.app';
 let ADMIN_USERS = 'Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com';
 let OWNER_EMAIL = 'ajitjaat1011@gmail.com';
 let OWNER_USERNAME = 'Arvindjaat1011';
-let OWNER_DEFAULT_PASSWORD = 'Priv@2026Reset';
-let OWNER_DEFAULT_PIN = '7391';
 function loadConfig(env) {
   if (!env) return;
   // Always overwrite — values can change per-deploy
@@ -46,8 +44,6 @@ function loadConfig(env) {
   if (env.ADMIN_USERS) ADMIN_USERS = env.ADMIN_USERS;
   if (env.OWNER_EMAIL) OWNER_EMAIL = env.OWNER_EMAIL;
   if (env.OWNER_USERNAME) OWNER_USERNAME = env.OWNER_USERNAME;
-  if (env.OWNER_DEFAULT_PASSWORD) OWNER_DEFAULT_PASSWORD = env.OWNER_DEFAULT_PASSWORD;
-  if (env.OWNER_DEFAULT_PIN) OWNER_DEFAULT_PIN = env.OWNER_DEFAULT_PIN;
 }
 
 const JWT_EXPIRES_DAYS = 7;
