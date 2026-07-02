@@ -227,11 +227,13 @@
     <section class="chat-pane">
       <div class="chat-header">
         <div class="chat-header-left">
-          <button id="backToRoomsBtn" class="ghost-btn back-btn" title="Members"><i data-lucide="menu"></i></button>
-          <span id="chatAvatar" class="avatar md" style="display:none"></span>
-          <div class="chat-header-text">
-            <div id="chatTitle" class="chat-title">#general-group</div>
-            <div id="chatSubtitle" class="chat-subtitle">Tap members to start a private chat</div>
+          <button id="backToRoomsBtn" class="ghost-btn back-btn" title="Chats" aria-label="Chats"><i data-lucide="menu"></i></button>
+          <div id="chatHeaderProfileTap" class="chat-header-profile-tap" role="button" tabindex="0" aria-label="Open profile">
+            <span id="chatAvatar" class="avatar md" style="display:none"></span>
+            <div class="chat-header-text">
+              <div id="chatTitle" class="chat-title">#general-group</div>
+              <div id="chatSubtitle" class="chat-subtitle">Tap members to start a private chat</div>
+            </div>
           </div>
         </div>
         <div class="chat-header-actions" style="display:flex; align-items:center; gap:6px; position:relative;">

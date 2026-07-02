@@ -765,6 +765,7 @@ function switchTab(tab) {
     renderOwnProfile();
   }
   updateTopbarHeader(tab);
+  updateChatThreadChrome();
   if (activeView) springIn(activeView, { duration: 0.28 });
   refreshIcons();
   if (typeof updateNotifDots === 'function') updateNotifDots();
@@ -1200,6 +1201,38 @@ function bindNotes() {
   });
 }
 
+
+function isMobileChatViewport() {
+  return window.innerWidth <= 780;
+}
+
+function isInMobileDmThread() {
+  const cv = $('#chatView');
+  return !!(State.currentRoom && State.currentRoom.kind === 'dm' && cv && cv.classList.contains('active') && !cv.classList.contains('show-rooms') && isMobileChatViewport());
+}
+
+function updateChatThreadChrome() {
+  const inThread = isInMobileDmThread();
+  const shell = $('#appShell');
+  if (shell) shell.classList.toggle('chat-thread-open', inThread);
+  const back = $('#backToRoomsBtn');
+  if (back) {
+    back.innerHTML = inThread ? '<i data-lucide="arrow-left"></i>' : '<i data-lucide="menu"></i>';
+    back.title = inThread ? 'Back to chats' : 'Chats';
+    back.setAttribute('aria-label', inThread ? 'Back to chats' : 'Chats');
+  }
+  const headerLeft = $('#chatHeaderProfileTap');
+  if (headerLeft) headerLeft.classList.toggle('is-profile-link', !!(State.currentRoom && State.currentRoom.kind === 'dm' && State.currentRoom.target));
+  if (typeof refreshIcons === 'function') refreshIcons();
+}
+
+function backToChatList() {
+  const cv = $('#chatView');
+  if (!cv) return;
+  cv.classList.add('show-rooms');
+  updateChatThreadChrome();
+}
+
 function openDM(user) {
   State.currentRoom = {
     id: dmRoomId(State.user.id, user.id),
@@ -1214,6 +1247,7 @@ function openDM(user) {
   renderAvatar(ca, user, { showStatus: true, online: !!user.online });
   $$('#roomsList .room-item').forEach(r => r.classList.remove('active'));
   $('#chatView').classList.remove('show-rooms');
+  updateChatThreadChrome();
   if ($('#rtcCallActions')) $('#rtcCallActions').style.display = 'flex';
   // Opening a DM belongs to the Primary segment — make sure it's shown.
   if (typeof _inboxSeg !== 'undefined' && _inboxSeg !== 'primary') {
@@ -1320,6 +1354,7 @@ function bindRooms() {
       $('#chatSubtitle').textContent = 'Tap members to start a private chat';
       $('#chatAvatar').style.display = 'none';
       $('#chatView').classList.remove('show-rooms');
+      updateChatThreadChrome();
       if ($('#rtcCallActions')) $('#rtcCallActions').style.display = 'none';
       _previousMessageIds = new Set();
       renderMembers();
@@ -1328,7 +1363,16 @@ function bindRooms() {
     });
   });
   const back = $('#backToRoomsBtn');
-  if (back) back.addEventListener('click', () => $('#chatView').classList.toggle('show-rooms'));
+  if (back) back.addEventListener('click', () => {
+    if (isInMobileDmThread()) backToChatList();
+    else { $('#chatView').classList.toggle('show-rooms'); updateChatThreadChrome(); }
+  });
+  const headerTap = $('#chatHeaderProfileTap');
+  if (headerTap) headerTap.addEventListener('click', () => {
+    if (State.currentRoom && State.currentRoom.kind === 'dm' && State.currentRoom.target) {
+      openUserProfile(State.currentRoom.target.id);
+    }
+  });
 }
 
 // Switch the inbox side-pane between the Groups and Primary segments.
@@ -6776,6 +6820,8 @@ async function showInstallPrompt() {
   }
 }
 
+
+window.addEventListener('resize', updateChatThreadChrome);
 
 window.addEventListener('error', (e) => {
   const splash = $('#splash');
