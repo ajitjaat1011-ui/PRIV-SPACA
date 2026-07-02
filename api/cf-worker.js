@@ -448,56 +448,58 @@ async function tursoEnsure() {
   if (!isTursoConfigured()) return false;
   if (_tursoReady) return true;
   const c = tursoClient();
-  await c.execute(`CREATE TABLE IF NOT EXISTS ps_users (
-    id TEXT PRIMARY KEY,
-    username_lower TEXT,
-    email_lower TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    data_json TEXT NOT NULL
-  )`);
-  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_users_username_lower ON ps_users (username_lower)`);
-  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_users_email_lower ON ps_users (email_lower)`);
-  await c.execute(`CREATE TABLE IF NOT EXISTS ps_posts (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    deleted_at INTEGER,
-    story INTEGER NOT NULL DEFAULT 0,
-    story_expires_at INTEGER,
-    updated_at INTEGER NOT NULL,
-    data_json TEXT NOT NULL
-  )`);
-  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_user_id ON ps_posts (user_id)`);
-  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_created_at ON ps_posts (created_at DESC)`);
-  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_story ON ps_posts (story, story_expires_at)`);
-  await c.execute(`CREATE TABLE IF NOT EXISTS ps_notifications (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    from_user_id TEXT,
-    kind TEXT,
-    created_at INTEGER NOT NULL,
-    seen_at INTEGER,
-    updated_at INTEGER NOT NULL,
-    data_json TEXT NOT NULL
-  )`);
-  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_notifications_user_created ON ps_notifications (user_id, created_at DESC)`);
-  await c.execute(`CREATE TABLE IF NOT EXISTS ps_dm_index (
-    owner_user_id TEXT NOT NULL,
-    peer_user_id TEXT NOT NULL,
-    room_id TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    from_me INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    data_json TEXT NOT NULL,
-    PRIMARY KEY (owner_user_id, peer_user_id)
-  )`);
-  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_dm_index_owner_created ON ps_dm_index (owner_user_id, created_at DESC)`);
-  await c.execute(`CREATE TABLE IF NOT EXISTS ps_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT,
-    updated_at INTEGER NOT NULL
-  )`);
+  await c.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS ps_users (
+      id TEXT PRIMARY KEY,
+      username_lower TEXT,
+      email_lower TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      data_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_users_username_lower ON ps_users (username_lower);
+    CREATE INDEX IF NOT EXISTS idx_ps_users_email_lower ON ps_users (email_lower);
+    CREATE TABLE IF NOT EXISTS ps_posts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      deleted_at INTEGER,
+      story INTEGER NOT NULL DEFAULT 0,
+      story_expires_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      data_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_posts_user_id ON ps_posts (user_id);
+    CREATE INDEX IF NOT EXISTS idx_ps_posts_created_at ON ps_posts (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ps_posts_story ON ps_posts (story, story_expires_at);
+    CREATE TABLE IF NOT EXISTS ps_notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      from_user_id TEXT,
+      kind TEXT,
+      created_at INTEGER NOT NULL,
+      seen_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      data_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_notifications_user_created ON ps_notifications (user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_dm_index (
+      owner_user_id TEXT NOT NULL,
+      peer_user_id TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      from_me INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      data_json TEXT NOT NULL,
+      PRIMARY KEY (owner_user_id, peer_user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_dm_index_owner_created ON ps_dm_index (owner_user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at INTEGER NOT NULL
+    );
+  `);
   _tursoReady = true;
   return true;
 }
@@ -508,23 +510,23 @@ async function syncTursoMirror(db) {
   const src = normalizeDb(db);
   const ts = nowMs();
   try {
-    await c.execute('DELETE FROM ps_users');
+    const statements = [{ sql: 'DELETE FROM ps_users' }];
     for (const u of src.users || []) {
-      await c.execute({
+      statements.push({
         sql: 'INSERT INTO ps_users (id, username_lower, email_lower, created_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?)',
         args: [u.id, String(u.username || '').toLowerCase(), String(u.email || '').toLowerCase(), Number(u.createdAt || 0), ts, JSON.stringify(u)],
       });
     }
-    await c.execute('DELETE FROM ps_posts');
+    statements.push({ sql: 'DELETE FROM ps_posts' });
     for (const p of src.posts || []) {
-      await c.execute({
+      statements.push({
         sql: 'INSERT INTO ps_posts (id, user_id, created_at, deleted_at, story, story_expires_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         args: [p.id, p.userId, Number(p.createdAt || 0), p.deletedAt ? Number(p.deletedAt) : null, p.story ? 1 : 0, p.storyExpiresAt ? Number(p.storyExpiresAt) : null, ts, JSON.stringify(p)],
       });
     }
-    await c.execute('DELETE FROM ps_notifications');
+    statements.push({ sql: 'DELETE FROM ps_notifications' });
     for (const n of src.notifications || []) {
-      await c.execute({
+      statements.push({
         sql: 'INSERT INTO ps_notifications (id, user_id, from_user_id, kind, created_at, seen_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         args: [n.id, n.userId, n.fromUserId || null, n.kind || null, Number(n.createdAt || 0), n.seenAt ? Number(n.seenAt) : null, ts, JSON.stringify(n)],
       });
@@ -556,17 +558,18 @@ async function syncTursoMirror(db) {
         });
       }
     }
-    await c.execute('DELETE FROM ps_dm_index');
+    statements.push({ sql: 'DELETE FROM ps_dm_index' });
     for (const row of dmIndex.values()) {
-      await c.execute({
+      statements.push({
         sql: 'INSERT INTO ps_dm_index (owner_user_id, peer_user_id, room_id, created_at, from_me, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
         args: [row.ownerUserId, row.peerUserId, row.roomId, row.createdAt, row.fromMe ? 1 : 0, ts, JSON.stringify(row)],
       });
     }
-    await c.execute({
+    statements.push({
       sql: 'INSERT INTO ps_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
       args: ['bootstrap_v1', String(ts), ts],
     });
+    await c.batch(statements, 'write');
     _tursoBootstrapped = true;
     return true;
   } catch (e) {
