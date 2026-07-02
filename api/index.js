@@ -494,7 +494,15 @@ function sanitizeUser(u) {
     photoUrl: u.photoUrl || '',
     createdAt: u.createdAt,
     publicKey: u.publicKey || null,
+    note: activeNote(u),
   };
+}
+// A "note" is a short 24h status (Instagram-style). Returns null once expired.
+function activeNote(u) {
+  const n = u && u.note;
+  if (!n || !n.text) return null;
+  if (n.expiresAt && n.expiresAt <= nowMs()) return null;
+  return { text: String(n.text).slice(0, 60), createdAt: n.createdAt || 0, expiresAt: n.expiresAt || 0 };
 }
 
 function isValidEmail(s) {
@@ -1042,6 +1050,23 @@ app.get('/api/users', authMiddleware, async (req, res) => {
     }
   });
   const myFollowing = new Set((me && me.following) || []);
+  // Build a preview of the most-recent DM message between me and each peer.
+  const lastByPeer = {};
+  for (const m of (db.messages || [])) {
+    if (typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
+    const parts = m.roomId.slice(3).split(':');
+    if (!parts.includes(req.userId)) continue;
+    const peer = parts.find(id => id !== req.userId);
+    if (!peer) continue;
+    if (!lastByPeer[peer] || (m.createdAt || 0) > (lastByPeer[peer].createdAt || 0)) {
+      let preview;
+      if (m.encrypted) preview = '🔒 Encrypted message';
+      else if (m.storyReply) preview = 'Replied to a story';
+      else if (m.imageUrl) preview = '📷 Photo';
+      else preview = String(m.text || '').slice(0, 60);
+      lastByPeer[peer] = { text: preview, createdAt: m.createdAt || 0, fromMe: m.userId === req.userId };
+    }
+  }
   const list = db.users
     .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
     .map(u => {
@@ -1052,6 +1077,7 @@ app.get('/api/users', authMiddleware, async (req, res) => {
         lastSeen: hb,
         iFollow: myFollowing.has(u.id),
         followsMe: Array.isArray(u.following) && u.following.includes(req.userId),
+        lastMessage: lastByPeer[u.id] || null,
       };
     });
   res.json({ users: list });
@@ -1089,6 +1115,18 @@ app.post('/api/user/heartbeat', authMiddleware, async (req, res) => {
   db.heartbeat[req.userId] = nowMs();
   await saveDatabase(db, true); // ephemeral
   res.json({ ok: true });
+});
+
+// ---------- Notes: short 24h status shown on the DM inbox rail ----------
+app.post('/api/user/note', authMiddleware, async (req, res) => {
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === req.userId);
+  if (!u) return res.status(404).json({ error: 'Not found' });
+  const text = sanitizeText((req.body || {}).text || '', 60).trim();
+  if (!text) { u.note = null; }
+  else { u.note = { text, createdAt: nowMs(), expiresAt: nowMs() + 24 * 3600 * 1000 }; }
+  await saveDatabase(db, false);
+  res.json({ ok: true, note: activeNote(u) });
 });
 
 app.post('/api/user/typing', authMiddleware, async (req, res) => {

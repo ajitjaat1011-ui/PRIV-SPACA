@@ -172,6 +172,9 @@
 
       <!-- PRIMARY: 1-to-1 DMs, with Requests folded in as a banner -->
       <div id="dmsPaneSection">
+        <!-- Notes rail: short 24h statuses (Instagram-style) shown above the DM list -->
+        <div id="notesRail" class="notes-rail"></div>
+
         <!-- Requests banner (people you're not connected with yet) -->
         <button type="button" id="requestsBanner" class="req-banner hidden">
           <span class="req-ic"><i data-lucide="user-plus"></i></span>
@@ -745,6 +748,24 @@
       <button class="ghost-btn" id="storyViewersClose" aria-label="Close"><i data-lucide="x"></i></button>
     </div>
     <div class="story-viewers-list" id="storyViewersList"></div>
+  </div>
+</div>
+
+<!-- ====== LEAVE A NOTE MODAL ====== -->
+<div id="noteModal" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-card note-modal-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h3>Leave a note</h3>
+      <button class="ghost-btn" id="noteClose" aria-label="Close"><i data-lucide="x"></i></button>
+    </div>
+    <p class="note-sub">Share a thought — it disappears after 24 hours and shows on your friends' chat inbox.</p>
+    <div class="note-bubble-preview" id="notePreviewBubble">What's on your mind?</div>
+    <textarea id="noteInput" class="note-input" maxlength="60" rows="2" placeholder="Type a note…"></textarea>
+    <div class="note-actions">
+      <button type="button" id="noteClearBtn" class="secondary-btn">Clear note</button>
+      <button type="button" id="noteShareBtn" class="primary-btn">Share</button>
+    </div>
   </div>
 </div>
 

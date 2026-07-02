@@ -99,7 +99,14 @@ function sanitizeUser(u) {
   if (!u) return null;
   return { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
            bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt,
-           publicKey: u.publicKey || null };
+           publicKey: u.publicKey || null, note: activeNote(u) };
+}
+// A "note" is a short 24h status (Instagram-style). Returns null once expired.
+function activeNote(u) {
+  const n = u && u.note;
+  if (!n || !n.text) return null;
+  if (n.expiresAt && n.expiresAt <= nowMs()) return null;
+  return { text: String(n.text).slice(0, 60), createdAt: n.createdAt || 0, expiresAt: n.expiresAt || 0 };
 }
 
 function adminSet() {
@@ -1105,6 +1112,23 @@ app.get('/api/users', requireAuth, async (c) => {
   });
   const now = nowMs();
   const myFollowing = new Set((me && me.following) || []);
+  // Build a preview of the most-recent DM message between me and each peer.
+  const lastByPeer = {};
+  for (const m of (db.messages || [])) {
+    if (typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
+    const parts = m.roomId.slice(3).split(':');
+    if (!parts.includes(myId)) continue;
+    const peer = parts.find(id => id !== myId);
+    if (!peer) continue;
+    if (!lastByPeer[peer] || (m.createdAt || 0) > (lastByPeer[peer].createdAt || 0)) {
+      let preview;
+      if (m.encrypted) preview = '🔒 Encrypted message';
+      else if (m.storyReply) preview = 'Replied to a story';
+      else if (m.imageUrl) preview = '📷 Photo';
+      else preview = String(m.text || '').slice(0, 60);
+      lastByPeer[peer] = { text: preview, createdAt: m.createdAt || 0, fromMe: m.userId === myId };
+    }
+  }
   const list = db.users
     .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
     .map(u => ({
@@ -1113,6 +1137,7 @@ app.get('/api/users', requireAuth, async (c) => {
       lastSeen: db.heartbeat[u.id] || 0,
       iFollow: myFollowing.has(u.id),
       followsMe: Array.isArray(u.following) && u.following.includes(myId),
+      lastMessage: lastByPeer[u.id] || null,
     }));
   return c.json({ users: list });
 });
@@ -1160,6 +1185,18 @@ app.post('/api/user/heartbeat', requireAuth, async (c) => {
   db.heartbeat[c.get('userId')] = nowMs();
   await saveDatabase(db, true);
   return c.json({ ok: true });
+});
+// ---------- Notes: short 24h status shown on the DM inbox rail ----------
+app.post('/api/user/note', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const db = await fetchDatabase();
+  const u = db.users.find(x => x.id === c.get('userId'));
+  if (!u) return c.json({ error: 'Not found' }, 404);
+  const text = sanitizeText(body.text || '', 60).trim();
+  if (!text) { u.note = null; }        // empty text clears the note
+  else { u.note = { text, createdAt: nowMs(), expiresAt: nowMs() + 24 * 3600 * 1000 }; }
+  await saveDatabase(db, false);
+  return c.json({ ok: true, note: activeNote(u) });
 });
 app.post('/api/user/typing', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}));

@@ -5,7 +5,7 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v20-inbox-redesign-groups-primary';
+const SW_VERSION = 'priv-spaca-v21-notes-rail-message-previews';
 const STATIC_CACHE = 'priv-spaca-static-' + SW_VERSION;
 const RUNTIME_CACHE = 'priv-spaca-runtime-' + SW_VERSION;
 
