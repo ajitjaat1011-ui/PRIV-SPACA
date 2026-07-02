@@ -153,31 +153,44 @@ function isPrivOwner(user) {
 }
 
 function ownerVerifiedBadgeSvg(extraClass = '') {
+  const n = (ownerVerifiedBadgeSvg._n = (ownerVerifiedBadgeSvg._n || 0) + 1);
+  const glass = `psGlass${n}`;
+  const rim = `psRim${n}`;
+  const mark = `psMark${n}`;
   return `
     <svg class="owner-verified-badge ${extraClass}" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
       <defs>
-        <radialGradient id="ovbGlass" cx="34%" cy="24%" r="75%">
-          <stop offset="0" stop-color="#ffffff" stop-opacity="0.38"/>
-          <stop offset="0.28" stop-color="#a855f7" stop-opacity="0.38"/>
-          <stop offset="0.68" stop-color="#15216a" stop-opacity="0.96"/>
-          <stop offset="1" stop-color="#07091f" stop-opacity="1"/>
+        <radialGradient id="${glass}" cx="31%" cy="22%" r="78%">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0.72"/>
+          <stop offset="0.22" stop-color="#ff5cf7" stop-opacity="0.38"/>
+          <stop offset="0.58" stop-color="#312e81" stop-opacity="0.92"/>
+          <stop offset="1" stop-color="#050718" stop-opacity="1"/>
         </radialGradient>
-        <linearGradient id="ovbStroke" x1="6" y1="8" x2="58" y2="56">
-          <stop offset="0" stop-color="#ff4df8"/><stop offset="0.48" stop-color="#8b5cf6"/><stop offset="1" stop-color="#00c8ff"/>
+        <linearGradient id="${rim}" x1="8" y1="6" x2="56" y2="58">
+          <stop offset="0" stop-color="#ff4df8"/>
+          <stop offset="0.45" stop-color="#8b5cf6"/>
+          <stop offset="1" stop-color="#00c8ff"/>
         </linearGradient>
-        <linearGradient id="ovbMark" x1="18" y1="15" x2="48" y2="52">
-          <stop offset="0" stop-color="#ff5cf7"/><stop offset="1" stop-color="#6aa7ff"/>
+        <linearGradient id="${mark}" x1="17" y1="14" x2="48" y2="54">
+          <stop offset="0" stop-color="#ff66f7"/>
+          <stop offset="1" stop-color="#75a7ff"/>
         </linearGradient>
       </defs>
-      <circle class="ovb-glow" cx="32" cy="32" r="28" fill="none" stroke="url(#ovbStroke)" stroke-width="5"/>
-      <circle cx="32" cy="32" r="25" fill="url(#ovbGlass)" stroke="rgba(255,255,255,.22)" stroke-width="1.3"/>
-      <path class="ovb-shine" d="M14 23 C18 11 31 7 45 12 C33 12 23 16 16 29 Z" fill="#fff" opacity=".20"/>
-      <g fill="url(#ovbMark)" filter="drop-shadow(0 0 3px rgba(190,90,255,.85))">
-        <path d="M20 17h13.5c5.3 0 8.7 2.8 8.7 7.3 0 4.6-3.4 7.5-8.7 7.5h-7.2v5.7H20V17Zm6.3 5.1v4.8h6.7c1.9 0 3-.9 3-2.4s-1.1-2.4-3-2.4h-6.7Z"/>
-        <path d="M39 29.3h10.5v5.1H39c-1.3 0-2 .5-2 1.4s.7 1.4 2 1.4h4.6c4.6 0 7.4 2.3 7.4 6.1 0 4-3.1 6.5-8.2 6.5H31.4v-5.1h11.3c1.4 0 2.1-.5 2.1-1.5 0-.9-.7-1.4-2.1-1.4h-4.5c-4.6 0-7.4-2.2-7.4-6 0-4 3.1-6.5 8.2-6.5Z"/>
-      </g>
-      <path class="ovb-check" d="M21 44.5 29 52 46 34" fill="none" stroke="url(#ovbMark)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle class="ovb-rim" cx="32" cy="32" r="28" fill="none" stroke="url(#${rim})" stroke-width="5.4"/>
+      <circle class="ovb-glass" cx="32" cy="32" r="24.6" fill="url(#${glass})" stroke="rgba(255,255,255,.34)" stroke-width="1.4"/>
+      <path class="ovb-highlight" d="M14 22C18 10 31 7 45 11C32 12 22 17 16 30Z" fill="#fff" opacity=".28"/>
+      <text class="ovb-ps" x="32" y="29" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="950" letter-spacing="-2" fill="url(#${mark})">PS</text>
+      <path class="ovb-check" d="M20.5 43.5 28.7 51 46.5 32.5" fill="none" stroke="url(#${mark})" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>`;
+}
+
+function ownerBadgeHtml(user, extraClass = 'inline') {
+  return isPrivOwner(user) ? ownerVerifiedBadgeSvg(extraClass) : '';
+}
+
+function displayNameWithOwnerBadge(user, fallback = '', extraClass = 'inline') {
+  const label = fallback || (user && (user.displayName || user.username)) || 'Member';
+  return `${escapeHtml(label)}${ownerBadgeHtml(user, extraClass)}`;
 }
 
 // In-memory cache of broken photo URLs (so we don't keep retrying within the session)
@@ -462,13 +475,13 @@ function showApp() {
 
 function hydrateMeChips() {
   if (!State.user) return;
-  if ($('#feedMeName')) $('#feedMeName').textContent = (State.user.displayName || State.user.username).toUpperCase();
+  if ($('#feedMeName')) $('#feedMeName').innerHTML = displayNameWithOwnerBadge(State.user, (State.user.displayName || State.user.username).toUpperCase(), 'inline');
   if ($('#feedMeAvatar')) renderAvatar($('#feedMeAvatar'), State.user);
   if ($('#profileAvatarPreview')) renderAvatar($('#profileAvatarPreview'), State.user);
   const profileTitle = $('#profileTitleUsername');
   if (profileTitle) profileTitle.innerHTML = `${escapeHtml(State.user.username || State.user.displayName || 'me')}${isPrivOwner(State.user) ? ownerVerifiedBadgeSvg('title') : ''}`;
   const profileUserLine = $('#profileUsername');
-  if (profileUserLine) profileUserLine.textContent = '@' + (State.user.username || State.user.displayName || 'me');
+  if (profileUserLine) profileUserLine.innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || State.user.displayName || 'me'), 'inline');
   // Bottom-nav avatar (uses the same broken-URL detection as renderAvatar)
   const bn = $('#bnMeAvatar');
   if (bn) {
@@ -822,7 +835,7 @@ function updateTopbarHeader(tab) {
   const igT = $('#igUsernameText');
   const showUsername = (tab === 'chat' || tab === 'groups');
   if (showUsername && State.user) {
-    if (igT) igT.textContent = State.user.username || State.user.displayName || 'you';
+    if (igT) igT.innerHTML = displayNameWithOwnerBadge(State.user, State.user.username || State.user.displayName || 'you', 'inline');
     if (brand) brand.classList.add('hidden');
     if (igH) igH.classList.remove('hidden');
   } else {
@@ -901,7 +914,7 @@ function renderMembers() {
       subCls = 'last-msg';
       subTxt = (u.lastMessage.fromMe ? 'You: ' : '') + escapeHtml(u.lastMessage.text);
     } else { subCls = 'un'; subTxt = '@' + escapeHtml(u.username); }
-    meta.innerHTML = '<span class="nm">' + escapeHtml(u.displayName || u.username) + '</span>' +
+    meta.innerHTML = '<span class="nm">' + displayNameWithOwnerBadge(u, u.displayName || u.username, 'inline') + '</span>' +
       '<span class="' + subCls + '">' + subTxt + '</span>';
     li.appendChild(avatar); li.appendChild(meta);
     // Right column: last-message time.
@@ -981,7 +994,7 @@ function renderNotesRail() {
     }
     const nm = document.createElement('span');
     nm.className = 'note-name';
-    nm.textContent = isMe ? 'Your note' : (u.displayName || u.username);
+    if (isMe) nm.textContent = 'Your note'; else nm.innerHTML = displayNameWithOwnerBadge(u, u.displayName || u.username, 'inline');
     cell.appendChild(bubble); cell.appendChild(avWrap); cell.appendChild(nm);
     if (isMe) cell.addEventListener('click', openNoteModal);
     else cell.addEventListener('click', (e) => {
@@ -1006,7 +1019,7 @@ function openNoteViewer(u) {
   const modal = $('#noteViewerModal');
   if (!modal) return;
   const h = $('#noteViewerHandle');
-  if (h) h.textContent = (u.username || u.displayName) + ' • ' + timeAgo(u.note?.createdAt || Date.now());
+  if (h) h.innerHTML = displayNameWithOwnerBadge(u, u.username || u.displayName, 'inline') + ' • ' + escapeHtml(timeAgo(u.note?.createdAt || Date.now()));
   renderAvatar($('#noteViewerAvatar'), u);
   const songEl = $('#noteViewerSong');
   const textEl = $('#noteViewerText');
@@ -1283,7 +1296,7 @@ function openDM(user) {
     target: user,
     label: '@' + user.username
   };
-  $('#chatTitle').textContent = user.displayName || ('@' + user.username);
+  $('#chatTitle').innerHTML = displayNameWithOwnerBadge(user, user.displayName || ('@' + user.username), 'inline');
   $('#chatSubtitle').textContent = '@' + user.username + (user.online ? ' · online' : ' · offline');
   const ca = $('#chatAvatar');
   ca.style.display = 'inline-flex';
@@ -1983,7 +1996,7 @@ function renderMessage(m, meId, grouped) {
   if (!isMine && !grouped) {
     const al = document.createElement('div');
     al.className = 'author-line';
-    al.textContent = author.displayName || ('@' + author.username);
+    al.innerHTML = displayNameWithOwnerBadge(author, author.displayName || ('@' + author.username), 'inline');
     const tA = bubbleTintFor(m.userId);
     al.style.setProperty('--bubble-author', tA.author);
     wrap.appendChild(al);
@@ -2893,7 +2906,7 @@ function buildStoryCell(user, isMe) {
   cell.appendChild(ring);
   const lbl = document.createElement('span');
   lbl.className = 'lbl';
-  lbl.textContent = isMe ? 'Your story' : (user.username || user.displayName || '');
+  if (isMe) lbl.textContent = 'Your story'; else lbl.innerHTML = displayNameWithOwnerBadge(user, user.username || user.displayName || '', 'inline');
   cell.appendChild(lbl);
   cell.addEventListener('click', () => {
     if (isMe) {
@@ -3325,10 +3338,10 @@ function renderPost(p) {
     const txt = document.createElement('span');
     txt.className = 'txt';
     if (liker && p.likeCount === 1) {
-      txt.innerHTML = `Liked by <strong>${escapeHtml(liker.username)}</strong>`;
+      txt.innerHTML = `Liked by <strong>${displayNameWithOwnerBadge(liker, liker.username, 'inline')}</strong>`;
     } else if (liker && p.likeCount > 1) {
       const others = p.likeCount - 1;
-      txt.innerHTML = `Liked by <strong>${escapeHtml(liker.username)}</strong> and <strong>${others} other${others === 1 ? '' : 's'}</strong>`;
+      txt.innerHTML = `Liked by <strong>${displayNameWithOwnerBadge(liker, liker.username, 'inline')}</strong> and <strong>${others} other${others === 1 ? '' : 's'}</strong>`;
     } else {
       txt.innerHTML = `<strong>${p.likeCount}</strong> ${p.likeCount === 1 ? 'like' : 'likes'}`;
     }
@@ -3344,7 +3357,7 @@ function renderPost(p) {
     const visible = isLong ? p.text.slice(0, 140) : p.text;
     const authorSpan = document.createElement('span');
     authorSpan.className = 'author';
-    authorSpan.textContent = author.username || author.displayName;
+    authorSpan.innerHTML = displayNameWithOwnerBadge(author, author.username || author.displayName, 'inline');
     cap.appendChild(authorSpan);
     const txtNode = document.createTextNode(visible);
     cap.appendChild(txtNode);
@@ -3379,7 +3392,7 @@ function renderPost(p) {
       const row = document.createElement('div');
       row.className = 'preview-comment';
       const a = document.createElement('span'); a.className = 'author';
-      a.textContent = cAuth.username || cAuth.displayName;
+      a.innerHTML = displayNameWithOwnerBadge(cAuth, cAuth.username || cAuth.displayName, 'inline');
       row.appendChild(a);
       // Space between author and text (bug fix: was missing → "Anushkahi there")
       row.appendChild(document.createTextNode(' ' + (c.text || '')));
@@ -3499,10 +3512,10 @@ function patchLikeUI(card, p, meId) {
     const txt = document.createElement('span');
     txt.className = 'txt';
     if (liker && p.likeCount === 1) {
-      txt.innerHTML = `Liked by <strong>${escapeHtml(liker.username)}</strong>`;
+      txt.innerHTML = `Liked by <strong>${displayNameWithOwnerBadge(liker, liker.username, 'inline')}</strong>`;
     } else if (liker && p.likeCount > 1) {
       const others = p.likeCount - 1;
-      txt.innerHTML = `Liked by <strong>${escapeHtml(liker.username)}</strong> and <strong>${others} other${others === 1 ? '' : 's'}</strong>`;
+      txt.innerHTML = `Liked by <strong>${displayNameWithOwnerBadge(liker, liker.username, 'inline')}</strong> and <strong>${others} other${others === 1 ? '' : 's'}</strong>`;
     } else {
       txt.innerHTML = `<strong>${p.likeCount}</strong> ${p.likeCount === 1 ? 'like' : 'likes'}`;
     }
@@ -3551,7 +3564,7 @@ function patchCommentUI(card, p) {
       const row = document.createElement('div');
       row.className = 'preview-comment';
       const a = document.createElement('span'); a.className = 'author';
-      a.textContent = cAuth.username || cAuth.displayName;
+      a.innerHTML = displayNameWithOwnerBadge(cAuth, cAuth.username || cAuth.displayName, 'inline');
       row.appendChild(a);
       row.appendChild(document.createTextNode(' ' + (c.text || '')));
       pv.appendChild(row);
@@ -3707,7 +3720,7 @@ function openCommentsSheet(p) {
     const b = document.createElement('div'); b.className = 'body';
     const txt = document.createElement('div'); txt.className = 'text';
     const author = document.createElement('span'); author.className = 'author';
-    author.textContent = cAuth.username || cAuth.displayName;
+    author.innerHTML = displayNameWithOwnerBadge(cAuth, cAuth.username || cAuth.displayName, 'inline');
     txt.appendChild(author);
     // Space between author and text (bug fix)
     txt.appendChild(document.createTextNode(' ' + (c.text || '')));
@@ -3916,7 +3929,7 @@ function renderStoryItem() {
   content.innerHTML = '';
   renderStoryProgressBars(storyPlayback.items.length, storyPlayback.index);
   renderAvatar($('#storyAvatar'), user);
-  $('#storyName').textContent = user.displayName || user.username;
+  $('#storyName').innerHTML = displayNameWithOwnerBadge(user, user.displayName || user.username, 'inline');
   $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
   const isMyStory = !!(State.user && user.id === State.user.id);
   const manageBtn = $('#storyManageBtn');
@@ -4190,7 +4203,7 @@ async function openStoryViewersSheet() {
       renderAvatar(av, v);
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.innerHTML = `<div class="nm">${escapeHtml(v.displayName || v.username || 'Member')}</div><div class="sub">${escapeHtml(timeAgo(v.at))}</div>`;
+      meta.innerHTML = `<div class="nm">${displayNameWithOwnerBadge(v, v.displayName || v.username || 'Member', 'inline')}</div><div class="sub">${escapeHtml(timeAgo(v.at))}</div>`;
       row.appendChild(av); row.appendChild(meta);
       listEl.appendChild(row);
     });
@@ -6092,7 +6105,7 @@ function renderCloseFriendsSheet() {
     renderAvatar(av, u, { showStatus: true, online: !!u.online });
     const meta = document.createElement('div');
     meta.className = 'meta';
-    meta.innerHTML = `<div class="nm">${escapeHtml(u.displayName || u.username)}</div><div class="sub">@${escapeHtml(u.username || '')}${u.online ? ' · online' : ''}</div>`;
+    meta.innerHTML = `<div class="nm">${displayNameWithOwnerBadge(u, u.displayName || u.username, 'inline')}</div><div class="sub">@${escapeHtml(u.username || '')}${u.online ? ' · online' : ''}</div>`;
     const btn = document.createElement('button');
     btn.className = 'cf-toggle-btn' + (active ? ' active' : '');
     btn.innerHTML = active ? '<i data-lucide="check"></i> Added' : '<i data-lucide="plus"></i> Add';
@@ -6326,8 +6339,8 @@ function closeUserProfile() {
 
 function renderOtherProfile(data) {
   const u = data.user;
-  $('#upHeaderUsername').textContent = '@' + u.username;
-  $('#upDisplayName').textContent = u.displayName || '';
+  $('#upHeaderUsername').innerHTML = displayNameWithOwnerBadge(u, '@' + u.username, 'inline');
+  $('#upDisplayName').innerHTML = displayNameWithOwnerBadge(u, u.displayName || '', 'inline');
   $('#upBio').textContent = u.bio || '';
   $('#upStatPosts').textContent = String(u.postsCount || 0);
   $('#upStatFollowers').textContent = String(u.followers || 0);
@@ -6550,8 +6563,8 @@ async function renderOwnProfile() {
   const titleU = $('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
   if (titleU) titleU.innerHTML = `${escapeHtml(cachedUsername)}${isPrivOwner(State.user) ? ownerVerifiedBadgeSvg('title') : ''}`;
-  if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
-  if ($('#profileUsername')) $('#profileUsername').textContent = '@' + (State.user.username || cachedUsername);
+  if ($('#profileDisplayName')) $('#profileDisplayName').innerHTML = displayNameWithOwnerBadge(State.user, State.user.displayName || '', 'inline');
+  if ($('#profileUsername')) $('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
   // so the grid does not feel slow or blank while /users and /posts load.
   loadMembers().then(() => updateOwnProfileStatCounts(State.user)).catch(() => {});
@@ -6569,7 +6582,7 @@ async function renderOwnProfile() {
       try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
     }
     const realUsername = u.username || State.user.username || cachedUsername;
-    $('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
+    $('#profileDisplayName').innerHTML = displayNameWithOwnerBadge(u, u.displayName || State.user.displayName || '', 'inline');
     $('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
     if (titleU) titleU.innerHTML = `${escapeHtml(realUsername)}${isPrivOwner(u) ? ownerVerifiedBadgeSvg('title') : ''}`;
     const mb = $('#profileMoodBubble');
@@ -6671,7 +6684,7 @@ async function openProfileRelationSheet(kind) {
       row.innerHTML = `
         <span class="avatar md"></span>
         <button type="button" class="profile-relation-meta">
-          <strong>${escapeHtml(u.displayName || u.username || 'Member')}</strong>
+          <strong>${displayNameWithOwnerBadge(u, u.displayName || u.username || 'Member', 'inline')}</strong>
           <span>@${escapeHtml(u.username || '')}</span>
         </button>
         ${kind === 'following' ? '<button type="button" class="profile-relation-remove">Remove</button>' : ''}
@@ -6720,7 +6733,7 @@ function renderDiscoverPeople() {
     card.innerHTML = `
       <button type="button" class="discover-close" title="Dismiss"><i data-lucide="x"></i></button>
       <span class="avatar lg"></span>
-      <div class="discover-name">${escapeHtml(m.displayName || m.username)}</div>
+      <div class="discover-name">${displayNameWithOwnerBadge(m, m.displayName || m.username, 'inline')}</div>
       <div class="discover-sub">Suggested for you</div>
       <button type="button" class="discover-follow-btn">Follow</button>
     `;
@@ -7393,7 +7406,7 @@ function _disarmCallTimeout() { clearTimeout(_rtcConnectTimeout); _rtcConnectTim
 
 function showCallUI(status, user, incoming = false) {
   $('#callStatusText').textContent = status;
-  $('#callName').textContent = user.displayName || user.username || 'User';
+  $('#callName').innerHTML = displayNameWithOwnerBadge(user, user.displayName || user.username || 'User', 'inline');
   $('#callVideos').classList.add('hidden');
   $('#callOverlay').classList.remove('hidden');
   if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
