@@ -3273,6 +3273,48 @@ function syncPostMusicUI() {
   });
   refreshIcons();
 }
+async function playPostMusic(p) {
+  if (!p || !p.music || !p.music.audio) return;
+  const player = getPostMusicPlayer();
+  const storyPlayer = $('#storyBgAudioPlayer');
+  if (storyPlayer && !storyPlayer.paused) storyPlayer.pause();
+  if (player.src === p.music.audio && !player.paused) return;
+  try {
+    if (player.src !== p.music.audio) player.src = p.music.audio;
+    player.currentTime = 0;
+    _postMusicState.postId = p.id;
+    _postMusicState.src = p.music.audio;
+    _postMusicState.title = p.music.title || '';
+    _postMusicState.artist = p.music.artist || '';
+    await player.play();
+    syncPostMusicUI();
+  } catch (_) {
+    console.warn('Autoplay blocked or failed', _);
+  }
+}
+
+async function stopPostMusic(p) {
+  const player = getPostMusicPlayer();
+  if (_postMusicState.postId === p.id && !player.paused) {
+    player.pause();
+    syncPostMusicUI();
+  }
+}
+
+const postMusicObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    const card = entry.target;
+    const postId = card.dataset.id;
+    const post = State.posts.find(p => p.id === postId);
+    if (!post) return;
+    if (entry.isIntersecting) {
+      playPostMusic(post);
+    } else {
+      stopPostMusic(post);
+    }
+  });
+}, { threshold: 0.6 });
+
 async function togglePostMusic(p) {
   if (!p || !p.music || !p.music.audio) return;
   const player = getPostMusicPlayer();
@@ -3662,6 +3704,7 @@ function renderPost(p) {
   addRow.appendChild(emoji); addRow.appendChild(inp); addRow.appendChild(sb);
   card.appendChild(addRow);
 
+  postMusicObserver.observe(card);
   return card;
 }
 
