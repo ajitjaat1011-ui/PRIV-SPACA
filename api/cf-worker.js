@@ -74,9 +74,30 @@ const isUsername = s => typeof s === 'string' && /^[a-zA-Z0-9_]{3,24}$/.test(s);
 const isPin = s => typeof s === 'string' && /^\d{4}$/.test(s);
 function sanitizeText(s, max = 4000) {
   if (typeof s !== 'string') return '';
-  return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-          .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '')
+  return s.normalize('NFKC')
+          .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+          // Strip zero-width + bidi override chars used for spoofing/phishing.
+          .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
           .slice(0, max);
+}
+function normalizeAuthIdentifier(v) {
+  return sanitizeText(String(v || ''), 254).trim().toLowerCase();
+}
+function isSafeMediaUrl(url, { allowData = true } = {}) {
+  if (typeof url !== 'string') return false;
+  const u = url.trim();
+  if (!u || u.length > 4096) return false;
+  if (/^https?:\/\//i.test(u)) return true;
+  if (allowData && /^data:(image|audio|video)\/(jpeg|jpg|png|webp|gif|webm|mp3|mp4|quicktime|mov);base64,[a-z0-9+/=]+$/i.test(u)) return true;
+  return false;
+}
+function isSafeImageUrl(url, { allowData = true } = {}) {
+  if (typeof url !== 'string') return false;
+  const u = url.trim();
+  if (!u || u.length > 4096) return false;
+  if (/^https?:\/\//i.test(u)) return true;
+  if (allowData && /^data:image\/(jpeg|jpg|png|webp|gif);base64,[a-z0-9+/=]+$/i.test(u)) return true;
+  return false;
 }
 function isStoryRecord(post) {
   if (!post) return false;
@@ -557,6 +578,15 @@ function recordLoginFail(userId) {
   if (rec.count >= 5) rec.lockedUntil = now + 15 * 60_000;
 }
 function clearLoginFails(userId) { _loginFails.delete(userId); }
+const AUTH_GENERIC_ERROR = 'Invalid username/email or password.';
+async function authFailureDelay() {
+  await sleepMs(250 + Math.floor(Math.random() * 250));
+}
+function authSubjectRateLimit(c, subject, limit = 10) {
+  const ip = clientIp(c);
+  const key = 'credential:' + ip + ':' + (subject || 'unknown');
+  return rateLimit({ key, limit, windowMs: 15 * 60_000 });
+}
 
 // ---------- Real-time events (in-memory; SSE per-request) ----------
 const _eventQueues = new Map();
@@ -840,13 +870,14 @@ async function sendWebPush(db, recipientId, payload) {
 
 // ---------- Rooms ----------
 function normalizeRoomId(roomId, currentUserId) {
-  if (!roomId) return 'general-group';
-  if (roomId === 'general-group' || roomId.startsWith('group:')) return roomId;
-  if (roomId.startsWith('dm:')) {
-    const parts = roomId.slice(3).split(':');
-    if (parts.length === 2) return 'dm:' + [...parts].sort().join(':');
+  const raw = sanitizeText(String(roomId || 'general-group'), 160).trim();
+  if (!raw || raw === 'general-group') return 'general-group';
+  if (/^group:[a-zA-Z0-9_-]{1,64}$/.test(raw)) return raw;
+  if (raw.startsWith('dm:')) {
+    const parts = raw.slice(3).split(':').filter(Boolean);
+    if (parts.length === 2 && parts.every(x => /^[a-zA-Z0-9_-]{1,96}$/.test(x))) return 'dm:' + [...parts].sort().join(':');
   }
-  return roomId;
+  return 'general-group';
 }
 function dmRoomFor(a, b) { return 'dm:' + [a, b].sort().join(':'); }
 
@@ -857,6 +888,15 @@ app.use('*', async (c, next) => {
   c.header('X-Frame-Options', 'SAMEORIGIN');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.header('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+  await next();
+});
+app.use('/api/*', async (c, next) => {
+  const method = c.req.method.toUpperCase();
+  const len = Number(c.req.header('content-length') || '0');
+  // Keep API-agent friendly JSON access, but reject unexpectedly huge bodies early.
+  if (['POST','PUT','PATCH'].includes(method) && len > 16 * 1024 * 1024) {
+    return c.json({ error: 'Request body too large' }, 413);
+  }
   await next();
 });
 app.use('/api/*', globalRateLimit);
@@ -873,11 +913,11 @@ app.get('/api/health', (c) => c.json({
   time: nowMs(), version: 'phase1-neon-json-storage',
 }));
 
-app.get('/api/diag', async (c) => {
+app.get('/api/diag', requireAdmin, async (c) => {
   const out = {
     persistence: isNeonConfigured() ? 'neon-postgres' : (isRepo() ? 'github-repo' : 'in-memory'),
     repoConfigured: isRepo(), gistConfigured: false,
-    repo: GH_REPO, branch: GH_BRANCH, file: GH_FILE,
+    repo: GH_REPO ? '[configured]' : '', branch: GH_BRANCH ? '[configured]' : '', file: GH_FILE ? '[configured]' : '',
     canRead: false, canWrite: false, userCount: 0, error: null,
     runtime: 'cloudflare-workers',
   };
@@ -939,7 +979,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     return c.json({ token, user: sanitizeUser(newUser) });
   } catch (e) {
     console.error('[signup]', e);
-    return c.json({ error: 'Signup failed: ' + (e.message || 'unknown') }, 500);
+    return c.json({ error: 'Signup failed' }, 500);
   }
 });
 
@@ -948,22 +988,33 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const { identifier, password } = body;
-    if (!identifier || !password) return c.json({ error: 'Missing credentials' }, 400);
-    if (typeof password !== 'string' || password.length > 128) return c.json({ error: 'Invalid credentials' }, 400);
+    const idLower = normalizeAuthIdentifier(identifier);
+    if (!idLower || typeof password !== 'string' || password.length < 1 || password.length > 128) {
+      await authFailureDelay();
+      return c.json({ error: AUTH_GENERIC_ERROR }, 401);
+    }
+    const subjLimit = authSubjectRateLimit(c, idLower, 20);
+    if (!subjLimit.allowed) {
+      c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
+      return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
+    }
     const db = await fetchDatabase({ fresh: true });
-    const idLower = String(identifier).toLowerCase().trim();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) {
-      await new Promise(r => setTimeout(r, 200 + Math.random() * 100));
-      return c.json({ error: 'Account not found. Check username/email or sign up again.' }, 404);
+      await authFailureDelay();
+      return c.json({ error: AUTH_GENERIC_ERROR }, 401);
     }
     const lock = checkAccountLock(user.id);
     if (lock.locked) {
-      const mins = Math.ceil(lock.remaining / 60_000);
-      return c.json({ error: `Account temporarily locked due to failed attempts. Try again in ${mins} minute(s).` }, 423);
+      c.header('Retry-After', String(Math.ceil(lock.remaining / 1000)));
+      return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
     }
     const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) { recordLoginFail(user.id); return c.json({ error: 'Wrong password. Use Forgot with your 4-digit PIN to reset it.' }, 401); }
+    if (!ok) {
+      recordLoginFail(user.id);
+      await authFailureDelay();
+      return c.json({ error: AUTH_GENERIC_ERROR }, 401);
+    }
     clearLoginFails(user.id);
     const token = await signToken(user);
     return c.json({ token, user: sanitizeUser(user) });
@@ -978,15 +1029,21 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const { identifier, pin, newPassword } = body;
-    if (!identifier || !isPin(pin) || !newPassword || newPassword.length < 6) {
-      return c.json({ error: 'Invalid reset payload' }, 400);
+    const idLower = normalizeAuthIdentifier(identifier);
+    if (!idLower || !isPin(pin) || typeof newPassword !== 'string' || newPassword.length < 6 || newPassword.length > 128) {
+      await authFailureDelay();
+      return c.json({ error: 'Invalid reset details.' }, 400);
+    }
+    const subjLimit = authSubjectRateLimit(c, 'reset:' + idLower, 8);
+    if (!subjLimit.allowed) {
+      c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
+      return c.json({ error: 'Too many reset attempts. Please wait and try again.' }, 429);
     }
     const db = await fetchDatabase({ fresh: true });
-    const idLower = String(identifier).toLowerCase().trim();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
-    if (!user) return c.json({ error: 'Account not found' }, 404);
+    if (!user) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
     const pinOk = await bcrypt.compare(pin, user.pinHash);
-    if (!pinOk) return c.json({ error: 'Incorrect PIN' }, 401);
+    if (!pinOk) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
     const oldHash = user.passwordHash;
     user.passwordHash = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
     const persisted = await saveDatabaseVerified(db, d => {
@@ -998,7 +1055,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     return c.json({ ok: true, token, user: sanitizeUser(user) });
   } catch (e) {
     console.error('[reset]', e);
-    return c.json({ error: 'Reset failed: ' + (e.message || 'unknown') }, 500);
+    return c.json({ error: 'Reset failed' }, 500);
   }
 });
 
@@ -1056,7 +1113,7 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     return c.json({ url: cdn, persisted: true });
   } catch (e) {
     console.error('[upload]', e);
-    return c.json({ error: 'Upload failed: ' + (e.message || 'unknown') }, 500);
+    return c.json({ error: 'Upload failed' }, 500);
   }
 });
 
@@ -1078,8 +1135,9 @@ app.post('/api/user/update', requireAuth, async (c) => {
       if (dn.length >= 1) user.displayName = dn;
     }
     if (typeof bio === 'string') user.bio = sanitizeText(bio, 280);
-    if (typeof photoUrl === 'string' && photoUrl.length <= 4096) {
-      if (photoUrl === '' || /^(https?:|data:image\/)/i.test(photoUrl)) user.photoUrl = photoUrl;
+    if (typeof photoUrl === 'string') {
+      const cleanPhoto = photoUrl.trim();
+      if (cleanPhoto === '' || isSafeImageUrl(cleanPhoto)) user.photoUrl = cleanPhoto;
     }
     await saveDatabase(db, false);
     return c.json({ user: sanitizeUser(user) });
@@ -1221,23 +1279,24 @@ app.post('/api/user/note', requireAuth, async (c) => {
 function cleanNoteMusic(m) {
   if (!m || typeof m !== 'object' || !m.title) return null;
   return {
-    title: String(m.title).slice(0, 80),
-    artist: String(m.artist || '').slice(0, 80),
-    audio: (typeof m.audio === 'string' && /^https?:/i.test(m.audio)) ? m.audio.slice(0, 1024) : '',
-    art: (typeof m.art === 'string' && /^https?:/i.test(m.art)) ? m.art.slice(0, 1024) : '',
+    title: sanitizeText(m.title, 80),
+    artist: sanitizeText(m.artist || '', 80),
+    audio: isSafeMediaUrl(m.audio, { allowData: false }) ? String(m.audio).trim().slice(0, 1024) : '',
+    art: isSafeImageUrl(m.art, { allowData: false }) ? String(m.art).trim().slice(0, 1024) : '',
   };
 }
 app.post('/api/user/typing', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.roomId) return c.json({ error: 'roomId required' }, 400);
+  const roomId = normalizeRoomId(body.roomId, c.get('userId'));
   const db = await fetchDatabase();
-  if (!db.typing[body.roomId]) db.typing[body.roomId] = {};
-  db.typing[body.roomId][c.get('userId')] = nowMs();
+  if (!db.typing[roomId]) db.typing[roomId] = {};
+  db.typing[roomId][c.get('userId')] = nowMs();
   await saveDatabase(db, true);
   return c.json({ ok: true });
 });
 app.get('/api/user/typing', requireAuth, async (c) => {
-  const roomId = c.req.query('roomId');
+  const roomId = normalizeRoomId(c.req.query('roomId'), c.get('userId'));
   if (!roomId) return c.json({ error: 'roomId required' }, 400);
   const db = await fetchDatabase();
   const map = db.typing[roomId] || {};
@@ -1313,7 +1372,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     }
 
     const ct = isEncrypted ? '' : sanitizeText(text, 4000);
-    const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
+    const ci = isSafeMediaUrl(imageUrl) ? String(imageUrl).trim() : null;
     if (!ct && !ci && !isEncrypted) return c.json({ error: 'Empty message' }, 400);
 
     // Disappearing TTL (clamp to 10s..24h)
@@ -1330,7 +1389,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
         id: replyTo.id,
         text: typeof replyTo.text === 'string' ? replyTo.text.slice(0, 200) : '',
         username: typeof replyTo.username === 'string' ? replyTo.username.slice(0, 60) : '',
-        imageUrl: typeof replyTo.imageUrl === 'string' ? replyTo.imageUrl.slice(0, 2048) : null,
+        imageUrl: isSafeMediaUrl(replyTo.imageUrl) ? String(replyTo.imageUrl).trim().slice(0, 2048) : null,
       };
     }
     const author = db.users.find(u => u.id === myId);
@@ -1585,10 +1644,10 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const { text, imageUrl, images, videoUrl, isScratch, music, style, story, storyExpiresAt, audience } = body;
     const ct = sanitizeText(text, 2000);
-    const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
-    const cimgs = Array.isArray(images) ? images.filter(u => typeof u === 'string' && u.length <= 4096).slice(0, 3) : (ci ? [ci] : []);
+    const ci = isSafeImageUrl(imageUrl) ? String(imageUrl).trim() : null;
+    const cimgs = Array.isArray(images) ? images.filter(u => isSafeImageUrl(u)).map(u => String(u).trim()).slice(0, 3) : (ci ? [ci] : []);
     const mainImg = cimgs[0] || ci || null;
-    const cvid = typeof videoUrl === 'string' && videoUrl.length <= 4096 && /^(https?:|data:video\/)/i.test(videoUrl) ? videoUrl : null;
+    const cvid = isSafeMediaUrl(videoUrl) && (/^https?:\/\//i.test(String(videoUrl)) || /^data:video\//i.test(String(videoUrl))) ? String(videoUrl).trim() : null;
     if (!ct && !mainImg && cimgs.length === 0 && !cvid) return c.json({ error: 'Empty post' }, 400);
     const myId = c.get('userId');
     const db = await fetchDatabase();
@@ -1596,10 +1655,10 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
     const cleanMusic = music && typeof music === 'object' && music.title ? {
       id: music.id,
-      title: String(music.title).slice(0,60),
-      artist: String(music.artist).slice(0,60),
-      audio: String(music.audio).slice(0,1024),
-      art: String(music.art).slice(0,1024),
+      title: sanitizeText(music.title, 60),
+      artist: sanitizeText(music.artist || '', 60),
+      audio: isSafeMediaUrl(music.audio, { allowData: false }) ? String(music.audio).trim().slice(0,1024) : '',
+      art: isSafeImageUrl(music.art, { allowData: false }) ? String(music.art).trim().slice(0,1024) : '',
       posX: Math.max(0, Math.min(100, Number(music.posX) || 50)),
       posY: Math.max(0, Math.min(100, Number(music.posY) || 32)),
       startTime: Math.max(0, Math.min(180, Number(music.startTime) || 0)),
@@ -1664,17 +1723,22 @@ app.post('/api/posts/like', requireAuth, async (c) => {
 app.post('/api/rtc/signal', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { targetId, signal } = body;
-  if (!targetId || !signal) return c.json({ error: 'Missing data' }, 400);
+  if (typeof targetId !== 'string' || !/^[a-zA-Z0-9_-]{1,96}$/.test(targetId) || !signal || typeof signal !== 'object') return c.json({ error: 'Missing data' }, 400);
+  const signalType = sanitizeText(signal.type || '', 24);
+  if (!['offer','answer','candidate','end','reject','busy'].includes(signalType)) return c.json({ error: 'Invalid signal' }, 400);
+  if (JSON.stringify(signal).length > 20000) return c.json({ error: 'Signal too large' }, 413);
   const myId = c.get('userId');
+  if (targetId === myId) return c.json({ error: 'Invalid target' }, 400);
   const db = await fetchDatabase();
+  if (!db.users.some(u => u.id === targetId)) return c.json({ error: 'Target not found' }, 404);
   const me = db.users.find(u => u.id === myId);
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: myId, displayName: 'Member', username: 'member' };
   const payload = { fromId: myId, author, signal };
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals : [];
-  if (signal.type === 'end' || signal.type === 'reject' || signal.type === 'busy') {
+  if (signalType === 'end' || signalType === 'reject' || signalType === 'busy') {
     db.rtcSignals = db.rtcSignals.filter(x => !( (x.targetId === targetId && x.payload?.fromId === myId) || (x.targetId === myId && x.payload?.fromId === targetId) ));
   }
-  const expiresAt = nowMs() + (signal.type === 'offer' ? 20000 : 60000);
+  const expiresAt = nowMs() + (signalType === 'offer' ? 20000 : 60000);
   db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt });
   if (db.rtcSignals.length > 200) db.rtcSignals = db.rtcSignals.slice(-200);
   _pushEvent(targetId, 'rtc_signal', payload);
