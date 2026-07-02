@@ -152,40 +152,30 @@ function isPrivOwner(user) {
     || email === 'arvindjaat1011@gmail.com';
 }
 
+function isVerifiedUser(user) {
+  return !!(user && (user.verified || isPrivOwner(user)));
+}
+
 function ownerVerifiedBadgeSvg(extraClass = '') {
   const n = (ownerVerifiedBadgeSvg._n = (ownerVerifiedBadgeSvg._n || 0) + 1);
-  const glass = `psGlass${n}`;
-  const rim = `psRim${n}`;
-  const mark = `psMark${n}`;
+  const g = `blueTickGrad${n}`;
   return `
-    <svg class="owner-verified-badge ${extraClass}" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+    <svg class="owner-verified-badge ${extraClass}" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
       <defs>
-        <radialGradient id="${glass}" cx="31%" cy="22%" r="78%">
-          <stop offset="0" stop-color="#ffffff" stop-opacity="0.72"/>
-          <stop offset="0.22" stop-color="#ff5cf7" stop-opacity="0.38"/>
-          <stop offset="0.58" stop-color="#312e81" stop-opacity="0.92"/>
-          <stop offset="1" stop-color="#050718" stop-opacity="1"/>
-        </radialGradient>
-        <linearGradient id="${rim}" x1="8" y1="6" x2="56" y2="58">
-          <stop offset="0" stop-color="#ff4df8"/>
-          <stop offset="0.45" stop-color="#8b5cf6"/>
-          <stop offset="1" stop-color="#00c8ff"/>
-        </linearGradient>
-        <linearGradient id="${mark}" x1="17" y1="14" x2="48" y2="54">
-          <stop offset="0" stop-color="#ff66f7"/>
-          <stop offset="1" stop-color="#75a7ff"/>
+        <linearGradient id="${g}" x1="5" y1="4" x2="27" y2="28">
+          <stop offset="0" stop-color="#5bd6ff"/>
+          <stop offset="0.42" stop-color="#159cff"/>
+          <stop offset="1" stop-color="#0068e8"/>
         </linearGradient>
       </defs>
-      <circle class="ovb-rim" cx="32" cy="32" r="28" fill="none" stroke="url(#${rim})" stroke-width="5.4"/>
-      <circle class="ovb-glass" cx="32" cy="32" r="24.6" fill="url(#${glass})" stroke="rgba(255,255,255,.34)" stroke-width="1.4"/>
-      <path class="ovb-highlight" d="M14 22C18 10 31 7 45 11C32 12 22 17 16 30Z" fill="#fff" opacity=".28"/>
-      <text class="ovb-ps" x="32" y="29" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="950" letter-spacing="-2" fill="url(#${mark})">PS</text>
-      <path class="ovb-check" d="M20.5 43.5 28.7 51 46.5 32.5" fill="none" stroke="url(#${mark})" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path class="bt-shape" d="M16 1.9 19.1 4.4 23.1 4.2 24.8 7.9 28.5 9.6 28.2 13.6 30.7 16.7 28.2 19.8 28.5 23.8 24.8 25.5 23.1 29.2 19.1 29 16 31.5 12.9 29 8.9 29.2 7.2 25.5 3.5 23.8 3.8 19.8 1.3 16.7 3.8 13.6 3.5 9.6 7.2 7.9 8.9 4.2 12.9 4.4 16 1.9Z" fill="url(#${g})"/>
+      <path class="bt-gloss" d="M8 10.8C10.8 5.8 18.8 4.4 24 8.9C18.3 7.3 12.5 8.4 8.5 13.8Z" fill="#fff" opacity=".32"/>
+      <path class="bt-check" d="M9.5 16.7 13.8 20.8 22.9 11.6" fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>`;
 }
 
 function ownerBadgeHtml(user, extraClass = 'inline') {
-  return isPrivOwner(user) ? ownerVerifiedBadgeSvg(extraClass) : '';
+  return isVerifiedUser(user) ? ownerVerifiedBadgeSvg(extraClass) : '';
 }
 
 function displayNameWithOwnerBadge(user, fallback = '', extraClass = 'inline') {
@@ -475,7 +465,7 @@ function showApp() {
 
 function hydrateMeChips() {
   if (!State.user) return;
-  if ($('#feedMeName')) $('#feedMeName').innerHTML = displayNameWithOwnerBadge(State.user, (State.user.displayName || State.user.username).toUpperCase(), 'inline');
+  if ($('#feedMeName')) $('#feedMeName').textContent = (State.user.displayName || State.user.username).toUpperCase();
   if ($('#feedMeAvatar')) renderAvatar($('#feedMeAvatar'), State.user);
   if ($('#profileAvatarPreview')) renderAvatar($('#profileAvatarPreview'), State.user);
   const profileTitle = $('#profileTitleUsername');
@@ -5988,6 +5978,27 @@ function bindSettingsSheet() {
   $$('[data-close-settings]').forEach(b => b.addEventListener('click', closeSettings));
   const push = $('#enablePushBtn');
   if (push) push.addEventListener('click', togglePushSubscription);
+  const vipBtn = $('#vipActivateBtn');
+  if (vipBtn) vipBtn.addEventListener('click', async () => {
+    const inp = $('#vipKeyInput');
+    const key = (inp && inp.value || '').trim();
+    if (!key) { toast('Enter VIP key', 'error'); return; }
+    vipBtn.disabled = true;
+    const old = vipBtn.textContent;
+    vipBtn.textContent = 'Checking…';
+    try {
+      const data = await api('/user/vip/redeem', { method: 'POST', body: { key } });
+      if (data.user) {
+        State.user = { ...State.user, ...data.user };
+        try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+        hydrateMeChips();
+        renderOwnProfile();
+      }
+      if (inp) inp.value = '';
+      toast('Blue tick activated', 'success');
+    } catch (e) { toast(e.message || 'Invalid VIP key', 'error'); }
+    finally { vipBtn.disabled = false; vipBtn.textContent = old; }
+  });
   const ep = $('#settingsEditProfile');
   if (ep) ep.addEventListener('click', () => {
     closeSettings();
@@ -6340,7 +6351,7 @@ function closeUserProfile() {
 function renderOtherProfile(data) {
   const u = data.user;
   $('#upHeaderUsername').innerHTML = displayNameWithOwnerBadge(u, '@' + u.username, 'inline');
-  $('#upDisplayName').innerHTML = displayNameWithOwnerBadge(u, u.displayName || '', 'inline');
+  $('#upDisplayName').textContent = u.displayName || '';
   $('#upBio').textContent = u.bio || '';
   $('#upStatPosts').textContent = String(u.postsCount || 0);
   $('#upStatFollowers').textContent = String(u.followers || 0);
@@ -6563,7 +6574,7 @@ async function renderOwnProfile() {
   const titleU = $('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
   if (titleU) titleU.innerHTML = `${escapeHtml(cachedUsername)}${isPrivOwner(State.user) ? ownerVerifiedBadgeSvg('title') : ''}`;
-  if ($('#profileDisplayName')) $('#profileDisplayName').innerHTML = displayNameWithOwnerBadge(State.user, State.user.displayName || '', 'inline');
+  if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
   if ($('#profileUsername')) $('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
   // so the grid does not feel slow or blank while /users and /posts load.
@@ -6582,7 +6593,7 @@ async function renderOwnProfile() {
       try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
     }
     const realUsername = u.username || State.user.username || cachedUsername;
-    $('#profileDisplayName').innerHTML = displayNameWithOwnerBadge(u, u.displayName || State.user.displayName || '', 'inline');
+    $('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
     $('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
     if (titleU) titleU.innerHTML = `${escapeHtml(realUsername)}${isPrivOwner(u) ? ownerVerifiedBadgeSvg('title') : ''}`;
     const mb = $('#profileMoodBubble');
