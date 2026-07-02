@@ -251,6 +251,13 @@ img{user-select:none;-webkit-user-drag:none}
 .topbar > .ghost-btn:last-child{justify-self:end}
 .brand-row{display:flex;align-items:center;gap:10px}
 .top-actions{display:flex;align-items:center;gap:4px}
+/* Instagram-style username header (shown on the chat/DM tab) */
+.ig-username-header{grid-column:2;justify-self:start;display:flex;align-items:center;gap:5px;padding-left:6px}
+.ig-username-header.hidden{display:none}
+.ig-username-header #igUsernameText{font-weight:800;font-size:20px;letter-spacing:-.3px;color:var(--text);max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ig-username-chev{width:16px;height:16px;color:var(--muted)}
+.ig-username-dot{width:8px;height:8px;border-radius:50%;background:#ff3040}
+.brand-wordmark.hidden{display:none}
 
 /* IG-style cursive wordmark, centered */
 .brand-wordmark{
@@ -415,17 +422,49 @@ img{user-select:none;-webkit-user-drag:none}
 .note-add-badge{position:absolute;right:-2px;bottom:-2px;width:18px;height:18px;border-radius:50%;background:var(--accent);color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg-2)}
 
 /* Leave-a-note modal */
+/* Bottom-sheet overlay base (used by note editor + story viewers sheet) */
+.sheet{position:fixed;inset:0;z-index:95;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)}
+.sheet.hidden{display:none !important}
+.sheet > .sheet-card{width:100%;background:var(--bg-2);border-radius:22px 22px 0 0;padding:14px 18px calc(20px + env(safe-area-inset-bottom,0px));max-height:88vh;overflow-y:auto;box-shadow:0 -12px 40px rgba(0,0,0,.5)}
 .note-modal-card{max-width:440px}
 .note-sub{font-size:13px;color:var(--muted);margin:2px 0 14px;line-height:1.4}
 .note-bubble-preview{
-  align-self:center;background:var(--bg-soft);border:1px solid var(--line);border-radius:18px;
+  align-self:center;display:flex;flex-direction:column;align-items:center;gap:3px;
+  background:var(--bg-soft);border:1px solid var(--line);border-radius:18px;
   padding:12px 16px;font-size:14px;font-weight:600;max-width:80%;text-align:center;margin-bottom:14px;
   white-space:pre-wrap;word-break:break-word;color:var(--text);
 }
+.note-preview-song{display:flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;color:var(--accent)}
+.note-preview-song::before{content:'♪'}
 .note-input{width:100%;background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--text);font-size:14px;resize:none;outline:none}
 .note-input:focus{border-color:var(--accent)}
+/* Add-music row in the note editor */
+.note-music-row{width:100%;display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;cursor:pointer;text-align:left}
+.note-music-row .nm-ic{width:38px;height:38px;border-radius:9px;flex-shrink:0;background:var(--pink-grad,linear-gradient(135deg,#f107a3,#f9c449));display:flex;align-items:center;justify-content:center;color:#fff}
+.note-music-row .nm-ic i,.note-music-row .nm-ic svg{width:18px;height:18px}
+.note-music-row .nm-meta{flex:1;min-width:0;display:flex;flex-direction:column}
+.note-music-row .nm-title{font-weight:700;font-size:13.5px;color:var(--text)}
+.note-music-row .nm-artist{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.note-music-row .nm-chev{width:18px;height:18px;color:var(--muted);flex-shrink:0}
+.note-music-row .nm-remove{background:none;border:0;color:var(--muted);font-size:15px;cursor:pointer;flex-shrink:0}
+.note-song-picker{margin-top:10px}
+.note-song-search{width:100%;background:var(--bg-soft);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13.5px;outline:none;margin-bottom:8px}
+.note-song-search:focus{border-color:var(--accent)}
+.note-song-list{max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.note-song-item{display:flex;align-items:center;gap:10px;padding:8px 8px;border-radius:10px;cursor:pointer}
+.note-song-item:hover{background:var(--accent-softer)}
+.note-song-item .nsi-art{width:38px;height:38px;border-radius:7px;flex-shrink:0;object-fit:cover;background:var(--bg-soft)}
+.note-song-item .nsi-m{flex:1;min-width:0}
+.note-song-item .nsi-t{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.note-song-item .nsi-a{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.note-song-item .nsi-play{color:var(--accent);font-size:15px;flex-shrink:0}
+.note-song-empty{padding:16px;text-align:center;color:var(--muted);font-size:12.5px}
 .note-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
 .note-actions .secondary-btn{background:var(--bg-soft);color:var(--text-2);border:1px solid var(--line);border-radius:10px;padding:9px 16px;font-weight:700;cursor:pointer}
+/* Music indicator on notes rail cells */
+.note-cell .note-avatar.has-music{padding:2.5px;background:var(--pink-grad,linear-gradient(135deg,#f107a3,#f9c449));box-sizing:border-box}
+.note-music-badge{position:absolute;right:-2px;bottom:-2px;width:19px;height:19px;border-radius:50%;background:#111;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg-2)}
+.note-bubble .note-bubble-song{display:block;font-size:9.5px;font-weight:700;color:var(--accent);margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Message Requests banner (top of Primary) */
 .req-banner{

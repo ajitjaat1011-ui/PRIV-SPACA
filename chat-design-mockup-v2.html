@@ -1,0 +1,172 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>PRIV SPACA - Notes + Music + IG Header</title>
+<style>
+:root{--bg:#0b1620;--bg2:#152030;--soft:#1c2839;--accent:#00a2ff;--asoft:rgba(0,162,255,.12);--text:#f5f8fb;--t2:#c3ccd6;--muted:#9aa8b6;--line:#243245;--line2:#2e3e54;--pink:linear-gradient(135deg,#f107a3,#f9c449)}
+*{box-sizing:border-box}
+body{margin:0;background:#050d14;color:var(--text);font-family:'Inter',system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;padding:22px 12px;gap:16px}
+.note{max-width:430px;text-align:center;color:var(--muted);font-size:13px;line-height:1.55}
+.note b{color:var(--accent)}
+.phone{width:100%;max-width:430px;height:860px;background:var(--bg);border-radius:26px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6);display:flex;flex-direction:column;border:1px solid var(--line);position:relative}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:15px 16px 10px}
+.uname{display:flex;align-items:center;gap:6px;font-weight:800;font-size:21px}
+.uname .chev{font-size:13px;color:var(--muted)}
+.uname .live{width:8px;height:8px;border-radius:50%;background:#ff3040}
+.acts{display:flex;gap:16px;font-size:19px;color:var(--text)}
+.search{margin:6px 16px 4px;background:var(--soft);border-radius:12px;padding:11px 14px;color:var(--muted);font-size:14px}
+.rail{display:flex;gap:16px;overflow-x:auto;padding:16px 14px 12px}
+.rail::-webkit-scrollbar{display:none}
+.cell{display:flex;flex-direction:column;align-items:center;gap:7px;flex-shrink:0;width:76px;cursor:pointer;background:none;border:0;padding:0}
+.bub{position:relative;max-width:92px;min-width:52px;background:#e9edf1;color:#111;font-size:11.5px;font-weight:600;line-height:1.25;padding:7px 10px;border-radius:15px;text-align:center;margin-bottom:3px}
+.bub .song{display:flex;align-items:center;gap:3px;justify-content:center;font-size:10px;color:#3a4d5c;font-weight:700;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bub .txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:84px}
+.bub::after{content:'';position:absolute;left:16px;bottom:-5px;width:9px;height:9px;background:#e9edf1;transform:rotate(45deg)}
+.bub.ph{background:var(--soft);color:var(--muted);border:1px dashed var(--line2)}
+.bub.ph::after{background:var(--soft)}
+.av{width:60px;height:60px;border-radius:50%;position:relative;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:18px}
+.av.mring{padding:2.5px;background:var(--pink)}
+.av .in{width:100%;height:100%;border-radius:50%;border:2px solid var(--bg);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff}
+.av .mbadge{position:absolute;right:-2px;bottom:-2px;width:22px;height:22px;border-radius:50%;background:#111;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg)}
+.av .abadge{position:absolute;right:-2px;bottom:-2px;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:14px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg)}
+.cname{font-size:11.5px;color:var(--muted);max-width:74px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell.mine .cname{color:var(--t2);font-weight:600}
+.g1{background:linear-gradient(135deg,#ff6a88,#ff99ac)}.g2{background:linear-gradient(135deg,#f6d365,#fda085)}
+.g3{background:linear-gradient(135deg,#4facfe,#00f2fe)}.g4{background:linear-gradient(135deg,#a18cd1,#fbc2eb)}.g5{background:linear-gradient(135deg,#84fab0,#8fd3f4)}
+.seg{display:flex;gap:8px;padding:6px 14px}
+.sb{padding:9px 18px;border-radius:999px;border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:700;cursor:pointer}
+.sb.on{background:var(--soft);color:var(--text)}
+.list{flex:1;overflow-y:auto;padding:4px 6px 20px}
+.row{display:flex;align-items:center;gap:13px;padding:10px 12px;border-radius:14px;cursor:pointer}
+.row:hover{background:var(--asoft)}
+.meta{flex:1;min-width:0}
+.meta .nm{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta .sub{font-size:13.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.rt{font-size:12px;color:var(--muted)}
+.bnav{display:flex;justify-content:space-around;align-items:center;padding:12px 8px;border-top:1px solid var(--line)}
+.bn{font-size:22px;color:var(--muted);cursor:pointer;background:none;border:0}
+.bn.on{color:var(--text)}
+.sheet{position:absolute;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;z-index:20}
+.sheet.open{display:flex}
+.card{width:100%;background:var(--bg2);border-radius:22px 22px 0 0;padding:16px 18px 22px;animation:up .3s}
+@keyframes up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.chead{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.chead h3{margin:0;font-size:17px}.chead .x{background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer}
+.csub{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.4}
+.pbub{margin:0 auto 14px;background:#e9edf1;color:#111;border-radius:18px;padding:11px 16px;font-size:14px;font-weight:600;max-width:80%;text-align:center;width:fit-content}
+.pbub .song{display:flex;gap:4px;align-items:center;justify-content:center;font-size:11px;color:#3a4d5c;font-weight:700;margin-bottom:3px}
+.ni{width:100%;background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--text);font-size:14px;resize:none;outline:none}
+.mrow{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;background:var(--soft);border-radius:12px;cursor:pointer}
+.mrow .mic{width:38px;height:38px;border-radius:9px;background:var(--pink);display:flex;align-items:center;justify-content:center;font-size:16px}
+.mrow .mm{flex:1;min-width:0}.mrow .mm .t{font-weight:700;font-size:13.5px}.mrow .mm .a{font-size:12px;color:var(--muted)}
+.mrow .cv{color:var(--muted);font-size:18px}
+.sacts{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.btn{border-radius:10px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;border:0}
+.btn.sec{background:var(--soft);color:var(--t2)}.btn.pri{background:var(--accent);color:#fff}
+.songlist{max-height:150px;overflow-y:auto;margin-top:10px;display:none}
+.songlist.show{display:block}
+.si{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer}
+.si:hover{background:var(--soft)}
+.si .art{width:38px;height:38px;border-radius:7px;background:var(--pink);flex-shrink:0}
+.si .m{flex:1;min-width:0}.si .m .t{font-weight:600;font-size:13px}.si .m .a{font-size:11.5px;color:var(--muted)}
+.si .pl{color:var(--accent);font-size:15px}
+.legend{max-width:430px;font-size:12.5px;color:var(--muted);line-height:1.65;background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.legend b{color:var(--text)}.legend .k{color:var(--accent);font-weight:700}
+</style></head><body>
+<div class="note"><b>PRIV SPACA — Notes with Music + Instagram-style header.</b><br>
+Header shows your <b>username</b> (not the "PRIV SPACA" brand). Notes can have a <b>song attached</b> (title + artist above the bubble). Friends' notes only show if they've posted one. Tap "Your note" to try the editor + music picker.</div>
+<div class="phone">
+  <div class="topbar">
+    <div class="uname">arvindjaat1011 <span class="chev">▾</span> <span class="live"></span></div>
+    <div class="acts"><span>↗</span><span>✎</span></div>
+  </div>
+  <div class="search">🔍 Search…</div>
+
+  <div class="rail">
+    <button class="cell mine" onclick="openSheet()">
+      <div class="bub ph" id="myBub"><span class="txt">Note…</span></div>
+      <div class="av g1"><div class="in g1">AJ</div><span class="abadge" id="myBadge">+</span></div>
+      <div class="cname">Your note</div>
+    </button>
+    <button class="cell">
+      <div class="bub"><div class="song">♪ Ranjha · Noor Ch…</div><span class="txt">🤔</span></div>
+      <div class="av mring"><div class="in g2">D</div><span class="mbadge">♪</span></div>
+      <div class="cname">Ditya_❤️</div>
+    </button>
+    <button class="cell">
+      <div class="bub"><div class="song">♪ You & I · DIVINE</div><span class="txt">🔥</span></div>
+      <div class="av mring"><div class="in g3">V</div><span class="mbadge">♪</span></div>
+      <div class="cname">vtr 👆🖤</div>
+    </button>
+    <button class="cell">
+      <div class="bub"><span class="txt">at the gym 💪</span></div>
+      <div class="av g4"><div class="in g4">C</div></div>
+      <div class="cname">Chor</div>
+    </button>
+  </div>
+
+  <div class="seg">
+    <button class="sb on">Primary</button>
+    <button class="sb">Requests</button>
+    <button class="sb">Groups</button>
+  </div>
+
+  <div class="list">
+    <div class="row"><span class="av g1">AJ</span><div class="meta"><div class="nm">ARVIND • JAAT 📌</div><div class="sub">Sent</div></div><span class="rt"></span></div>
+    <div class="row"><span class="av g2">L</span><div class="meta"><div class="nm">ŁÕkÊŠH-urp-kalu</div><div class="sub">Sent a post · 9h</div></div><span class="rt">9h</span></div>
+    <div class="row"><span class="av g3">A</span><div class="meta"><div class="nm">akash_yogi0011</div><div class="sub">Sun · 10h</div></div><span class="rt">10h</span></div>
+    <div class="row"><span class="av g4">V</span><div class="meta"><div class="nm">vtr 👆🖤</div><div class="sub">Sent a post · 11h</div></div><span class="rt">11h</span></div>
+    <div class="row"><span class="av g5">S</span><div class="meta"><div class="nm">sunil</div><div class="sub">Sent a reel · 12h</div></div><span class="rt">12h</span></div>
+  </div>
+
+  <div class="bnav"><button class="bn">🏠</button><button class="bn">▶</button><button class="bn on">✈</button><button class="bn">🔍</button><button class="bn">👤</button></div>
+
+  <!-- Note editor sheet -->
+  <div class="sheet" id="sheet">
+    <div class="card">
+      <div class="chead"><h3>Leave a note</h3><button class="x" onclick="closeSheet()">✕</button></div>
+      <p class="csub">A thought + a song. Disappears after 24 hours and shows on your friends' chat inbox.</p>
+      <div class="pbub" id="pbub"><div class="song" id="pSong" style="display:none"></div><span id="pTxt">What's on your mind?</span></div>
+      <textarea class="ni" id="ni" maxlength="60" rows="2" placeholder="Type a note…" oninput="upd()"></textarea>
+      <div class="mrow" id="mrow" onclick="toggleSongs()">
+        <div class="mic">🎵</div>
+        <div class="mm"><div class="t" id="mTitle">Add music</div><div class="a" id="mArtist">Search a song for your note</div></div>
+        <div class="cv">▾</div>
+      </div>
+      <div class="songlist" id="songlist">
+        <div class="si" onclick="pickSong('Ranjha','Noor Chahal')"><div class="art"></div><div class="m"><div class="t">Ranjha</div><div class="a">Noor Chahal</div></div><div class="pl">▶</div></div>
+        <div class="si" onclick="pickSong('You & I','DIVINE')"><div class="art"></div><div class="m"><div class="t">You & I</div><div class="a">DIVINE</div></div><div class="pl">▶</div></div>
+        <div class="si" onclick="pickSong('Chori Chori','Justh')"><div class="art"></div><div class="m"><div class="t">Chori Chori</div><div class="a">Justh</div></div><div class="pl">▶</div></div>
+      </div>
+      <div class="sacts"><button class="btn sec" onclick="clearNote()">Clear</button><button class="btn pri" onclick="share()">Share</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+<b>What's new vs. current build:</b><br>
+• <span class="k">Username header</span> — the DM page shows <b>your username</b> (with ▾ and a live dot), Instagram-style, instead of "PRIV SPACA".<br>
+• <span class="k">Notes + music</span> — tap "Your note" → type text <b>and</b> attach a song (reuses your existing iTunes search + preview). Song title · artist shows above the bubble; a ♪ badge + pink ring mark musical notes.<br>
+• <span class="k">Friends' notes</span> — only appear if that friend has actually posted a note (no empty cells). Tapping one opens a DM.<br>
+• Matches your dark theme (#0b1620 / #00a2ff).
+</div>
+
+<script>
+var song=null;
+function openSheet(){document.getElementById('sheet').classList.add('open')}
+function closeSheet(){document.getElementById('sheet').classList.remove('open')}
+function upd(){var v=document.getElementById('ni').value.trim();document.getElementById('pTxt').textContent=v||"What's on your mind?"}
+function toggleSongs(){document.getElementById('songlist').classList.toggle('show')}
+function pickSong(t,a){song={t:t,a:a};document.getElementById('mTitle').textContent=t;document.getElementById('mArtist').textContent=a;
+ var ps=document.getElementById('pSong');ps.style.display='flex';ps.textContent='♪ '+t+' · '+a;
+ document.getElementById('songlist').classList.remove('show')}
+function clearNote(){document.getElementById('ni').value='';song=null;upd();
+ var ps=document.getElementById('pSong');ps.style.display='none';
+ document.getElementById('mTitle').textContent='Add music';document.getElementById('mArtist').textContent='Search a song for your note';
+ var b=document.getElementById('myBub');b.className='bub ph';b.innerHTML='<span class="txt">Note…</span>';
+ document.getElementById('myBadge').style.display='flex';closeSheet()}
+function share(){var v=document.getElementById('ni').value.trim();if(!v&&!song){closeSheet();return;}
+ var b=document.getElementById('myBub');b.className='bub';
+ var html='';if(song)html+='<div class="song">♪ '+song.t+' · '+song.a+'</div>';html+='<span class="txt">'+(v||'♪')+'</span>';b.innerHTML=html;
+ document.getElementById('myBadge').style.display='none';closeSheet()}
+</script>
+</body></html>

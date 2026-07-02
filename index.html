@@ -140,7 +140,12 @@
     <button id="topAddBtn" class="ghost-btn topbar-left-icon" title="New post" aria-label="New post">
       <i data-lucide="plus-square"></i>
     </button>
-    <div class="brand-wordmark" aria-label="PRIV SPACA">PRIV SPACA</div>
+    <div class="brand-wordmark" id="brandWordmark" aria-label="PRIV SPACA">PRIV SPACA</div>
+    <div class="ig-username-header hidden" id="igUsernameHeader">
+      <span id="igUsernameText">username</span>
+      <i data-lucide="chevron-down" class="ig-username-chev"></i>
+      <span class="ig-username-dot"></span>
+    </div>
     <button id="topNotifBtn" class="ghost-btn icon-with-dot" title="Notifications" aria-label="Notifications">
       <i data-lucide="heart"></i>
       <span class="dot hidden" data-dot="feed-top"></span>
@@ -759,13 +764,31 @@
       <h3>Leave a note</h3>
       <button class="ghost-btn" id="noteClose" aria-label="Close"><i data-lucide="x"></i></button>
     </div>
-    <p class="note-sub">Share a thought — it disappears after 24 hours and shows on your friends' chat inbox.</p>
-    <div class="note-bubble-preview" id="notePreviewBubble">What's on your mind?</div>
+    <p class="note-sub">A thought and a song — it disappears after 24 hours and shows on your friends' chat inbox.</p>
+    <div class="note-bubble-preview" id="notePreviewBubble">
+      <span class="note-preview-song hidden" id="notePreviewSong"></span>
+      <span id="notePreviewText">What's on your mind?</span>
+    </div>
     <textarea id="noteInput" class="note-input" maxlength="60" rows="2" placeholder="Type a note…"></textarea>
+    <!-- Add music row (reuses the iTunes song picker used by Stories) -->
+    <div id="noteMusicRow" class="note-music-row" role="button" tabindex="0">
+      <span class="nm-ic"><i data-lucide="music"></i></span>
+      <span class="nm-meta">
+        <span class="nm-title" id="noteMusicTitle">Add music</span>
+        <span class="nm-artist" id="noteMusicArtist">Search a song for your note</span>
+      </span>
+      <span id="noteMusicRemove" class="nm-remove hidden" role="button" tabindex="0" aria-label="Remove song">✕</span>
+      <i data-lucide="chevron-down" class="nm-chev" id="noteMusicChev"></i>
+    </div>
+    <div id="noteSongPicker" class="note-song-picker hidden">
+      <input type="text" id="noteSongSearch" class="note-song-search" placeholder="Search songs…" maxlength="60" />
+      <div id="noteSongList" class="note-song-list"></div>
+    </div>
     <div class="note-actions">
       <button type="button" id="noteClearBtn" class="secondary-btn">Clear note</button>
       <button type="button" id="noteShareBtn" class="primary-btn">Share</button>
     </div>
+    <audio id="notePreviewAudio" preload="none"></audio>
   </div>
 </div>
 
