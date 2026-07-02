@@ -519,8 +519,8 @@ function isValidPin(s) {
 let webpush = null;
 try { webpush = require('web-push'); } catch (e) { console.warn('[push] web-push unavailable:', e.message); }
 
-const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY  || '';
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY  || 'BG5msm1YiW_5l5N2ZNAvz5CkzQDGchg99ZSpkXVhXb4mm70X8vPPZs_7lrsaDXtvPns7QloRkh40vY4J5O0pqlI';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'cD46cvq1tE2duI2EOZoyu0huGyL6vmZOsFzXMCvfjfQ';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@priv-spaca.app';
 if (webpush && VAPID_PUBLIC && VAPID_PRIVATE) {
   try { webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE); }
