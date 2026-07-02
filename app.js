@@ -376,6 +376,31 @@ function showAuth() {
   refreshIcons();
 }
 
+let _topbarFlowersStarted = false;
+function initTopbarFlowers() {
+  if (_topbarFlowersStarted) return;
+  _topbarFlowersStarted = true;
+  const flowers = Array.from(document.querySelectorAll('.topbar-flowers-wrap .flower-container'));
+  if (flowers.length === 0) return;
+  const animatedClass = 'animate';
+  if (flowers[0]) flowers[0].classList.add(animatedClass);
+  setTimeout(() => {
+    for (let i = 1; i <= 2 && i < flowers.length; i++) {
+      if (flowers[i]) flowers[i].classList.add(animatedClass);
+    }
+    let remaining = flowers.slice(3);
+    const interval = setInterval(() => {
+      if (remaining.length === 0) {
+        clearInterval(interval);
+        return;
+      }
+      const randomIndex = Math.floor(Math.random() * remaining.length);
+      const el = remaining.splice(randomIndex, 1)[0];
+      if (el) el.classList.add(animatedClass);
+    }, 500);
+  }, 3000);
+}
+
 function showApp() {
   if (typeof startupFallback !== 'undefined') try { clearTimeout(startupFallback); } catch (_) {}
   $('#authShell').classList.add('hidden');
@@ -383,6 +408,7 @@ function showApp() {
   hideSplash();
   refreshIcons();
   hydrateMeChips();
+  initTopbarFlowers();
   switchTab('feed');
   startPolls();
   loadAll();
