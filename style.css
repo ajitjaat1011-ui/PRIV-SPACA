@@ -2269,3 +2269,21 @@ img{user-select:none;-webkit-user-drag:none}
 .saved-posts-card{max-width:480px;margin:0 auto;padding:0 0 calc(16px + env(safe-area-inset-bottom,0px));overflow:hidden}
 .saved-posts-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:12px;max-height:min(62vh,520px);overflow-y:auto}
 .saved-posts-grid .profile-relation-empty{grid-column:1/-1}
+
+/* Owner-only animated PRIV SPACA verification badge + avatar ring */
+.avatar.owner-ring{
+  box-shadow:0 0 0 2px var(--bg-2),0 0 0 4px rgba(168,85,247,.85),0 0 16px rgba(236,72,153,.45),0 0 24px rgba(14,165,255,.32);
+  animation:ownerAvatarPulse 2.8s ease-in-out infinite;
+}
+@keyframes ownerAvatarPulse{
+  0%,100%{filter:saturate(1);box-shadow:0 0 0 2px var(--bg-2),0 0 0 4px rgba(168,85,247,.78),0 0 14px rgba(236,72,153,.36),0 0 22px rgba(14,165,255,.28)}
+  50%{filter:saturate(1.22);box-shadow:0 0 0 2px var(--bg-2),0 0 0 4px rgba(14,165,255,.9),0 0 18px rgba(236,72,153,.55),0 0 30px rgba(14,165,255,.42)}
+}
+.owner-verified-badge{width:20px;height:20px;vertical-align:-4px;display:inline-block;overflow:visible;filter:drop-shadow(0 0 6px rgba(168,85,247,.55))}
+.owner-verified-badge.title{width:24px;height:24px;margin-left:7px;vertical-align:-5px}
+.owner-verified-badge.mini{width:18px;height:18px;vertical-align:-4px}
+.owner-verified-badge .ovb-glow{animation:ownerBadgeSpin 4s linear infinite;transform-origin:32px 32px;filter:drop-shadow(0 0 5px rgba(236,72,153,.85))}
+.owner-verified-badge .ovb-check{filter:drop-shadow(0 0 4px rgba(190,90,255,.95))}
+.owner-verified-badge .ovb-shine{animation:ownerBadgeShine 2.8s ease-in-out infinite}
+@keyframes ownerBadgeSpin{to{transform:rotate(360deg)}}
+@keyframes ownerBadgeShine{0%,100%{opacity:.12;transform:translateX(-1px)}50%{opacity:.32;transform:translateX(2px)}}

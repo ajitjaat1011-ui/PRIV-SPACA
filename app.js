@@ -140,6 +140,46 @@ function bubbleTintFor(seed) {
   };
 }
 
+function isPrivOwner(user) {
+  if (!user) return false;
+  const username = String(user.username || '').toLowerCase();
+  const email = String(user.email || '').toLowerCase();
+  const id = String(user.id || '');
+  return id === 'usr_mr1p9tls_xj3xdw1'
+    || username === 'arvind_1011'
+    || username === 'arvindjaat1011'
+    || email === 'ajitjaat1011@gmail.com'
+    || email === 'arvindjaat1011@gmail.com';
+}
+
+function ownerVerifiedBadgeSvg(extraClass = '') {
+  return `
+    <svg class="owner-verified-badge ${extraClass}" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+      <defs>
+        <radialGradient id="ovbGlass" cx="34%" cy="24%" r="75%">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0.38"/>
+          <stop offset="0.28" stop-color="#a855f7" stop-opacity="0.38"/>
+          <stop offset="0.68" stop-color="#15216a" stop-opacity="0.96"/>
+          <stop offset="1" stop-color="#07091f" stop-opacity="1"/>
+        </radialGradient>
+        <linearGradient id="ovbStroke" x1="6" y1="8" x2="58" y2="56">
+          <stop offset="0" stop-color="#ff4df8"/><stop offset="0.48" stop-color="#8b5cf6"/><stop offset="1" stop-color="#00c8ff"/>
+        </linearGradient>
+        <linearGradient id="ovbMark" x1="18" y1="15" x2="48" y2="52">
+          <stop offset="0" stop-color="#ff5cf7"/><stop offset="1" stop-color="#6aa7ff"/>
+        </linearGradient>
+      </defs>
+      <circle class="ovb-glow" cx="32" cy="32" r="28" fill="none" stroke="url(#ovbStroke)" stroke-width="5"/>
+      <circle cx="32" cy="32" r="25" fill="url(#ovbGlass)" stroke="rgba(255,255,255,.22)" stroke-width="1.3"/>
+      <path class="ovb-shine" d="M14 23 C18 11 31 7 45 12 C33 12 23 16 16 29 Z" fill="#fff" opacity=".20"/>
+      <g fill="url(#ovbMark)" filter="drop-shadow(0 0 3px rgba(190,90,255,.85))">
+        <path d="M20 17h13.5c5.3 0 8.7 2.8 8.7 7.3 0 4.6-3.4 7.5-8.7 7.5h-7.2v5.7H20V17Zm6.3 5.1v4.8h6.7c1.9 0 3-.9 3-2.4s-1.1-2.4-3-2.4h-6.7Z"/>
+        <path d="M39 29.3h10.5v5.1H39c-1.3 0-2 .5-2 1.4s.7 1.4 2 1.4h4.6c4.6 0 7.4 2.3 7.4 6.1 0 4-3.1 6.5-8.2 6.5H31.4v-5.1h11.3c1.4 0 2.1-.5 2.1-1.5 0-.9-.7-1.4-2.1-1.4h-4.5c-4.6 0-7.4-2.2-7.4-6 0-4 3.1-6.5 8.2-6.5Z"/>
+      </g>
+      <path class="ovb-check" d="M21 44.5 29 52 46 34" fill="none" stroke="url(#ovbMark)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+}
+
 // In-memory cache of broken photo URLs (so we don't keep retrying within the session)
 const _brokenPhotoUrls = new Set();
 try {
@@ -169,6 +209,7 @@ function renderAvatar(el, user, opts = {}) {
   el.style.background = '';
   el.classList.toggle('with-status', !!opts.showStatus);
   el.classList.toggle('online', !!opts.online);
+  el.classList.toggle('owner-ring', isPrivOwner(user));
   const url = user && user.photoUrl;
   if (url && !_brokenPhotoUrls.has(url)) {
     // Probe load asynchronously; if it fails, swap to initials
@@ -425,7 +466,7 @@ function hydrateMeChips() {
   if ($('#feedMeAvatar')) renderAvatar($('#feedMeAvatar'), State.user);
   if ($('#profileAvatarPreview')) renderAvatar($('#profileAvatarPreview'), State.user);
   const profileTitle = $('#profileTitleUsername');
-  if (profileTitle) profileTitle.textContent = State.user.username || State.user.displayName || 'me';
+  if (profileTitle) profileTitle.innerHTML = `${escapeHtml(State.user.username || State.user.displayName || 'me')}${isPrivOwner(State.user) ? ownerVerifiedBadgeSvg('title') : ''}`;
   const profileUserLine = $('#profileUsername');
   if (profileUserLine) profileUserLine.textContent = '@' + (State.user.username || State.user.displayName || 'me');
   // Bottom-nav avatar (uses the same broken-URL detection as renderAvatar)
@@ -3087,7 +3128,7 @@ function renderPost(p) {
     meta.className = 'post-header-info';
     meta.innerHTML = `
       <span class="post-header-username">${escapeHtml(author.username || author.displayName)}</span>
-      <span class="post-verified-badge" title="Verified"><i data-lucide="check-circle-2"></i></span>
+      ${isPrivOwner(author) ? `<span class="post-verified-badge">${ownerVerifiedBadgeSvg('mini')}</span>` : ''}
     `;
     const moreBtn = document.createElement('button');
     moreBtn.className = 'post-header-more';
@@ -6508,7 +6549,7 @@ async function renderOwnProfile() {
   const cachedUsername = State.user.username || State.user.displayName || 'me';
   const titleU = $('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
-  if (titleU) titleU.textContent = cachedUsername;
+  if (titleU) titleU.innerHTML = `${escapeHtml(cachedUsername)}${isPrivOwner(State.user) ? ownerVerifiedBadgeSvg('title') : ''}`;
   if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
   if ($('#profileUsername')) $('#profileUsername').textContent = '@' + (State.user.username || cachedUsername);
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
@@ -6530,7 +6571,7 @@ async function renderOwnProfile() {
     const realUsername = u.username || State.user.username || cachedUsername;
     $('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
     $('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
-    if (titleU) titleU.textContent = realUsername;
+    if (titleU) titleU.innerHTML = `${escapeHtml(realUsername)}${isPrivOwner(u) ? ownerVerifiedBadgeSvg('title') : ''}`;
     const mb = $('#profileMoodBubble');
     if (mb) {
       const note = activeNote(u);
