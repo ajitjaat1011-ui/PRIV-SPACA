@@ -661,6 +661,14 @@ function closePostComposer() {
 
 function bindTabs() {
   $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+  const bw = $('#brandWordmarkBtn') || $('#brandWordmark');
+  if (bw) bw.addEventListener('click', () => {
+    switchTab('feed');
+    const fv = $('#feedView');
+    if (fv) fv.scrollTo({ top: 0, behavior: 'smooth' });
+    lastPostsSignature = null;
+    loadPosts();
+  });
   // Legacy top-chat button is gone; keep guard in case markup is cached
   const tc = $('#topChatBtn');
   if (tc) tc.addEventListener('click', () => switchTab('chat'));
@@ -735,7 +743,7 @@ function switchTab(tab) {
 // On the chat/DM tabs, show the Instagram-style username header instead of
 // the PRIV SPACA wordmark.
 function updateTopbarHeader(tab) {
-  const brand = $('#brandWordmark');
+  const brand = $('#brandWordmarkBtn') || $('#brandWordmark');
   const igH = $('#igUsernameHeader');
   const igT = $('#igUsernameText');
   const showUsername = (tab === 'chat' || tab === 'groups');
