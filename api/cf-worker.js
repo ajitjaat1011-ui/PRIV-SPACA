@@ -1630,7 +1630,8 @@ app.post('/api/user/unblock', requireAuth, async (c) => {
 app.get('/api/user/:id/profile', requireAuth, async (c) => {
   const targetId = c.req.param('id');
   const myId = c.get('userId');
-  const db = await fetchDatabase();
+  cacheTimestamp = 0; // profile counts/posts must be fresh immediately after follow/post
+  const db = await fetchDatabase({ fresh: true });
   const target = db.users.find(u => u.id === targetId);
   if (!target) return c.json({ error: 'Not found' }, 404);
   const me = db.users.find(u => u.id === myId);
@@ -1639,7 +1640,7 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
   if (blockedMe) return c.json({ error: 'Profile unavailable' }, 403);
   const posts = (db.posts || []).filter(p => p.userId === targetId && !p.deletedAt && !isStoryRecord(p))
     .sort((a, b) => b.createdAt - a.createdAt)
-    .map(p => ({ id: p.id, imageUrl: p.imageUrl, text: p.text, createdAt: p.createdAt, likeCount: (p.likes || []).length, commentCount: (p.comments || []).length }));
+    .map(p => ({ id: p.id, userId: p.userId, imageUrl: p.imageUrl || (Array.isArray(p.images) ? p.images[0] : null), images: Array.isArray(p.images) ? p.images : [], videoUrl: p.videoUrl || null, text: p.text, createdAt: p.createdAt, likeCount: (p.likes || []).length, commentCount: (p.comments || []).length, authorSnapshot: p.authorSnapshot || null }));
   const followerIds = Array.from(new Set([
     ...(Array.isArray(target.followers) ? target.followers : []),
     ...(db.users || []).filter(u => Array.isArray(u.following) && u.following.includes(targetId)).map(u => u.id),
