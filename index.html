@@ -831,6 +831,37 @@
   </div>
 </div>
 
+<!-- ====== NOTE VIEWER SHEET (Instagram-style note reply) ====== -->
+<div id="noteViewerModal" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-card note-viewer-card">
+    <div class="sheet-handle"></div>
+    <div class="note-viewer-header">
+      <span id="noteViewerHandle" class="note-viewer-handle">@username</span>
+      <button class="ghost-btn" id="noteViewerClose" aria-label="Close"><i data-lucide="x"></i></button>
+    </div>
+    <div class="note-viewer-body">
+      <div class="note-viewer-hero">
+        <div class="note-viewer-avatar-wrap">
+          <span id="noteViewerAvatar" class="avatar xl"></span>
+          <div id="noteViewerSpeech" class="note-viewer-speech">
+            <div id="noteViewerSong" class="note-v-song hidden"></div>
+            <div id="noteViewerText" class="note-v-text"></div>
+          </div>
+        </div>
+      </div>
+      <form id="noteViewerForm" class="note-viewer-footer" autocomplete="off">
+        <input type="text" id="noteViewerInput" class="note-viewer-input" maxlength="500" placeholder="Message..." />
+        <div class="note-viewer-emojis">
+          <button type="button" class="note-react-emoji" data-emoji="😮">😮</button>
+          <button type="button" class="note-react-emoji" data-emoji="😢">😢</button>
+          <button type="button" class="note-react-emoji" data-emoji="🥺">🥺</button>
+          <button type="button" class="note-react-emoji" data-emoji="❤️">❤️</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- ====== LIGHTBOX ====== -->
 <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true">
   <button class="lightbox-close ghost-btn" id="lightboxClose" aria-label="Close"><i data-lucide="x"></i></button>

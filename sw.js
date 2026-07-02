@@ -5,7 +5,7 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v29-ig-profile-redesign';
+const SW_VERSION = 'priv-spaca-v30-no-top-add-note-viewer-sheet';
 const STATIC_CACHE = 'priv-spaca-static-' + SW_VERSION;
 const RUNTIME_CACHE = 'priv-spaca-runtime-' + SW_VERSION;
 
