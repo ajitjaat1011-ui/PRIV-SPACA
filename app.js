@@ -2836,31 +2836,25 @@ function renderPost(p) {
   const liked = Array.isArray(p.likes) && p.likes.includes(meId);
   const saved = !!getSaved()[p.id];
 
-  // Build the header DOM once; we'll attach it either above the media
-  // (text-only posts) or overlaid ON the media (image posts, IG-style).
-  const buildHead = (overlayMode) => {
+  const buildHead = () => {
     const head = document.createElement('div');
-    head.className = overlayMode ? 'post-overlay-head' : 'post-head';
+    head.className = 'post-header-row';
     const avRing = document.createElement('span');
-    avRing.className = 'avatar-ring';
+    avRing.className = 'post-header-avatar';
     const av = document.createElement('span');
     av.className = 'avatar md';
     renderAvatar(av, author);
     avRing.appendChild(av);
     const meta = document.createElement('div');
-    meta.className = 'meta';
+    meta.className = 'post-header-info';
     meta.innerHTML = `
-      <div class="nm">
-        <span>${escapeHtml(author.username || author.displayName)}</span>
-        <span class="dot-sep">•</span>
-        <span class="ago">${escapeHtml(timeAgo(p.createdAt))}</span>
-      </div>
-      <div class="un">${escapeHtml(author.displayName || '')}</div>
+      <span class="post-header-username">${escapeHtml(author.username || author.displayName)}</span>
+      <span class="post-verified-badge" title="Verified"><i data-lucide="check-circle-2"></i></span>
     `;
     const moreBtn = document.createElement('button');
-    moreBtn.className = 'more-btn';
-    moreBtn.setAttribute('aria-label', 'More');
-    moreBtn.innerHTML = '<i data-lucide="more-horizontal"></i>';
+    moreBtn.className = 'post-header-more';
+    moreBtn.setAttribute('aria-label', 'More options');
+    moreBtn.innerHTML = '<i data-lucide="more-vertical"></i>';
     moreBtn.addEventListener('click', (e) => { e.stopPropagation(); openMoreMenu(p, isMine); });
     head.appendChild(avRing); head.appendChild(meta); head.appendChild(moreBtn);
     const openProfile = () => { if (p.userId !== (State.user && State.user.id)) openUserProfile(p.userId); else switchTab('profile'); };
@@ -2871,13 +2865,14 @@ function renderPost(p) {
     return head;
   };
 
+  card.appendChild(buildHead());
+
   const imgs = Array.isArray(p.images) && p.images.length > 0 ? p.images : (p.imageUrl ? [p.imageUrl] : []);
 
-  // Image with double-tap to like — header is overlaid on top of the media
+  // Image with double-tap to like
   if (imgs.length > 0) {
     const wrap = document.createElement('div');
     wrap.className = 'post-img-wrap';
-    wrap.appendChild(buildHead(true));
 
     const burst = document.createElement('div');
     burst.className = 'heart-burst';
@@ -2961,9 +2956,6 @@ function renderPost(p) {
       card.appendChild(wrap);
     }
     if (imgs.length === 1 && p.isScratch) attachScratchOverlay(card.querySelector('.post-img-wrap'));
-  } else {
-    // Text-only post — no media to overlay onto, so put a classic header at top
-    card.appendChild(buildHead(false));
   }
 
   // Action toolbar
