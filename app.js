@@ -826,6 +826,14 @@ function bindTabs() {
   if (pm) pm.addEventListener('click', (e) => { if (e.target === pm) closePostComposer(); });
 }
 
+function shouldAutoFocusSearch() {
+  try {
+    return window.innerWidth > 820 && window.matchMedia && window.matchMedia('(pointer:fine)').matches;
+  } catch (_) {
+    return window.innerWidth > 820;
+  }
+}
+
 function switchTab(tab) {
   rememberCurrentScroll();
   State.currentTab = tab;
@@ -837,7 +845,13 @@ function switchTab(tab) {
   $$('.view').forEach(v => v.classList.remove('active'));
   let activeView = null;
   if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
-  if (tab === 'search') { activeView = $('#searchView'); activeView.classList.add('active'); loadMembers(); renderSearch(''); setTimeout(() => $('#searchInput').focus(), 100); }
+  if (tab === 'search') {
+    activeView = $('#searchView');
+    activeView.classList.add('active');
+    loadMembers();
+    renderSearch('');
+    if (shouldAutoFocusSearch()) setTimeout(() => $('#searchInput').focus(), 100);
+  }
   if (tab === 'groups') {
     activeView = $('#chatView');
     activeView.classList.add('active');
@@ -939,6 +953,11 @@ let _lastMembersSig = '';
 function renderMembers() {
   const list = $('#membersList');
   if (!list) return;
+  const reqListEl = $('#requestsList');
+  const roomsPane = $('.rooms-pane');
+  const prevListScroll = list.scrollTop || 0;
+  const prevReqScroll = reqListEl ? (reqListEl.scrollTop || 0) : 0;
+  const prevPaneScroll = roomsPane ? (roomsPane.scrollTop || 0) : 0;
   const meId = State.user && State.user.id;
   const others = State.members.filter(u => u.id !== meId);
   const me = State.members.find(u => u.id === meId);
@@ -1017,6 +1036,11 @@ function renderMembers() {
   }
 
   renderNotesRail();
+  requestAnimationFrame(() => {
+    if (roomsPane) roomsPane.scrollTop = prevPaneScroll;
+    if (list) list.scrollTop = prevListScroll;
+    if (reqList) reqList.scrollTop = prevReqScroll;
+  });
 }
 
 // ===== Notes rail (Instagram-style 24h statuses on the DM inbox) =====
@@ -7270,7 +7294,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=51-scroll-tabs').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=52-chat-search-fix').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {

@@ -596,7 +596,7 @@ img{user-select:none;-webkit-user-drag:none}
 .pane-title i{width:13px;height:13px}
 .muted-pill{margin-left:auto;background:var(--bg-soft);color:var(--muted);font-size:11px;padding:2px 8px;border-radius:8px;font-weight:700}
 .rooms-list, .members-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-.members-list{overflow-y:auto;max-height:none}
+.members-list{overflow:visible;max-height:none}
 .room-item, .member-item{
   display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:11px;
   cursor:pointer;color:var(--text);font-size:14px;font-weight:500;transition:all .15s;
