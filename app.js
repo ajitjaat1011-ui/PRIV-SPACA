@@ -669,6 +669,8 @@ function bindTabs() {
   // New IG-style top "+" — jump to feed, focus composer, open photo picker
   const ta = $('#topAddBtn');
   if (ta) ta.addEventListener('click', openPostComposer);
+  const fa = $('#floatingAddBtn');
+  if (fa) fa.addEventListener('click', openPostComposer);
   const icb = $('#inlineComposerCloseBtn');
   if (icb) icb.addEventListener('click', closePostComposer);
   const icab = $('#inlineComposerCancelBtn');

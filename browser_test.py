@@ -97,8 +97,8 @@ with sync_playwright() as p:
     app_shell_visible = page.locator('#appShell:not(.hidden)').count() > 0
     log("app shown after signup", app_shell_visible)
 
-    # ---- Test the "+" new post button ----
-    top_add = page.locator('#topAddBtn')
+    # ---- Test the circular floating "+" new post button ----
+    top_add = page.locator('#floatingAddBtn')
     if top_add.count() > 0:
         top_add.first.click()
         page.wait_for_timeout(800)
