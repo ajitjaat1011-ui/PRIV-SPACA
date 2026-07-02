@@ -2304,3 +2304,197 @@ img{user-select:none;-webkit-user-drag:none}
 .owner-verified-badge{filter:drop-shadow(0 1px 3px rgba(0,104,232,.22))!important}
 .owner-verified-badge .bt-shape{filter:drop-shadow(0 0 2px rgba(21,156,255,.28))}
 .owner-verified-badge .bt-check{filter:drop-shadow(0 1px 1px rgba(0,80,180,.25))}
+
+/* ===== Glassmorphism Frontend Refresh — bottom navigation intentionally untouched ===== */
+:root, [data-theme="light"]{
+  --glass-panel:rgba(255,255,255,.64);
+  --glass-panel-strong:rgba(255,255,255,.82);
+  --glass-panel-soft:rgba(255,255,255,.42);
+  --glass-border:rgba(255,255,255,.58);
+  --glass-shadow:0 18px 50px rgba(15,35,60,.12),0 4px 16px rgba(15,35,60,.06);
+  --glass-blur:blur(22px) saturate(1.35);
+}
+[data-theme="dark"]{
+  --glass-panel:rgba(21,32,48,.62);
+  --glass-panel-strong:rgba(21,32,48,.82);
+  --glass-panel-soft:rgba(28,40,57,.44);
+  --glass-border:rgba(255,255,255,.10);
+  --glass-shadow:0 20px 55px rgba(0,0,0,.38),0 4px 16px rgba(0,0,0,.24);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --glass-panel:rgba(21,32,48,.62);
+    --glass-panel-strong:rgba(21,32,48,.82);
+    --glass-panel-soft:rgba(28,40,57,.44);
+    --glass-border:rgba(255,255,255,.10);
+    --glass-shadow:0 20px 55px rgba(0,0,0,.38),0 4px 16px rgba(0,0,0,.24);
+  }
+}
+body{
+  background:
+    radial-gradient(circle at 12% -6%,rgba(var(--accent-rgb),.28),transparent 34%),
+    radial-gradient(circle at 94% 10%,rgba(236,72,153,.18),transparent 28%),
+    radial-gradient(circle at 70% 104%,rgba(124,92,255,.16),transparent 34%),
+    var(--bg);
+}
+.app-shell{
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,.12)),
+    radial-gradient(circle at 20% 0%,rgba(var(--accent-rgb),.11),transparent 38%),
+    radial-gradient(circle at 100% 20%,rgba(236,72,153,.09),transparent 34%),
+    var(--bg);
+}
+.topbar,
+.chat-header,
+.rooms-pane,
+.composer-card,
+.post-card,
+.profile-wrap,
+.search-bar,
+.sheet > .sheet-card,
+.sheet-card,
+.modal-card,
+.settings-strip,
+.req-banner,
+.note-bubble,
+.note-viewer-speech,
+.profile-banner-pill,
+.ig-action-btn,
+.discover-card,
+.close-friends-card,
+.story-manage-card,
+.saved-posts-card,
+.profile-relation-card,
+.post-detail-top{
+  background:var(--glass-panel-strong)!important;
+  border:1px solid var(--glass-border)!important;
+  box-shadow:var(--glass-shadow);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+}
+.topbar{border-left:0!important;border-right:0!important;border-top:0!important}
+.chat-pane{
+  background:
+    radial-gradient(900px 520px at 100% 0%,rgba(var(--accent-rgb),.13),transparent 58%),
+    radial-gradient(700px 500px at 0% 100%,rgba(236,72,153,.08),transparent 56%),
+    linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,.10)),
+    var(--bg-soft)!important;
+}
+.messages-scroll,
+.feed-view,
+.profile-view,
+.search-view{
+  background:transparent!important;
+}
+.post-card{
+  border-radius:28px!important;
+  overflow:hidden;
+}
+.post-img-wrap,
+.ig-grid-cell,
+.story-cell .story-ring,
+.avatar,
+.note-avatar{
+  box-shadow:0 10px 30px rgba(15,35,60,.10);
+}
+.room-item,
+.member-item,
+.settings-row,
+.popup-action-btn,
+.note-song-item,
+.cf-row,
+.story-manage-item,
+.profile-relation-row,
+.notif-list li{
+  background:rgba(255,255,255,.28);
+  border:1px solid transparent;
+  backdrop-filter:blur(12px) saturate(1.15);
+  -webkit-backdrop-filter:blur(12px) saturate(1.15);
+}
+.room-item:hover,
+.member-item:hover,
+.settings-row:hover,
+.popup-action-btn:hover,
+.note-song-item:hover,
+.profile-relation-row:active{
+  background:rgba(255,255,255,.52)!important;
+  border-color:var(--glass-border);
+}
+.modern-composer,
+.reply-banner,
+.attach-preview,
+.secret-banner,
+.typing-indicator{
+  background:var(--glass-panel)!important;
+  border-color:var(--glass-border)!important;
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+}
+.composer-input-section textarea,
+.note-input,
+.note-viewer-input,
+.story-reply-input,
+.search-bar input,
+.note-song-search{
+  background:rgba(255,255,255,.58)!important;
+  border:1px solid rgba(255,255,255,.54)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.38);
+}
+.message .bubble:not(.image-only),
+.voice-note{
+  backdrop-filter:blur(14px) saturate(1.25);
+  -webkit-backdrop-filter:blur(14px) saturate(1.25);
+  box-shadow:0 10px 28px rgba(15,35,60,.10)!important;
+}
+.message.mine .bubble:not(.image-only),
+.message.mine .voice-note{
+  box-shadow:0 14px 32px rgba(var(--accent-rgb),.22)!important;
+}
+.ig-tabs,
+.inbox-segment{
+  background:rgba(255,255,255,.26);
+  backdrop-filter:blur(18px) saturate(1.25);
+  -webkit-backdrop-filter:blur(18px) saturate(1.25);
+  border-top:1px solid var(--glass-border);
+  border-bottom:1px solid var(--glass-border);
+}
+.story-viewer,
+.lightbox,
+.more-menu .bd,
+.modal,
+.sheet{
+  backdrop-filter:blur(16px) saturate(1.2);
+  -webkit-backdrop-filter:blur(16px) saturate(1.2);
+}
+[data-theme="dark"] .room-item,
+[data-theme="dark"] .member-item,
+[data-theme="dark"] .settings-row,
+[data-theme="dark"] .popup-action-btn,
+[data-theme="dark"] .note-song-item,
+[data-theme="dark"] .cf-row,
+[data-theme="dark"] .story-manage-item,
+[data-theme="dark"] .profile-relation-row,
+[data-theme="dark"] .notif-list li{
+  background:rgba(255,255,255,.045);
+}
+[data-theme="dark"] .composer-input-section textarea,
+[data-theme="dark"] .note-input,
+[data-theme="dark"] .note-viewer-input,
+[data-theme="dark"] .story-reply-input,
+[data-theme="dark"] .search-bar input,
+[data-theme="dark"] .note-song-search{
+  background:rgba(255,255,255,.065)!important;
+  border-color:rgba(255,255,255,.11)!important;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .room-item,
+  :root:not([data-theme="light"]) .member-item,
+  :root:not([data-theme="light"]) .settings-row,
+  :root:not([data-theme="light"]) .popup-action-btn,
+  :root:not([data-theme="light"]) .note-song-item,
+  :root:not([data-theme="light"]) .cf-row,
+  :root:not([data-theme="light"]) .story-manage-item,
+  :root:not([data-theme="light"]) .profile-relation-row,
+  :root:not([data-theme="light"]) .notif-list li{background:rgba(255,255,255,.045)}
+}
+/* Keep bottom navigation and floating plus exactly as their existing rules define them. */
