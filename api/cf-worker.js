@@ -2329,24 +2329,26 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
 });
 
 app.get('/api/rtc/signals', requireAuth, async (c) => {
-  cacheTimestamp = 0; // call signaling must be immediate
+  cacheTimestamp = 0; // ALWAYS force fresh read — signals must arrive immediately
   const since = Number(c.req.query('since') || 0) || 0;
   const myId = c.get('userId');
-  const db = await fetchDatabase();
+  const db = await fetchDatabase({ fresh: true });
   const now = nowMs();
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
   let signals = db.rtcSignals
-    .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 20000))
+    .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 45000))
     .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
     .slice(-30)
     .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
+  // Retry once after short delay if empty (covers cross-isolate write lag)
   if (signals.length === 0) {
-    await sleepMs(900); cacheTimestamp = 0;
+    await sleepMs(500);
+    cacheTimestamp = 0;
     const db2 = await fetchDatabase({ fresh: true });
     const now2 = nowMs();
     db2.rtcSignals = Array.isArray(db2.rtcSignals) ? db2.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now2) : [];
     signals = db2.rtcSignals
-      .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now2 - (x.createdAt || 0) <= 20000))
+      .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now2 - (x.createdAt || 0) <= 45000))
       .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
       .slice(-30)
       .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
