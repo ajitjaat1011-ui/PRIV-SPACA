@@ -1692,8 +1692,8 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
     .filter(p => p.userId === targetId && !p.deletedAt && !isStoryRecord(p))
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => ({
-      id: p.id, imageUrl: p.imageUrl, text: p.text, createdAt: p.createdAt,
-      likeCount: (p.likes || []).length, commentCount: (p.comments || []).length,
+      id: p.id, userId: p.userId, imageUrl: p.imageUrl || (Array.isArray(p.images) ? p.images[0] : null), images: Array.isArray(p.images) ? p.images : [], videoUrl: p.videoUrl || null, text: p.text, createdAt: p.createdAt,
+      likeCount: (p.likes || []).length, commentCount: (p.comments || []).length, authorSnapshot: p.authorSnapshot || null,
     }));
   const followerIds = Array.from(new Set([
     ...(Array.isArray(target.followers) ? target.followers : []),
