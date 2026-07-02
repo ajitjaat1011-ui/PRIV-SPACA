@@ -535,6 +535,13 @@ async function fetchTursoMirror(fallbackDb = null) {
     posts: (postsRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
   });
 }
+async function fetchTursoUserById(userId) {
+  if (!isTursoConfigured() || !userId) return null;
+  await tursoEnsure();
+  const row = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1', args: [userId] }).catch(() => ({ rows: [] }));
+  if (!row.rows || row.rows.length === 0) return null;
+  return safeJson(String(row.rows[0].data_json || '{}'), null);
+}
 
 async function ensureOwnerAccount(db) { return false; }
 
@@ -548,6 +555,12 @@ async function fetchDatabase({ fresh = false } = {}) {
   const remote = await repoRead();
   if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
     localCache = normalizeDb(remote);
+  }
+  if (isTursoConfigured()) {
+    const mirror = await fetchTursoMirror(localCache);
+    if ((mirror.users || []).length > 0) localCache.users = mirror.users;
+    if ((mirror.posts || []).length > 0) localCache.posts = mirror.posts;
+    localCache.meta = { ...(localCache.meta || {}), secondaryPersistence: 'turso-users-posts' };
   }
   const ownerSeeded = await ensureOwnerAccount(localCache);
   cacheTimestamp = now;
@@ -689,8 +702,12 @@ async function authFromRequest(c) {
 async function requireAuth(c, next) {
   const p = await authFromRequest(c);
   if (!p || !p.uid) return c.json({ error: 'Missing or invalid token' }, 401);
-  const db = await fetchDatabase();
-  const u = (db.users || []).find(x => x.id === p.uid);
+  let u = null;
+  if (isTursoConfigured()) u = await fetchTursoUserById(p.uid);
+  if (!u) {
+    const db = await fetchDatabase();
+    u = (db.users || []).find(x => x.id === p.uid);
+  }
   if (!u) return c.json({ error: 'Missing or invalid token' }, 401);
   const tokenVersion = Number(p.sv || 0);
   const userVersion = Number(u.tokenVersion || 0);
@@ -1275,8 +1292,12 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
 
 // ---------- Auth: me ----------
 app.get('/api/auth/me', requireAuth, async (c) => {
-  const db = await fetchDatabase();
-  const u = db.users.find(x => x.id === c.get('userId'));
+  let u = null;
+  if (isTursoConfigured()) u = await fetchTursoUserById(c.get('userId'));
+  if (!u) {
+    const db = await fetchDatabase();
+    u = db.users.find(x => x.id === c.get('userId'));
+  }
   if (!u) return c.json({ error: 'Not found' }, 404);
   return c.json({ user: sanitizeUser(u) });
 });
@@ -1823,10 +1844,9 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
   const targetId = c.req.param('id');
   const myId = c.get('userId');
   cacheTimestamp = 0; // profile counts/posts must be fresh immediately after follow/post
-  const db = await fetchDatabase({ fresh: true });
-  const sdb = isTursoConfigured() ? await fetchTursoMirror(db) : db;
-  const sourceUsers = (sdb.users || []).length ? sdb.users : (db.users || []);
-  const sourcePosts = (sdb.posts || []).length ? sdb.posts : (db.posts || []);
+  const sdb = isTursoConfigured() ? await fetchTursoMirror() : await fetchDatabase({ fresh: true });
+  const sourceUsers = sdb.users || [];
+  const sourcePosts = sdb.posts || [];
   const target = sourceUsers.find(u => u.id === targetId);
   if (!target) return c.json({ error: 'Not found' }, 404);
   const me = sourceUsers.find(u => u.id === myId);
@@ -1856,16 +1876,15 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
 // ---------- Posts ----------
 app.get('/api/posts', requireAuth, async (c) => {
   cacheTimestamp = 0; // force fresh feed read after posts/likes/comments
-  const db = await fetchDatabase();
-  const sdb = isTursoConfigured() ? await fetchTursoMirror(db) : db;
-  const sourceUsers = (sdb.users || []).length ? sdb.users : (db.users || []);
-  const sourcePosts = (sdb.posts || []).length ? sdb.posts : (db.posts || []);
+  const sdb = isTursoConfigured() ? await fetchTursoMirror() : await fetchDatabase();
+  const sourceUsers = sdb.users || [];
+  const sourcePosts = sdb.posts || [];
   const myId = c.get('userId');
   const me = sourceUsers.find(u => u.id === myId);
   const myBlocked = new Set((me && me.blocked) || []);
   const blockedMe = new Set();
   sourceUsers.forEach(u => { if (u.id !== myId && Array.isArray(u.blocked) && u.blocked.includes(myId)) blockedMe.add(u.id); });
-  const structuredDb = normalizeDb({ ...db, users: sourceUsers, posts: sourcePosts });
+  const structuredDb = normalizeDb({ users: sourceUsers, posts: sourcePosts });
   const list = sourcePosts
     .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId) && canViewerSeeStory(p, myId, structuredDb))
     .slice().sort((a, b) => b.createdAt - a.createdAt)
