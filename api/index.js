@@ -1096,7 +1096,7 @@ app.get('/api/health', async (req, res) => {
     ok: true,
     name: 'PRIV SPACA',
     persistence: isRepoConfigured() ? 'github-repo' : (isGistConfigured() ? 'gist' : 'in-memory'),
-    secondaryPersistence: isTursoConfigured() ? 'turso-mirror-users-posts' : null,
+    secondaryPersistence: isTursoConfigured() ? 'turso-structured-social' : null,
     time: nowMs(),
   });
 });
