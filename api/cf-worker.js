@@ -9,7 +9,14 @@
  */
 
 import { Hono } from 'hono';
-import { Buffer } from 'node:buffer';
+// Buffer polyfill — uses Web API (available in all Workers runtimes)
+// instead of node:buffer so esbuild bundling succeeds without nodejs_compat.
+const _b64decode = (b64) => {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+};
 import { neon } from '@neondatabase/serverless';
 import { createClient as createTursoClient } from '@libsql/client/web';
 
@@ -293,7 +300,7 @@ async function repoRead() {
     if (dSha && dSha.sha) ghFileSha = dSha.sha;
     if (!dSha || !dSha.content) return null;
     const b64 = String(dSha.content || '').replace(/\n/g, '');
-    const text = Buffer.from(b64, dSha.encoding || 'base64').toString('utf8');
+    const text = _b64decode(b64);
     return safeJson(text, { _err: 'Invalid JSON', _textPreview: text.slice(0, 100) });
   } catch (e) {
     return { _err: e.message, _stack: e.stack };
