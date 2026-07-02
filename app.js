@@ -6226,6 +6226,8 @@ async function renderOwnProfile() {
   if (titleU) titleU.textContent = cachedUsername;
   if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
   if ($('#profileUsername')) $('#profileUsername').textContent = '@' + (State.user.username || cachedUsername);
+  // Fetch fresh relationship data so follower/following counts and sheets are correct.
+  try { await loadMembers(); } catch (_) {}
   // Fetch fresh data (own profile uses same endpoint)
   try {
     const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
@@ -6233,7 +6235,9 @@ async function renderOwnProfile() {
     if (u && u.id === State.user.id) {
       const localFollowers = Array.isArray(State.user.followers) ? State.user.followers : [];
       const localFollowing = Array.isArray(State.user.following) ? State.user.following : [];
-      State.user = { ...State.user, ...u, followers: localFollowers, following: localFollowing };
+      const serverFollowers = Array.isArray(u.followerIds) ? u.followerIds : localFollowers;
+      const serverFollowing = Array.isArray(u.followingIds) ? u.followingIds : localFollowing;
+      State.user = { ...State.user, ...u, followers: serverFollowers, following: serverFollowing };
       try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
     }
     const realUsername = u.username || State.user.username || cachedUsername;
@@ -6296,8 +6300,12 @@ function profileRelationLists() {
 function updateOwnProfileStatCounts(profileUser) {
   const lists = profileRelationLists();
   const postsCount = Number(profileUser && profileUser.postsCount) || 0;
-  const followerCount = Math.max(Number(profileUser && profileUser.followers) || 0, lists.followers.length);
-  const followingCount = Math.max(Number(profileUser && profileUser.following) || 0, lists.following.length);
+  const followerIdsCount = Array.isArray(profileUser && profileUser.followerIds) ? profileUser.followerIds.length : 0;
+  const followingIdsCount = Array.isArray(profileUser && profileUser.followingIds) ? profileUser.followingIds.length : 0;
+  const ownFollowerIdsCount = Array.isArray(State.user && State.user.followers) ? State.user.followers.length : 0;
+  const ownFollowingIdsCount = Array.isArray(State.user && State.user.following) ? State.user.following.length : 0;
+  const followerCount = Math.max(Number(profileUser && profileUser.followers) || 0, followerIdsCount, ownFollowerIdsCount, lists.followers.length);
+  const followingCount = Math.max(Number(profileUser && profileUser.following) || 0, followingIdsCount, ownFollowingIdsCount, lists.following.length);
   const sp = $('#statPosts'); if (sp) sp.textContent = String(postsCount);
   const sf = $('#statFollowers'); if (sf) sf.textContent = String(followerCount);
   const sg = $('#statFollowing'); if (sg) sg.textContent = String(followingCount);

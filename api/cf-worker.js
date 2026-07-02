@@ -1646,7 +1646,7 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
   ])).filter(id => id && id !== targetId);
   const followingIds = Array.from(new Set(Array.isArray(target.following) ? target.following : [])).filter(id => id && id !== targetId);
   return c.json({
-    user: { ...sanitizeUser(target), followers: followerIds.length, following: followingIds.length, postsCount: posts.length },
+    user: { ...sanitizeUser(target), followers: followerIds.length, following: followingIds.length, followerIds, followingIds, postsCount: posts.length },
     posts,
     relationship: {
       isMe: targetId === myId,
