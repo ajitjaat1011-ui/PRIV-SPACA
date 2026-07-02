@@ -52,6 +52,24 @@ if (env.MEDIA) {                      // R2 bucket binding
 Frontend needs **no change** — it already consumes `{ url, persisted }`.
 Benefits: no repo bloat/commit churn, no GitHub API rate limits, proper cache headers, cheaper + faster CDN reads.
 
+## 3b. Free Story features shipped (no new credentials required)
+
+All four "buildable now" backlog items are implemented, tested, committed,
+pushed, and deployed. Parity kept between `api/index.js` (Express dev harness)
+and `api/cf-worker.js` (Hono prod).
+
+| Feature | Endpoints / behaviour | Tests |
+|---|---|---|
+| **Story "Seen by" analytics** | `POST /api/stories/:id/view` (idempotent, self-views ignored, respects close-friends), `GET /api/stories/:id/viewers` (owner-only). `/api/posts` exposes `viewCount` to the author only. Viewer records a view on open; owner gets a "Seen by N" pill → viewers sheet. | `story_features_test.py` (15 API), `pw_story_features_test.py` (14 UI) |
+| **Reply-to-story-in-chat** | `POST /api/stories/:id/reply` delivers emoji/text into the author's DM with a `storyReply` reference + SSE + notification. Viewer reply bar (5 quick reactions + text); chat bubbles render a story-context card. | same suites |
+| **Multi-photo carousel in one story** | Editor accepts up to 3 photos (thumbnail strip, add/remove); viewer renders dots + swipe-to-switch; `images[]` already supported server-side. | `pw_story_test.py` 23/23 |
+| **Short video stories** | Upload accepts `data:video/(mp4\|webm\|mov)` ≤10MB; `posts/create` accepts validated `videoUrl`; viewer plays `<video>` driving the progress bar (autoplay, ended→next, hold-to-pause); manage thumbnails show a ▶ badge. Editor validates ≤20s / ≤10MB. | `video_story_test.py` (7 API) |
+
+**Note on video/photo durability:** media still rides the GitHub Contents API
+(the R2 upgrade remains blocked — see §3). This is fine for 24h stories, but a
+10MB video base64-committed to a repo is exactly the kind of bloat R2 would
+eliminate. Prioritise the R2 unblock if video stories see heavy use.
+
 ## 4. Backlog status this pass
 
 | Item | Status |
@@ -59,7 +77,8 @@ Benefits: no repo bloat/commit churn, no GitHub API rate limits, proper cache he
 | Fix missing `GET /api/rtc/signals` parity in `api/index.js` | ✅ **DONE** — added GET route + durable `rtcSignals` store + terminal-signal cleanup in POST, mirroring `cf-worker.js`. New `rtc_parity_test.py` proves POST→poll round-trip (11 checks PASS). |
 | Verify Neon Postgres in prod / retire GitHub-JSON storage | ✅ **VERIFIED** — Neon is authoritative in prod; GitHub-JSON already demoted to fallback. |
 | Move GitHub-as-storage → R2/Images | ⚠️ **BLOCKED** on Pages-only token (see §3). Design documented & ready. |
-| Video/GIF stories | Deferred — large viewer+editor+backend change; scoped for a follow-up pass to avoid regressing the just-shipped Stories overhaul. |
+| Video/GIF stories | ✅ **DONE** — short video stories shipped (see §3b). |
+| Story analytics / reply / carousel | ✅ **DONE** — see §3b. |
 | Rate limiting / realtime architecture | Reviewed — in-memory per-IP buckets + SSE with Neon-backed poll fallback are sound for current scale. No change without KV/Durable Objects (also blocked by token scope). |
 | Feed image resize/performance | Reviewed — `resizeImageToDataUrl` already uses `createImageBitmap` off-main-thread w/ legacy fallback; healthy. |
 | Feed virtualization | Not a clear win at current post volume; skipped per "only if clear win". |
