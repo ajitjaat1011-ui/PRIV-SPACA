@@ -7262,12 +7262,18 @@ const ICE_SERVERS = {
 
 
 function initWebRTC() {
+  const callBtn = $('#rtcCallBtn');
+  const chooser = $('#rtcCallChooser');
   const btnAudio = $('#rtcAudioBtn');
   const btnVideo = $('#rtcVideoBtn');
   const btnAccept = $('#rtcAcceptBtn');
   const btnReject = $('#rtcRejectBtn');
-  if(btnAudio) btnAudio.addEventListener('click', () => startCall(false));
-  if(btnVideo) btnVideo.addEventListener('click', () => startCall(true));
+  if (callBtn && chooser) {
+    callBtn.addEventListener('click', (e) => { e.stopPropagation(); chooser.classList.toggle('hidden'); refreshIcons(); });
+    document.addEventListener('click', (e) => { if (!chooser.contains(e.target) && e.target !== callBtn) chooser.classList.add('hidden'); });
+  }
+  if(btnAudio) btnAudio.addEventListener('click', () => { if (chooser) chooser.classList.add('hidden'); startCall(false); });
+  if(btnVideo) btnVideo.addEventListener('click', () => { if (chooser) chooser.classList.add('hidden'); startCall(true); });
   if(btnAccept) btnAccept.addEventListener('click', acceptCall);
   if(btnReject) btnReject.addEventListener('click', endCall);
 }

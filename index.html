@@ -237,9 +237,12 @@
           </div>
         </div>
         <div class="chat-header-actions" style="display:flex; align-items:center; gap:6px; position:relative;">
-          <div id="rtcCallActions" style="display:none; gap: 6px; align-items:center;">
-            <button id="rtcAudioBtn" class="action-circle-btn" title="Audio Call"><i data-lucide="phone"></i></button>
-            <button id="rtcVideoBtn" class="action-circle-btn" title="Video Call"><i data-lucide="video"></i></button>
+          <div id="rtcCallActions" class="call-action-wrap" style="display:none;">
+            <button id="rtcCallBtn" class="action-circle-btn call-combo-btn" title="Call" aria-label="Call"><i data-lucide="phone-call"></i></button>
+            <div id="rtcCallChooser" class="call-chooser hidden">
+              <button id="rtcAudioBtn" type="button"><i data-lucide="phone"></i><span>Audio call</span></button>
+              <button id="rtcVideoBtn" type="button"><i data-lucide="video"></i><span>Video call</span></button>
+            </div>
           </div>
           <button type="button" id="chatMoreMenuBtn" class="action-circle-btn" title="More Options"><i data-lucide="more-vertical"></i></button>
           <div id="chatMoreDropdown" class="chat-dropdown hidden">
