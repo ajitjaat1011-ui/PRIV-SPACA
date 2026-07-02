@@ -6231,7 +6231,9 @@ async function renderOwnProfile() {
     const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
     const u = data.user || State.user;
     if (u && u.id === State.user.id) {
-      State.user = { ...State.user, ...u };
+      const localFollowers = Array.isArray(State.user.followers) ? State.user.followers : [];
+      const localFollowing = Array.isArray(State.user.following) ? State.user.following : [];
+      State.user = { ...State.user, ...u, followers: localFollowers, following: localFollowing };
       try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
     }
     const realUsername = u.username || State.user.username || cachedUsername;
@@ -6244,9 +6246,7 @@ async function renderOwnProfile() {
       mb.innerHTML = note ? escapeHtml(note.text).slice(0, 30) : 'Current<br/>mood...';
     }
     $('#profileBio').textContent = u.bio || '';
-    $('#statPosts').textContent = String(u.postsCount || 0);
-    $('#statFollowers').textContent = String(u.followers || 0);
-    $('#statFollowing').textContent = String(u.following || 0);
+    updateOwnProfileStatCounts(u);
     renderAvatar($('#profileAvatarPreview'), u);
     renderDiscoverPeople();
     // Grid
@@ -6275,6 +6275,93 @@ async function renderOwnProfile() {
   } catch (e) {
     console.warn('renderOwnProfile failed', e.message);
   }
+}
+
+
+function profileRelationLists() {
+  const meId = State.user && State.user.id;
+  const members = Array.isArray(State.members) ? State.members.filter(u => u && u.id !== meId) : [];
+  const followerIds = new Set(Array.isArray(State.user && State.user.followers) ? State.user.followers : []);
+  const followingIds = new Set(Array.isArray(State.user && State.user.following) ? State.user.following : []);
+  members.forEach(u => {
+    if (u.followsMe) followerIds.add(u.id);
+    if (u.iFollow) followingIds.add(u.id);
+  });
+  return {
+    followers: members.filter(u => followerIds.has(u.id) || u.followsMe),
+    following: members.filter(u => followingIds.has(u.id) || u.iFollow),
+  };
+}
+
+function updateOwnProfileStatCounts(profileUser) {
+  const lists = profileRelationLists();
+  const postsCount = Number(profileUser && profileUser.postsCount) || 0;
+  const followerCount = Math.max(Number(profileUser && profileUser.followers) || 0, lists.followers.length);
+  const followingCount = Math.max(Number(profileUser && profileUser.following) || 0, lists.following.length);
+  const sp = $('#statPosts'); if (sp) sp.textContent = String(postsCount);
+  const sf = $('#statFollowers'); if (sf) sf.textContent = String(followerCount);
+  const sg = $('#statFollowing'); if (sg) sg.textContent = String(followingCount);
+}
+
+async function openProfileRelationSheet(kind) {
+  if (!State.user) return;
+  if (!Array.isArray(State.members) || State.members.length === 0) {
+    await loadMembers();
+  }
+  const lists = profileRelationLists();
+  const rows = kind === 'following' ? lists.following : lists.followers;
+  const title = kind === 'following' ? 'Following' : 'Followers';
+  const existing = $('#profileRelationSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'profileRelationSheet';
+  sheet.className = 'sheet profile-relation-sheet';
+  sheet.innerHTML = `
+    <div class="sheet-card profile-relation-card">
+      <div class="sheet-handle"></div>
+      <div class="profile-relation-head">
+        <strong>${title}</strong>
+        <button type="button" class="ghost-btn" id="profileRelationClose" aria-label="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="profile-relation-list" id="profileRelationList"></div>
+    </div>`;
+  document.body.appendChild(sheet);
+  const list = $('#profileRelationList');
+  if (!rows.length) {
+    list.innerHTML = `<div class="profile-relation-empty">No ${title.toLowerCase()} yet</div>`;
+  } else {
+    rows.sort((a,b) => String(a.username || '').localeCompare(String(b.username || ''))).forEach(u => {
+      const row = document.createElement('div');
+      row.className = 'profile-relation-row';
+      row.innerHTML = `
+        <span class="avatar md"></span>
+        <button type="button" class="profile-relation-meta">
+          <strong>${escapeHtml(u.displayName || u.username || 'Member')}</strong>
+          <span>@${escapeHtml(u.username || '')}</span>
+        </button>
+        ${kind === 'following' ? '<button type="button" class="profile-relation-remove">Remove</button>' : ''}
+      `;
+      renderAvatar(row.querySelector('.avatar'), u, { showStatus: true, online: !!u.online });
+      row.querySelector('.profile-relation-meta').addEventListener('click', () => { sheet.remove(); openUserProfile(u.id); });
+      const rm = row.querySelector('.profile-relation-remove');
+      if (rm) rm.addEventListener('click', async () => {
+        rm.disabled = true; rm.textContent = 'Removing…';
+        try {
+          await api('/user/unfollow', { method: 'POST', body: { targetId: u.id } });
+          if (State.user.following) State.user.following = State.user.following.filter(id => id !== u.id);
+          const member = (State.members || []).find(m => m.id === u.id); if (member) member.iFollow = false;
+          row.remove();
+          updateOwnProfileStatCounts(State.user);
+          if (!list.querySelector('.profile-relation-row')) list.innerHTML = '<div class="profile-relation-empty">No following yet</div>';
+          renderDiscoverPeople();
+        } catch (e) { rm.disabled = false; rm.textContent = 'Remove'; toast(e.message || 'Remove failed', 'error'); }
+      });
+      list.appendChild(row);
+    });
+  }
+  $('#profileRelationClose').addEventListener('click', () => sheet.remove());
+  sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
+  refreshIcons();
 }
 
 function renderDiscoverPeople() {
@@ -6309,7 +6396,9 @@ function renderDiscoverPeople() {
       try {
         await api('/user/follow', { method: 'POST', body: { targetId: m.id } });
         if (!State.user.following) State.user.following = [];
-        State.user.following.push(m.id);
+        if (!State.user.following.includes(m.id)) State.user.following.push(m.id);
+        const member = (State.members || []).find(x => x.id === m.id); if (member) member.iFollow = true;
+        updateOwnProfileStatCounts(State.user);
         card.remove(); if (box.children.length === 0) sec.style.display = 'none';
         toast('Followed ' + (m.displayName || m.username));
       } catch (_) { fb.disabled = false; fb.textContent = 'Follow'; }
@@ -6374,7 +6463,12 @@ function bindProfileView() {
     _profileTab = t.dataset.grid;
     renderOwnProfile();
   }));
-  // Stat buttons → toggle which list shown? For now they're decorative
+  // Stat buttons: open followers/following lists.
+  $$('.stat-btn[data-stat]').forEach(btn => btn.addEventListener('click', () => {
+    const stat = btn.dataset.stat;
+    if (stat === 'followers' || stat === 'following') openProfileRelationSheet(stat);
+    else if (stat === 'posts') $('#profilePostsGrid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
 }
 
 // ===== Search =====
