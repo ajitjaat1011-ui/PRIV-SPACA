@@ -790,11 +790,25 @@ function renderMembers() {
     const meta = document.createElement('div');
     meta.className = 'meta';
     const isTyping = State.typingUsers.some(t => t.id === u.id);
-    const subCls = isTyping ? 'member-typing' : 'un';
-    const subTxt = isTyping ? 'typing…' : '@' + escapeHtml(u.username);
+    let subCls, subTxt;
+    if (isTyping) { subCls = 'member-typing'; subTxt = 'typing…'; }
+    else if (u.lastMessage && u.lastMessage.text) {
+      subCls = 'last-msg';
+      subTxt = (u.lastMessage.fromMe ? 'You: ' : '') + escapeHtml(u.lastMessage.text);
+    } else { subCls = 'un'; subTxt = '@' + escapeHtml(u.username); }
     meta.innerHTML = '<span class="nm">' + escapeHtml(u.displayName || u.username) + '</span>' +
       '<span class="' + subCls + '">' + subTxt + '</span>';
     li.appendChild(avatar); li.appendChild(meta);
+    // Right column: last-message time.
+    if (u.lastMessage && u.lastMessage.createdAt) {
+      const right = document.createElement('div');
+      right.className = 'row-right';
+      const t = document.createElement('span');
+      t.className = 'row-time';
+      t.textContent = (typeof timeAgo === 'function') ? timeAgo(u.lastMessage.createdAt) : '';
+      right.appendChild(t);
+      li.appendChild(right);
+    }
     li.addEventListener('click', () => openDM(u));
     return li;
   };
@@ -813,6 +827,115 @@ function renderMembers() {
     const reqEmpty = $('#requestsEmpty');
     if (reqEmpty) reqEmpty.classList.toggle('hidden', requests.length > 0);
   }
+
+  renderNotesRail();
+}
+
+// ===== Notes rail (Instagram-style 24h statuses on the DM inbox) =====
+function renderNotesRail() {
+  const rail = $('#notesRail');
+  if (!rail || _inboxSeg !== 'primary' || _inboxShowRequests) { if (rail) rail.innerHTML = ''; return; }
+  const meId = State.user && State.user.id;
+  const me = State.members.find(u => u.id === meId) || State.user;
+  const others = State.members.filter(u => u.id !== meId);
+  // Only show friends' notes for people who actually have an active note.
+  const withNotes = others.filter(u => u.note && u.note.text);
+  rail.innerHTML = '';
+
+  // My own cell first — tap to add/edit a note.
+  const mine = document.createElement('button');
+  mine.type = 'button';
+  mine.className = 'note-cell mine';
+  const myNote = me && me.note && me.note.text ? me.note.text : '';
+  const bubble = document.createElement('div');
+  bubble.className = 'note-bubble' + (myNote ? '' : ' placeholder');
+  bubble.textContent = myNote || 'Note…';
+  const avWrap = document.createElement('span');
+  avWrap.className = 'note-avatar avatar md';
+  renderAvatar(avWrap, me, { online: true });
+  if (!myNote) {
+    const add = document.createElement('span');
+    add.className = 'note-add-badge';
+    add.textContent = '+';
+    avWrap.appendChild(add);
+  }
+  const myName = document.createElement('span');
+  myName.className = 'note-name';
+  myName.textContent = 'Your note';
+  mine.appendChild(bubble); mine.appendChild(avWrap); mine.appendChild(myName);
+  mine.addEventListener('click', openNoteModal);
+  rail.appendChild(mine);
+
+  // Friends' notes.
+  withNotes.forEach(u => {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'note-cell';
+    const b = document.createElement('div');
+    b.className = 'note-bubble';
+    b.textContent = u.note.text;
+    const av = document.createElement('span');
+    av.className = 'note-avatar avatar md';
+    renderAvatar(av, u, { showStatus: true, online: !!u.online });
+    const nm = document.createElement('span');
+    nm.className = 'note-name';
+    nm.textContent = u.displayName || u.username;
+    cell.appendChild(b); cell.appendChild(av); cell.appendChild(nm);
+    // Tapping a friend's note opens a DM with them.
+    cell.addEventListener('click', () => openDM(u));
+    rail.appendChild(cell);
+  });
+  refreshIcons();
+}
+
+function openNoteModal() {
+  const modal = $('#noteModal');
+  if (!modal) return;
+  const meId = State.user && State.user.id;
+  const me = State.members.find(u => u.id === meId) || State.user;
+  const cur = me && me.note && me.note.text ? me.note.text : '';
+  const input = $('#noteInput');
+  const preview = $('#notePreviewBubble');
+  if (input) input.value = cur;
+  if (preview) preview.textContent = cur || "What's on your mind?";
+  const clearBtn = $('#noteClearBtn');
+  if (clearBtn) clearBtn.style.display = cur ? '' : 'none';
+  modal.classList.remove('hidden');
+  const card = modal.querySelector('.sheet-card');
+  if (card) motionAnimate(card, { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] }, { duration: 0.34, easing: [0.2, 0.85, 0.15, 1] });
+  if (input) setTimeout(() => input.focus(), 120);
+  refreshIcons();
+}
+function closeNoteModal() { const m = $('#noteModal'); if (m) m.classList.add('hidden'); }
+
+async function saveNote(text) {
+  try {
+    const res = await api('/user/note', { method: 'POST', body: { text: text || '' } });
+    // Reflect immediately in local state.
+    const meId = State.user && State.user.id;
+    const me = State.members.find(u => u.id === meId);
+    if (me) me.note = res.note || null;
+    if (State.user) State.user.note = res.note || null;
+    _lastMembersSig = ''; // force rail rerender
+    renderNotesRail();
+    toast(text ? 'Note shared' : 'Note cleared', 'success');
+  } catch (e) {
+    toast('Could not save note: ' + (e.message || ''), 'error');
+  }
+}
+
+function bindNotes() {
+  const close = $('#noteClose');
+  if (close) close.addEventListener('click', closeNoteModal);
+  const modal = $('#noteModal');
+  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeNoteModal(); });
+  const input = $('#noteInput');
+  const preview = $('#notePreviewBubble');
+  if (input && preview) input.addEventListener('input', () => { preview.textContent = input.value.trim() || "What's on your mind?"; });
+  const share = $('#noteShareBtn');
+  if (share) share.addEventListener('click', () => { const v = (input && input.value || '').trim(); saveNote(v); closeNoteModal(); });
+  const clear = $('#noteClearBtn');
+  if (clear) clear.addEventListener('click', () => { saveNote(''); closeNoteModal(); });
 }
 function openDM(user) {
   State.currentRoom = {
@@ -6068,7 +6191,7 @@ function boot() {
   // handler function) can't crash the whole boot sequence and silently skip
   // session restore below — that was causing "logged out on every refresh".
   const bindSteps = [
-    bindTabs, bindRooms, bindInboxSegment, bindComposer, bindFeedComposer, bindProfile,
+    bindTabs, bindRooms, bindInboxSegment, bindNotes, bindComposer, bindFeedComposer, bindProfile,
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
     bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
