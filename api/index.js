@@ -534,6 +534,28 @@ async function tursoEnsure() {
   await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_user_id ON ps_posts (user_id)`);
   await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_created_at ON ps_posts (created_at DESC)`);
   await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_story ON ps_posts (story, story_expires_at)`);
+  await c.execute(`CREATE TABLE IF NOT EXISTS ps_notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    from_user_id TEXT,
+    kind TEXT,
+    created_at INTEGER NOT NULL,
+    seen_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    data_json TEXT NOT NULL
+  )`);
+  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_notifications_user_created ON ps_notifications (user_id, created_at DESC)`);
+  await c.execute(`CREATE TABLE IF NOT EXISTS ps_dm_index (
+    owner_user_id TEXT NOT NULL,
+    peer_user_id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    from_me INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    data_json TEXT NOT NULL,
+    PRIMARY KEY (owner_user_id, peer_user_id)
+  )`);
+  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_dm_index_owner_created ON ps_dm_index (owner_user_id, created_at DESC)`);
   await c.execute(`CREATE TABLE IF NOT EXISTS ps_meta (
     key TEXT PRIMARY KEY,
     value TEXT,
@@ -561,6 +583,47 @@ async function syncTursoMirror(db) {
       await c.execute({
         sql: 'INSERT INTO ps_posts (id, user_id, created_at, deleted_at, story, story_expires_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         args: [p.id, p.userId, Number(p.createdAt || 0), p.deletedAt ? Number(p.deletedAt) : null, p.story ? 1 : 0, p.storyExpiresAt ? Number(p.storyExpiresAt) : null, ts, JSON.stringify(p)],
+      });
+    }
+    await c.execute('DELETE FROM ps_notifications');
+    for (const n of src.notifications || []) {
+      await c.execute({
+        sql: 'INSERT INTO ps_notifications (id, user_id, from_user_id, kind, created_at, seen_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        args: [n.id, n.userId, n.fromUserId || null, n.kind || null, Number(n.createdAt || 0), n.seenAt ? Number(n.seenAt) : null, ts, JSON.stringify(n)],
+      });
+    }
+    const dmIndex = new Map();
+    for (const m of src.messages || []) {
+      if (!m || m.deletedAt || typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
+      const parts = m.roomId.slice(3).split(':').filter(Boolean);
+      if (parts.length !== 2) continue;
+      for (const ownerId of parts) {
+        const peerId = parts.find(id => id !== ownerId);
+        if (!peerId) continue;
+        const key = ownerId + '|' + peerId;
+        const prev = dmIndex.get(key);
+        if (prev && Number(prev.createdAt || 0) >= Number(m.createdAt || 0)) continue;
+        let preview;
+        if (m.encrypted) preview = '🔒 Encrypted message';
+        else if (m.storyReply) preview = 'Replied to a story';
+        else if (m.imageUrl) preview = '📷 Photo';
+        else preview = String(m.text || '').slice(0, 60);
+        dmIndex.set(key, {
+          ownerUserId: ownerId,
+          peerUserId: peerId,
+          roomId: m.roomId,
+          messageId: m.id,
+          createdAt: Number(m.createdAt || 0),
+          fromMe: m.userId === ownerId,
+          text: preview,
+        });
+      }
+    }
+    await c.execute('DELETE FROM ps_dm_index');
+    for (const row of dmIndex.values()) {
+      await c.execute({
+        sql: 'INSERT INTO ps_dm_index (owner_user_id, peer_user_id, room_id, created_at, from_me, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        args: [row.ownerUserId, row.peerUserId, row.roomId, row.createdAt, row.fromMe ? 1 : 0, ts, JSON.stringify(row)],
       });
     }
     await c.execute({
@@ -604,6 +667,23 @@ async function fetchTursoUserById(userId) {
   const row = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1', args: [userId] }).catch(() => ({ rows: [] }));
   if (!row.rows || row.rows.length === 0) return null;
   return safeJson(String(row.rows[0].data_json || '{}'), null);
+}
+async function fetchTursoNotifications(userId) {
+  if (!isTursoConfigured() || !userId) return [];
+  await tursoEnsure();
+  const rs = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200', args: [userId] }).catch(() => ({ rows: [] }));
+  return (rs.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean);
+}
+async function fetchTursoDmIndex(ownerUserId) {
+  if (!isTursoConfigured() || !ownerUserId) return {};
+  await tursoEnsure();
+  const rs = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_dm_index WHERE owner_user_id = ? ORDER BY created_at DESC', args: [ownerUserId] }).catch(() => ({ rows: [] }));
+  const out = {};
+  for (const row of (rs.rows || [])) {
+    const item = safeJson(String(row.data_json || '{}'), null);
+    if (item && item.peerUserId) out[item.peerUserId] = { text: item.text || '', createdAt: Number(item.createdAt || 0), fromMe: !!item.fromMe };
+  }
+  return out;
 }
 
 async function fetchDatabase() {
@@ -1391,21 +1471,24 @@ app.get('/api/users', authMiddleware, async (req, res) => {
     }
   });
   const myFollowing = new Set((me && me.following) || []);
-  // Build a preview of the most-recent DM message between me and each peer.
-  const lastByPeer = {};
-  for (const m of (db.messages || [])) {
-    if (typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
-    const parts = m.roomId.slice(3).split(':');
-    if (!parts.includes(req.userId)) continue;
-    const peer = parts.find(id => id !== req.userId);
-    if (!peer) continue;
-    if (!lastByPeer[peer] || (m.createdAt || 0) > (lastByPeer[peer].createdAt || 0)) {
-      let preview;
-      if (m.encrypted) preview = '🔒 Encrypted message';
-      else if (m.storyReply) preview = 'Replied to a story';
-      else if (m.imageUrl) preview = '📷 Photo';
-      else preview = String(m.text || '').slice(0, 60);
-      lastByPeer[peer] = { text: preview, createdAt: m.createdAt || 0, fromMe: m.userId === req.userId };
+  let lastByPeer = {};
+  if (isTursoConfigured()) {
+    lastByPeer = await fetchTursoDmIndex(req.userId);
+  } else {
+    for (const m of (db.messages || [])) {
+      if (typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
+      const parts = m.roomId.slice(3).split(':');
+      if (!parts.includes(req.userId)) continue;
+      const peer = parts.find(id => id !== req.userId);
+      if (!peer) continue;
+      if (!lastByPeer[peer] || (m.createdAt || 0) > (lastByPeer[peer].createdAt || 0)) {
+        let preview;
+        if (m.encrypted) preview = '🔒 Encrypted message';
+        else if (m.storyReply) preview = 'Replied to a story';
+        else if (m.imageUrl) preview = '📷 Photo';
+        else preview = String(m.text || '').slice(0, 60);
+        lastByPeer[peer] = { text: preview, createdAt: m.createdAt || 0, fromMe: m.userId === req.userId };
+      }
     }
   }
   const list = sourceUsers
@@ -1806,13 +1889,12 @@ function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
 // GET /api/notifications — list mine, newest first
 app.get('/api/notifications', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
-  const mine = (db.notifications || [])
-    .filter(n => n.userId === req.userId)
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 200);
+  const mine = isTursoConfigured()
+    ? await fetchTursoNotifications(req.userId)
+    : (db.notifications || []).filter(n => n.userId === req.userId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
   // Enrich with current author data when available
   const enriched = mine.map(n => {
-    const author = db.users.find(u => u.id === n.fromUserId);
+    const author = (db.users || []).find(u => u.id === n.fromUserId);
     return {
       ...n,
       from: author ? sanitizeUser(author) : (n.fromSnapshot || { id: n.fromUserId, displayName: 'Member', username: 'member' })
