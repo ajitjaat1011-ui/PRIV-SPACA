@@ -500,9 +500,9 @@ function sanitizeUser(u) {
 // A "note" is a short 24h status (Instagram-style). Returns null once expired.
 function activeNote(u) {
   const n = u && u.note;
-  if (!n || !n.text) return null;
+  if (!n || (!n.text && !n.music)) return null;
   if (n.expiresAt && n.expiresAt <= nowMs()) return null;
-  return { text: String(n.text).slice(0, 60), createdAt: n.createdAt || 0, expiresAt: n.expiresAt || 0 };
+  return { text: String(n.text || '').slice(0, 60), music: n.music || null, createdAt: n.createdAt || 0, expiresAt: n.expiresAt || 0 };
 }
 
 function isValidEmail(s) {
@@ -1123,11 +1123,22 @@ app.post('/api/user/note', authMiddleware, async (req, res) => {
   const u = db.users.find(x => x.id === req.userId);
   if (!u) return res.status(404).json({ error: 'Not found' });
   const text = sanitizeText((req.body || {}).text || '', 60).trim();
-  if (!text) { u.note = null; }
-  else { u.note = { text, createdAt: nowMs(), expiresAt: nowMs() + 24 * 3600 * 1000 }; }
+  const music = cleanNoteMusic((req.body || {}).music);
+  if (!text && !music) { u.note = null; }
+  else { u.note = { text, music, createdAt: nowMs(), expiresAt: nowMs() + 24 * 3600 * 1000 }; }
   await saveDatabase(db, false);
   res.json({ ok: true, note: activeNote(u) });
 });
+// Normalize an optional song attached to a note.
+function cleanNoteMusic(m) {
+  if (!m || typeof m !== 'object' || !m.title) return null;
+  return {
+    title: String(m.title).slice(0, 80),
+    artist: String(m.artist || '').slice(0, 80),
+    audio: (typeof m.audio === 'string' && /^https?:/i.test(m.audio)) ? m.audio.slice(0, 1024) : '',
+    art: (typeof m.art === 'string' && /^https?:/i.test(m.art)) ? m.art.slice(0, 1024) : '',
+  };
+}
 
 app.post('/api/user/typing', authMiddleware, async (req, res) => {
   const { roomId } = req.body || {};

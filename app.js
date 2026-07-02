@@ -723,9 +723,28 @@ function switchTab(tab) {
     $('#profileViewMode').classList.remove('hidden');
     renderOwnProfile();
   }
+  updateTopbarHeader(tab);
   if (activeView) springIn(activeView, { duration: 0.28 });
   refreshIcons();
   if (typeof updateNotifDots === 'function') updateNotifDots();
+}
+
+// On the chat/DM tabs, show the Instagram-style username header instead of
+// the PRIV SPACA wordmark.
+function updateTopbarHeader(tab) {
+  const brand = $('#brandWordmark');
+  const igH = $('#igUsernameHeader');
+  const igT = $('#igUsernameText');
+  const showUsername = (tab === 'chat' || tab === 'groups');
+  if (showUsername && State.user) {
+    if (igT) igT.textContent = State.user.username || State.user.displayName || 'you';
+    if (brand) brand.classList.add('hidden');
+    if (igH) igH.classList.remove('hidden');
+  } else {
+    if (brand) brand.classList.remove('hidden');
+    if (igH) igH.classList.add('hidden');
+  }
+  if (typeof refreshIcons === 'function') refreshIcons();
 }
 
 // ====== Rooms & Members ======
@@ -838,54 +857,67 @@ function renderNotesRail() {
   const meId = State.user && State.user.id;
   const me = State.members.find(u => u.id === meId) || State.user;
   const others = State.members.filter(u => u.id !== meId);
-  // Only show friends' notes for people who actually have an active note.
-  const withNotes = others.filter(u => u.note && u.note.text);
+  // Only show friends' notes for people who actually have an active note
+  // (text OR an attached song). Empty/expired notes never render.
+  const noteHas = (u) => u.note && (u.note.text || (u.note.music && u.note.music.title));
+  const withNotes = others.filter(noteHas);
   rail.innerHTML = '';
 
-  // My own cell first — tap to add/edit a note.
-  const mine = document.createElement('button');
-  mine.type = 'button';
-  mine.className = 'note-cell mine';
-  const myNote = me && me.note && me.note.text ? me.note.text : '';
-  const bubble = document.createElement('div');
-  bubble.className = 'note-bubble' + (myNote ? '' : ' placeholder');
-  bubble.textContent = myNote || 'Note…';
-  const avWrap = document.createElement('span');
-  avWrap.className = 'note-avatar avatar md';
-  renderAvatar(avWrap, me, { online: true });
-  if (!myNote) {
-    const add = document.createElement('span');
-    add.className = 'note-add-badge';
-    add.textContent = '+';
-    avWrap.appendChild(add);
-  }
-  const myName = document.createElement('span');
-  myName.className = 'note-name';
-  myName.textContent = 'Your note';
-  mine.appendChild(bubble); mine.appendChild(avWrap); mine.appendChild(myName);
-  mine.addEventListener('click', openNoteModal);
-  rail.appendChild(mine);
-
-  // Friends' notes.
-  withNotes.forEach(u => {
+  // Build one note cell (used for both me and friends).
+  const buildNoteCell = (u, isMe) => {
     const cell = document.createElement('button');
     cell.type = 'button';
-    cell.className = 'note-cell';
-    const b = document.createElement('div');
-    b.className = 'note-bubble';
-    b.textContent = u.note.text;
-    const av = document.createElement('span');
-    av.className = 'note-avatar avatar md';
-    renderAvatar(av, u, { showStatus: true, online: !!u.online });
+    cell.className = 'note-cell' + (isMe ? ' mine' : '');
+    const note = u && u.note;
+    const hasNote = isMe ? !!noteHas(u) : true;
+    const music = note && note.music && note.music.title ? note.music : null;
+    const bubble = document.createElement('div');
+    bubble.className = 'note-bubble' + (isMe && !hasNote ? ' placeholder' : '');
+    if (music) {
+      const song = document.createElement('span');
+      song.className = 'note-bubble-song';
+      song.textContent = '♪ ' + music.title;
+      bubble.appendChild(song);
+    }
+    const txt = document.createElement('span');
+    txt.className = 'note-bubble-txt';
+    txt.textContent = (note && note.text) ? note.text : (isMe && !hasNote ? 'Note…' : (music ? music.artist || '♪' : ''));
+    bubble.appendChild(txt);
+    const avWrap = document.createElement('span');
+    avWrap.className = 'note-avatar avatar md' + (music ? ' has-music' : '');
+    renderAvatar(avWrap, u, { online: isMe ? true : !!u.online, showStatus: !isMe });
+    if (music) {
+      const mb = document.createElement('span'); mb.className = 'note-music-badge'; mb.textContent = '♪';
+      avWrap.appendChild(mb);
+    } else if (isMe && !hasNote) {
+      const add = document.createElement('span'); add.className = 'note-add-badge'; add.textContent = '+';
+      avWrap.appendChild(add);
+    }
     const nm = document.createElement('span');
     nm.className = 'note-name';
-    nm.textContent = u.displayName || u.username;
-    cell.appendChild(b); cell.appendChild(av); cell.appendChild(nm);
-    // Tapping a friend's note opens a DM with them.
-    cell.addEventListener('click', () => openDM(u));
-    rail.appendChild(cell);
-  });
+    nm.textContent = isMe ? 'Your note' : (u.displayName || u.username);
+    cell.appendChild(bubble); cell.appendChild(avWrap); cell.appendChild(nm);
+    if (isMe) cell.addEventListener('click', openNoteModal);
+    else cell.addEventListener('click', () => { if (music && music.audio) playNotePreview(music.audio); openDM(u); });
+    return cell;
+  };
+
+  rail.appendChild(buildNoteCell(me, true));
+  withNotes.forEach(u => rail.appendChild(buildNoteCell(u, false)));
   refreshIcons();
+}
+
+// Play a short preview of a note's song (tap-to-play, Instagram-style).
+let _notePreviewAudio = null;
+function playNotePreview(url) {
+  if (!url) return;
+  try {
+    if (!_notePreviewAudio) _notePreviewAudio = $('#notePreviewAudio') || new Audio();
+    if (_notePreviewAudio.src === url && !_notePreviewAudio.paused) { _notePreviewAudio.pause(); return; }
+    _notePreviewAudio.src = url;
+    _notePreviewAudio.currentTime = 0;
+    _notePreviewAudio.play().catch(() => {});
+  } catch (_) {}
 }
 
 function openNoteModal() {
@@ -893,34 +925,112 @@ function openNoteModal() {
   if (!modal) return;
   const meId = State.user && State.user.id;
   const me = State.members.find(u => u.id === meId) || State.user;
-  const cur = me && me.note && me.note.text ? me.note.text : '';
+  const curNote = me && me.note ? me.note : null;
+  const cur = curNote && curNote.text ? curNote.text : '';
+  _noteDraftMusic = (curNote && curNote.music && curNote.music.title) ? Object.assign({}, curNote.music) : null;
   const input = $('#noteInput');
-  const preview = $('#notePreviewBubble');
   if (input) input.value = cur;
-  if (preview) preview.textContent = cur || "What's on your mind?";
+  updateNotePreview();
+  updateNoteMusicRow();
+  const picker = $('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+  const chev = $('#noteMusicChev'); if (chev) chev.style.transform = '';
   const clearBtn = $('#noteClearBtn');
-  if (clearBtn) clearBtn.style.display = cur ? '' : 'none';
+  if (clearBtn) clearBtn.style.display = (cur || _noteDraftMusic) ? '' : 'none';
   modal.classList.remove('hidden');
   const card = modal.querySelector('.sheet-card');
   if (card) motionAnimate(card, { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] }, { duration: 0.34, easing: [0.2, 0.85, 0.15, 1] });
   if (input) setTimeout(() => input.focus(), 120);
   refreshIcons();
 }
-function closeNoteModal() { const m = $('#noteModal'); if (m) m.classList.add('hidden'); }
+function closeNoteModal() {
+  const m = $('#noteModal'); if (m) m.classList.add('hidden');
+  try { if (_notePreviewAudio && !_notePreviewAudio.paused) _notePreviewAudio.pause(); } catch (_) {}
+}
 
-async function saveNote(text) {
+async function saveNote(text, music) {
   try {
-    const res = await api('/user/note', { method: 'POST', body: { text: text || '' } });
-    // Reflect immediately in local state.
+    const body = { text: text || '' };
+    if (music && music.title) body.music = { title: music.title, artist: music.artist || '', audio: music.audio || '', art: music.art || '' };
+    const res = await api('/user/note', { method: 'POST', body });
     const meId = State.user && State.user.id;
     const me = State.members.find(u => u.id === meId);
     if (me) me.note = res.note || null;
     if (State.user) State.user.note = res.note || null;
-    _lastMembersSig = ''; // force rail rerender
+    _lastMembersSig = '';
     renderNotesRail();
-    toast(text ? 'Note shared' : 'Note cleared', 'success');
+    toast((text || (music && music.title)) ? 'Note shared' : 'Note cleared', 'success');
   } catch (e) {
     toast('Could not save note: ' + (e.message || ''), 'error');
+  }
+}
+
+// ---- Note editor: live preview + music picker (reuses iTunes search) ----
+let _noteDraftMusic = null;
+let _noteSearchTimer = null;
+function updateNotePreview() {
+  const input = $('#noteInput');
+  const txt = $('#notePreviewText');
+  const song = $('#notePreviewSong');
+  const v = (input && input.value || '').trim();
+  if (txt) txt.textContent = v || (_noteDraftMusic ? (_noteDraftMusic.artist || '') : "What's on your mind?");
+  if (song) {
+    if (_noteDraftMusic && _noteDraftMusic.title) { song.textContent = _noteDraftMusic.title; song.classList.remove('hidden'); }
+    else song.classList.add('hidden');
+  }
+}
+function updateNoteMusicRow() {
+  const title = $('#noteMusicTitle');
+  const artist = $('#noteMusicArtist');
+  const remove = $('#noteMusicRemove');
+  if (_noteDraftMusic && _noteDraftMusic.title) {
+    if (title) title.textContent = _noteDraftMusic.title;
+    if (artist) artist.textContent = _noteDraftMusic.artist || 'Song attached';
+    if (remove) remove.classList.remove('hidden');
+  } else {
+    if (title) title.textContent = 'Add music';
+    if (artist) artist.textContent = 'Search a song for your note';
+    if (remove) remove.classList.add('hidden');
+  }
+}
+function renderNoteSongResults(list) {
+  const box = $('#noteSongList');
+  if (!box) return;
+  if (!list || !list.length) { box.innerHTML = '<div class="note-song-empty">Type to search songs…</div>'; return; }
+  box.innerHTML = '';
+  list.forEach(s => {
+    const item = document.createElement('div');
+    item.className = 'note-song-item';
+    const art = document.createElement('img'); art.className = 'nsi-art'; art.src = s.art || ''; art.alt = '';
+    const m = document.createElement('div'); m.className = 'nsi-m';
+    m.innerHTML = '<div class="nsi-t"></div><div class="nsi-a"></div>';
+    m.querySelector('.nsi-t').textContent = s.title;
+    m.querySelector('.nsi-a').textContent = s.artist;
+    const play = document.createElement('span'); play.className = 'nsi-play'; play.textContent = '▶';
+    play.addEventListener('click', (e) => { e.stopPropagation(); if (s.audio) playNotePreview(s.audio); });
+    item.appendChild(art); item.appendChild(m); item.appendChild(play);
+    item.addEventListener('click', () => {
+      _noteDraftMusic = { title: s.title, artist: s.artist, audio: s.audio || '', art: s.art || '' };
+      updateNoteMusicRow(); updateNotePreview();
+      if (s.audio) playNotePreview(s.audio);
+      const picker = $('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+      const clearBtn = $('#noteClearBtn'); if (clearBtn) clearBtn.style.display = '';
+    });
+    box.appendChild(item);
+  });
+}
+async function searchNoteSongs(q) {
+  const box = $('#noteSongList');
+  if (!q || !q.trim()) { renderNoteSongResults([]); return; }
+  try {
+    const res = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(q) + '&media=music&limit=15');
+    const data = await res.json();
+    const list = (data.results || []).filter(r => r.previewUrl).map(r => ({
+      title: r.trackName || 'Song', artist: r.artistName || 'Artist',
+      art: r.artworkUrl100 || '', audio: r.previewUrl,
+    }));
+    renderNoteSongResults(list);
+  } catch (e) {
+    if (box) box.innerHTML = '<div class="note-song-empty">Search failed — check your connection.</div>';
   }
 }
 
@@ -930,13 +1040,34 @@ function bindNotes() {
   const modal = $('#noteModal');
   if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeNoteModal(); });
   const input = $('#noteInput');
-  const preview = $('#notePreviewBubble');
-  if (input && preview) input.addEventListener('input', () => { preview.textContent = input.value.trim() || "What's on your mind?"; });
+  if (input) input.addEventListener('input', updateNotePreview);
   const share = $('#noteShareBtn');
-  if (share) share.addEventListener('click', () => { const v = (input && input.value || '').trim(); saveNote(v); closeNoteModal(); });
+  if (share) share.addEventListener('click', () => { const v = (input && input.value || '').trim(); saveNote(v, _noteDraftMusic); closeNoteModal(); });
   const clear = $('#noteClearBtn');
-  if (clear) clear.addEventListener('click', () => { saveNote(''); closeNoteModal(); });
+  if (clear) clear.addEventListener('click', () => { _noteDraftMusic = null; saveNote('', null); closeNoteModal(); });
+  // Music row toggles the song picker.
+  const musicRow = $('#noteMusicRow');
+  if (musicRow) musicRow.addEventListener('click', (e) => {
+    if (e.target && e.target.id === 'noteMusicRemove') return;
+    const picker = $('#noteSongPicker'); if (!picker) return;
+    const show = picker.classList.contains('hidden');
+    picker.classList.toggle('hidden', !show);
+    const chev = $('#noteMusicChev'); if (chev) chev.style.transform = show ? 'rotate(180deg)' : '';
+    if (show) { renderNoteSongResults([]); const s = $('#noteSongSearch'); if (s) setTimeout(() => s.focus(), 80); }
+  });
+  const removeBtn = $('#noteMusicRemove');
+  if (removeBtn) removeBtn.addEventListener('click', (e) => {
+    e.stopPropagation(); _noteDraftMusic = null; updateNoteMusicRow(); updateNotePreview();
+    const clearBtn = $('#noteClearBtn'); if (clearBtn && !(input && input.value.trim())) clearBtn.style.display = 'none';
+  });
+  const searchInp = $('#noteSongSearch');
+  if (searchInp) searchInp.addEventListener('input', () => {
+    clearTimeout(_noteSearchTimer);
+    const q = searchInp.value;
+    _noteSearchTimer = setTimeout(() => searchNoteSongs(q), 350);
+  });
 }
+
 function openDM(user) {
   State.currentRoom = {
     id: dmRoomId(State.user.id, user.id),
