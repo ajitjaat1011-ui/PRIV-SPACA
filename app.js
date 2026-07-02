@@ -1629,10 +1629,35 @@ async function _e2eDecryptInPlace(m, peerId) {
 let lastMessagesScrollAtBottom = true;
 let lastMessagesSignature = '';
 
+function dedupeMessagesById(messages) {
+  const seen = new Set();
+  const out = [];
+  for (const m of messages || []) {
+    if (!m || !m.id) continue;
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    out.push(m);
+  }
+  return out;
+}
+
+function upsertMessageInState(msg) {
+  if (!msg || !msg.id) return false;
+  const idx = State.messages.findIndex(m => m && m.id === msg.id);
+  if (idx >= 0) {
+    // Realtime can arrive before /messages/send finishes. Merge instead of
+    // pushing so slow voice-note sends never appear as two bubbles temporarily.
+    State.messages[idx] = { ...State.messages[idx], ...msg };
+    return false;
+  }
+  State.messages.push(msg);
+  return true;
+}
+
 async function loadMessages(scrollEnd) {
   try {
     const data = await api('/messages?roomId=' + encodeURIComponent(State.currentRoom.id));
-    const newMsgs = data.messages || [];
+    const newMsgs = dedupeMessagesById(data.messages || []);
     const sig = newMsgs.map(m => m.id).join('|');
     if (sig === lastMessagesSignature && !scrollEnd) return; // skip rerender if unchanged
     lastMessagesSignature = sig;
@@ -2092,7 +2117,8 @@ function bindComposer() {
         _e2eDecryptCache.set(data.message.id, text);
         data.message._decrypted = text;
       }
-      State.messages.push(data.message);
+      upsertMessageInState(data.message);
+      State.messages = dedupeMessagesById(State.messages);
       lastMessagesSignature = '';
       renderMessages(true);
     } catch (err) {
@@ -2472,12 +2498,12 @@ function handleRealtimeEvent(type, evt) {
     const msg = data.message; if (!msg) return;
     // Only render if user is currently viewing that room
     if (msg.roomId === State.currentRoom.id) {
-      // Append if not already present
-      if (!State.messages.some(m => m.id === msg.id)) {
-        State.messages.push(msg);
-        lastMessagesSignature = '';
-        renderMessages(false);
-      }
+      // Merge by id. This avoids the brief duplicate bubble that can happen
+      // when SSE receives the same voice note before the send request resolves.
+      upsertMessageInState(msg);
+      State.messages = dedupeMessagesById(State.messages);
+      lastMessagesSignature = '';
+      renderMessages(false);
     }
     // Bust message cache so a manual switch will reload fresh
     if (_apiCache) {
