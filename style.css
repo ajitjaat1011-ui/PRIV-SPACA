@@ -243,16 +243,10 @@ img{user-select:none;-webkit-user-drag:none}
   height:100%;background:var(--bg);animation:fade-in .3s ease;
   width:100%;max-width:100vw;overflow-x:hidden;box-sizing:border-box;
 }
-/* ===== Glass UI Topbar ===== */
 .topbar{
   display:flex;justify-content:space-between;align-items:center;
-  padding:0 16px;
-  background:rgba(22,30,46,0.65);
-  backdrop-filter:blur(24px) saturate(180%);
-  -webkit-backdrop-filter:blur(24px) saturate(180%);
-  border-bottom:1px solid rgba(255,255,255,0.14);
-  box-shadow:0 4px 24px rgba(0,0,0,0.15);
-  z-index:10;height:56px;
+  padding:0 16px;background:var(--bg-2);border-bottom:1px solid var(--line);
+  z-index:5;height:54px;
 }
 .topbar-left-icon{justify-self:start}
 .topbar > .ghost-btn:last-child{justify-self:end}
@@ -264,54 +258,17 @@ img{user-select:none;-webkit-user-drag:none}
 .ig-username-header #igUsernameText{font-weight:800;font-size:20px;letter-spacing:-.3px;color:var(--text);max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ig-username-chev{width:16px;height:16px;color:var(--muted)}
 .ig-username-dot{width:8px;height:8px;border-radius:50%;background:#ff3040}
-.brand-wordmark-btn.hidden{display:none !important}
+.brand-wordmark.hidden{display:none !important}
 
-/* ===== Redesigned Glass UI Topbar Brand Capsule ===== */
-.brand-wordmark-btn{
-  position:relative;overflow:hidden;
-  background:linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.05) 100%);
-  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-  border:1px solid rgba(255,255,255,0.28);
-  box-shadow:0 6px 20px rgba(0,0,0,0.18), inset 0 1px 1px rgba(255,255,255,0.45);
-  padding:5px 14px 5px 6px;margin-left:-2px;
-  display:flex;align-items:center;gap:10px;cursor:pointer;
-  transition:all 0.3s cubic-bezier(0.34,1.56,0.64,1);
-  border-radius:9999px;user-select:none;
-}
-.brand-wordmark-btn:hover{
-  background:linear-gradient(135deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.12) 100%);
-  border-color:rgba(255,255,255,0.45);
-  box-shadow:0 10px 28px rgba(0,162,255,0.25), inset 0 1px 2px rgba(255,255,255,0.6);
-  transform:translateY(-1px) scale(1.04);
-}
-.brand-wordmark-btn:active{
-  transform:translateY(1px) scale(0.95);
-  box-shadow:0 4px 12px rgba(0,0,0,0.2);
-}
-.brand-wordmark-btn::after{
-  content:"";position:absolute;top:0;left:-100%;width:50%;height:100%;
-  background:linear-gradient(90deg,transparent,rgba(255,255,255,0.32),transparent);
-  transform:skewX(-25deg);animation:glassShine 6s infinite;pointer-events:none;
-}
-@keyframes glassShine{
-  0%,75%{left:-100%}
-  100%{left:160%}
-}
-
-.app-logo-icon{
-  width:32px;height:32px;border-radius:50%;
-  background:linear-gradient(135deg,#ff007f 0%,#7928ca 50%,#0084ff 100%);
-  border:1.5px solid rgba(255,255,255,0.55);
-  display:flex;align-items:center;justify-content:center;
-  box-shadow:0 4px 14px rgba(121,40,202,0.45), inset 0 1px 2px rgba(255,255,255,0.75);
-  flex-shrink:0;transition:transform 0.35s cubic-bezier(0.34,1.56,0.64,1);
-}
-.brand-wordmark-btn:hover .app-logo-icon{transform:rotate(-12deg) scale(1.1)}
-
-.brand-text{
-  font-family:'Dancing Script', cursive;font-weight:700;font-size:29px;line-height:1;
-  letter-spacing:0.4px;color:var(--text);
-  text-shadow:0 2px 6px rgba(0,0,0,0.25);
+/* IG-style cursive wordmark, centered */
+.brand-wordmark{
+  font-family:'Dancing Script', 'Inter', cursive;
+  font-weight:700;font-size:30px;line-height:1;
+  color:var(--text);letter-spacing:.2px;
+  text-align:center;justify-self:center;
+  background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+  text-shadow:none;user-select:none;padding:0 4px;
 }
 .topbar .ghost-btn{padding:8px;color:var(--text)}
 .topbar .ghost-btn i{width:24px;height:24px;stroke-width:1.8}
