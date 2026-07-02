@@ -3013,6 +3013,7 @@ function renderPosts() {
 
   _previousPostIds = currentIds;
   refreshIcons();
+  syncPostMusicUI();
 }
 
 function attachScratchOverlay(wrap) {
@@ -3108,6 +3109,65 @@ function attachScratchOverlay(wrap) {
   window.addEventListener('touchend', end);
 }
 
+let _postMusicPlayer = null;
+const _postMusicState = { postId: null, src: '', title: '', artist: '' };
+function getPostMusicPlayer() {
+  if (_postMusicPlayer) return _postMusicPlayer;
+  _postMusicPlayer = new Audio();
+  _postMusicPlayer.preload = 'metadata';
+  _postMusicPlayer.playsInline = true;
+  if (!_postMusicPlayer.__bound) {
+    _postMusicPlayer.__bound = true;
+    ['play', 'pause', 'ended'].forEach(evt => _postMusicPlayer.addEventListener(evt, () => syncPostMusicUI()));
+  }
+  return _postMusicPlayer;
+}
+function isPostMusicPlaying() {
+  return !!(_postMusicPlayer && !_postMusicPlayer.paused && !_postMusicPlayer.ended && _postMusicState.postId);
+}
+function syncPostMusicUI() {
+  const playing = isPostMusicPlaying();
+  $$('.post-card').forEach(card => {
+    const active = !!(card && card.dataset && card.dataset.id && card.dataset.id === _postMusicState.postId);
+    card.classList.toggle('music-playing', active && playing);
+    const btn = card.querySelector('.post-music-toggle');
+    if (btn) {
+      btn.classList.toggle('is-active', active);
+      btn.classList.toggle('is-playing', active && playing);
+      btn.setAttribute('aria-label', active && playing ? 'Pause post music' : 'Play post music');
+      btn.innerHTML = `<i data-lucide="${active && playing ? 'pause' : 'volume-2'}"></i>`;
+    }
+    const meta = card.querySelector('.post-music-inline');
+    if (meta) meta.classList.toggle('is-playing', active && playing);
+  });
+  refreshIcons();
+}
+async function togglePostMusic(p) {
+  if (!p || !p.music || !p.music.audio) return;
+  const player = getPostMusicPlayer();
+  const storyPlayer = $('#storyBgAudioPlayer');
+  if (storyPlayer && !storyPlayer.paused) storyPlayer.pause();
+  const sameTrack = _postMusicState.postId === p.id && player.src === p.music.audio;
+  try {
+    if (sameTrack) {
+      if (!player.paused && !player.ended) player.pause();
+      else await player.play();
+      syncPostMusicUI();
+      return;
+    }
+    if (player.src !== p.music.audio) player.src = p.music.audio;
+    player.currentTime = 0;
+    _postMusicState.postId = p.id;
+    _postMusicState.src = p.music.audio;
+    _postMusicState.title = p.music.title || '';
+    _postMusicState.artist = p.music.artist || '';
+    await player.play();
+    syncPostMusicUI();
+  } catch (_) {
+    toast('Could not play post music', 'error');
+  }
+}
+
 function renderPost(p) {
   const card = document.createElement('article');
   card.className = 'post-card';
@@ -3128,12 +3188,40 @@ function renderPost(p) {
     av.className = 'avatar md';
     renderAvatar(av, author);
     avRing.appendChild(av);
+
     const meta = document.createElement('div');
     meta.className = 'post-header-info';
-    meta.innerHTML = `
-      <span class="post-header-username">${escapeHtml(author.username || author.displayName)}</span>
-      ${isVerifiedUser(author) ? `<span class="post-verified-badge">${ownerVerifiedBadgeSvg('mini')}</span>` : ''}
-    `;
+    const userLine = document.createElement('div');
+    userLine.className = 'post-header-userline';
+    const userName = document.createElement('span');
+    userName.className = 'post-header-username';
+    userName.textContent = author.username || author.displayName || 'member';
+    userLine.appendChild(userName);
+    if (isVerifiedUser(author)) {
+      const badge = document.createElement('span');
+      badge.className = 'post-verified-badge';
+      badge.innerHTML = ownerVerifiedBadgeSvg('mini');
+      userLine.appendChild(badge);
+    }
+    meta.appendChild(userLine);
+
+    if (p.music && p.music.title) {
+      const musicText = [p.music.title, p.music.artist].filter(Boolean).join(' · ');
+      const musicLine = document.createElement('div');
+      musicLine.className = 'post-music-inline' + (p.music.audio ? ' can-play' : '');
+      musicLine.title = musicText;
+      musicLine.innerHTML = `
+        <i data-lucide="music-4"></i>
+        <div class="post-music-marquee">
+          <div class="post-music-marquee-track">
+            <span>${escapeHtml(musicText)}</span>
+            <span aria-hidden="true">${escapeHtml(musicText)}</span>
+          </div>
+        </div>
+      `;
+      meta.appendChild(musicLine);
+    }
+
     const moreBtn = document.createElement('button');
     moreBtn.className = 'post-header-more';
     moreBtn.setAttribute('aria-label', 'More options');
@@ -3151,11 +3239,26 @@ function renderPost(p) {
   card.appendChild(buildHead());
 
   const imgs = Array.isArray(p.images) && p.images.length > 0 ? p.images : (p.imageUrl ? [p.imageUrl] : []);
+  const attachMusicToggle = (wrap) => {
+    if (!wrap || !p.music || !p.music.audio) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'post-music-toggle';
+    btn.setAttribute('aria-label', 'Play post music');
+    btn.innerHTML = '<i data-lucide="volume-2"></i>';
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await togglePostMusic(p);
+    });
+    wrap.appendChild(btn);
+  };
 
   // Image with double-tap to like
   if (imgs.length > 0) {
     const wrap = document.createElement('div');
     wrap.className = 'post-img-wrap';
+    if (p.music && p.music.audio) wrap.classList.add('has-post-music');
 
     const burst = document.createElement('div');
     burst.className = 'heart-burst';
@@ -3185,6 +3288,7 @@ function renderPost(p) {
       });
       wrap.appendChild(img);
       wrap.appendChild(burst);
+      attachMusicToggle(wrap);
       card.appendChild(wrap);
     } else {
       // Instagram Multi-Photo Carousel
@@ -3235,6 +3339,7 @@ function renderPost(p) {
       });
 
       wrap.appendChild(track);
+      attachMusicToggle(wrap);
       if (p.isScratch) attachScratchOverlay(wrap);
       card.appendChild(wrap);
     }
@@ -3249,6 +3354,7 @@ function renderPost(p) {
     vid.playsInline = true;
     vid.preload = 'metadata';
     wrap.appendChild(vid);
+    attachMusicToggle(wrap);
     card.appendChild(wrap);
   }
 
@@ -3296,21 +3402,6 @@ function renderPost(p) {
   actions.appendChild(left); actions.appendChild(center); actions.appendChild(right);
   card.appendChild(actions);
 
-  if (p.music && p.music.title) {
-    const mBar = document.createElement('div');
-    mBar.className = 'feed-music-bar';
-    mBar.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 14px; background:rgba(236,72,153,0.12); border-radius:12px; margin:4px 14px; font-size:12.5px; font-weight:700; color:#ec4899; cursor:pointer;';
-    mBar.innerHTML = `<i data-lucide="music" style="width:14px;height:14px;"></i> <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">${escapeHtml(p.music.title)} · ${escapeHtml(p.music.artist || '')}</span>`;
-    mBar.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const player = $('#storyBgAudioPlayer');
-      if (player && p.music.audio) {
-        if (player.src === p.music.audio && !player.paused) { player.pause(); toast('Music paused', 'info'); }
-        else { player.src = p.music.audio; player.play().catch(()=>{}); toast(`🎵 Playing "${p.music.title}"`, 'success'); }
-      }
-    });
-    card.appendChild(mBar);
-  }
 
   // Liked-by row
   if (p.likeCount > 0) {
@@ -3911,6 +4002,7 @@ function preloadStoryImage(url) {
 }
 
 function renderStoryItem() {
+  if (_postMusicPlayer && !_postMusicPlayer.paused) _postMusicPlayer.pause();
   const user = storyPlayback.user;
   const recent = storyPlayback.items[storyPlayback.index];
   if (!user || !recent) return closeStory();
