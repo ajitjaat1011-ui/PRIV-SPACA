@@ -153,6 +153,8 @@ async function neonEnsure() {
     data JSONB NOT NULL,
     created_at BIGINT NOT NULL
   )`.catch(() => {});
+  await sql`CREATE INDEX IF NOT EXISTS idx_events_user_ts ON priv_spaca_events (user_id, created_at)`.catch(() => {});
+  await sql`CREATE INDEX IF NOT EXISTS idx_events_ts ON priv_spaca_events (created_at)`.catch(() => {});
   const rows = await sql`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
   if (rows.length === 0) {
     const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', createdAt: Date.now() } });

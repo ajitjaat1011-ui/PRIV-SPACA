@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="description" content="PRIV SPACA — Secure private group chat and social community application with WhatsApp/Instagram hybrid experience." />
 <meta name="theme-color" content="#00a2ff" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#0b1620" media="(prefers-color-scheme: dark)" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -195,7 +196,7 @@
         <!-- Requests sub-view (hidden until banner tapped) -->
         <div id="requestsView" class="hidden">
           <div class="requests-head">
-            <button type="button" id="requestsBackBtn" class="ghost-btn"><i data-lucide="arrow-left"></i></button>
+            <button type="button" id="requestsBackBtn" class="ghost-btn" title="Back to chats" aria-label="Back to chats"><i data-lucide="arrow-left"></i></button>
             <span class="requests-head-title">Message Requests</span>
           </div>
           <ul id="requestsList" class="members-list"></ul>
@@ -258,7 +259,7 @@
           <span>Replying to <strong id="replyToName"></strong></span>
         </div>
         <div id="replyToText" class="reply-preview"></div>
-        <button id="cancelReplyBtn" class="ghost-btn"><i data-lucide="x"></i></button>
+        <button id="cancelReplyBtn" class="ghost-btn" title="Cancel reply" aria-label="Cancel reply"><i data-lucide="x"></i></button>
       </div>
 
       <div id="attachPreview" class="attach-preview hidden">
@@ -267,7 +268,7 @@
           <div id="attachName" class="attach-name"></div>
           <div class="progress-track"><div id="attachProgress" class="progress-fill"></div></div>
         </div>
-        <button id="cancelAttachBtn" class="ghost-btn"><i data-lucide="x"></i></button>
+        <button id="cancelAttachBtn" class="ghost-btn" title="Cancel attachment" aria-label="Cancel attachment"><i data-lucide="x"></i></button>
       </div>
 
       <div style="position:relative; width:100%;">
