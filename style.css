@@ -314,11 +314,13 @@ img{user-select:none;-webkit-user-drag:none}
   pointer-events:auto;
 }
 .floating-add-btn:hover{
-  background:#0073e6;transform:scale(1.05);
+  background:#0073e6;transform:scale(1.08);
   box-shadow:0 10px 28px rgba(0,132,255,0.5);
 }
-.floating-add-btn:active{transform:scale(0.92)}
-.floating-add-btn i{width:26px;height:26px;stroke-width:2.5}
+.floating-add-btn:active{transform:scale(0.88)}
+.floating-add-btn i{width:26px;height:26px;stroke-width:2.5;transition:transform .35s cubic-bezier(.34,1.56,.64,1)}
+.floating-add-btn:hover i{transform:rotate(90deg) scale(1.15)}
+.floating-add-btn:active i{transform:rotate(90deg) scale(0.85)}
 
 .bn-btn{
   height:44px;display:flex;flex-direction:row;align-items:center;justify-content:center;
@@ -327,7 +329,9 @@ img{user-select:none;-webkit-user-drag:none}
   position:relative;gap:6px;padding:0 8px;min-width:0;flex:1;
 }
 .bn-btn:hover{color:var(--text)}
+.bn-btn:hover i{transform:scale(1.18) translateY(-2px)}
 .bn-btn:active{transform:scale(0.92)}
+.bn-btn:active i{transform:scale(0.82)}
 .bn-btn .bn-label{
   display:none;font-weight:700;font-size:14px;letter-spacing:-0.2px;white-space:nowrap;
 }
@@ -335,11 +339,17 @@ img{user-select:none;-webkit-user-drag:none}
   background:var(--surface-2);color:var(--text);padding:0 12px;flex:1.45;
 }
 .bn-btn.active .bn-label{display:inline-block}
-.bn-btn i{width:22px;height:22px;stroke-width:2;transition:transform 0.2s}
+.bn-btn i{width:22px;height:22px;stroke-width:2;transition:transform .3s cubic-bezier(.34,1.56,.64,1),color .2s ease}
 .bn-btn .i-filled{display:none}
 .bn-btn.active .i-outline{display:none}
 .bn-btn.active .i-filled{display:inline-block}
-.bn-btn.active i{stroke-width:2.5;color:var(--text);transform:scale(1.05)}
+.bn-btn.active i{stroke-width:2.5;color:var(--text);transform:scale(1.1);animation:navIconPop .45s cubic-bezier(.34,1.56,.64,1)}
+@keyframes navIconPop{
+  0%{transform:scale(0.7) translateY(2px)}
+  50%{transform:scale(1.28) translateY(-3px)}
+  80%{transform:scale(0.94) translateY(1px)}
+  100%{transform:scale(1.1) translateY(0)}
+}
 .bn-btn .bn-avatar{
   width:26px;height:26px;border-radius:50%;
   background-size:cover;background-position:center;
@@ -376,7 +386,12 @@ img{user-select:none;-webkit-user-drag:none}
   font-size:13px;font-weight:600;transition:all .15s;
 }
 .ghost-btn:hover{background:var(--accent-soft);color:var(--accent)}
-.ghost-btn i{width:18px;height:18px}
+.ghost-btn:active{transform:scale(0.88)}
+.ghost-btn i,.action-circle-btn i,#topNotifBtn i{width:18px;height:18px;transition:transform .3s cubic-bezier(.34,1.56,.64,1),color .2s ease}
+.ghost-btn:hover i,.action-circle-btn:hover i{transform:scale(1.2)}
+.ghost-btn:active i,.action-circle-btn:active i{transform:scale(0.82)}
+#topNotifBtn:hover i{transform:scale(1.25) rotate(-10deg);color:#ff3040}
+#topNotifBtn:active i{transform:scale(0.8)}
 
 /* ===== Avatar ===== */
 .avatar{
