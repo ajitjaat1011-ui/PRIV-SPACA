@@ -494,6 +494,17 @@ async function tursoEnsure() {
       PRIMARY KEY (owner_user_id, peer_user_id)
     );
     CREATE INDEX IF NOT EXISTS idx_ps_dm_index_owner_created ON ps_dm_index (owner_user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_messages (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      deleted_at INTEGER,
+      disappear_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      data_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_messages_room_created ON ps_messages (room_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS ps_meta (
       key TEXT PRIMARY KEY,
       value TEXT,
@@ -565,6 +576,13 @@ async function syncTursoMirror(db) {
         args: [row.ownerUserId, row.peerUserId, row.roomId, row.createdAt, row.fromMe ? 1 : 0, ts, JSON.stringify(row)],
       });
     }
+    statements.push({ sql: 'DELETE FROM ps_messages' });
+    for (const m of src.messages || []) {
+      statements.push({
+        sql: 'INSERT INTO ps_messages (id, room_id, user_id, created_at, deleted_at, disappear_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        args: [m.id, m.roomId || 'general-group', m.userId || '', Number(m.createdAt || 0), m.deletedAt ? Number(m.deletedAt) : null, m.disappearAt ? Number(m.disappearAt) : null, ts, JSON.stringify(m)],
+      });
+    }
     statements.push({
       sql: 'INSERT INTO ps_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
       args: ['bootstrap_v1', String(ts), ts],
@@ -629,6 +647,21 @@ async function fetchTursoDmIndex(ownerUserId) {
     if (item && item.peerUserId) out[item.peerUserId] = { text: item.text || '', createdAt: Number(item.createdAt || 0), fromMe: !!item.fromMe };
   }
   return out;
+}
+async function fetchTursoMessages(roomId, now = nowMs()) {
+  if (!isTursoConfigured() || !roomId) return null;
+  try {
+    await tursoEnsure();
+    const rs = await tursoClient().execute({
+      sql: 'SELECT data_json FROM ps_messages WHERE room_id = ? AND (deleted_at IS NULL OR deleted_at = 0) AND (disappear_at IS NULL OR disappear_at > ?) ORDER BY created_at DESC LIMIT 200',
+      args: [roomId, Number(now || 0)],
+    });
+    const list = (rs.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean);
+    return list.sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+  } catch (e) {
+    console.warn('[turso] messages read failed', e && e.message);
+    return null;
+  }
 }
 
 async function ensureOwnerAccount(db) { return false; }
@@ -1665,15 +1698,17 @@ app.get('/api/messages', requireAuth, async (c) => {
   }
   let db = await fetchDatabase({ fresh: true });
   let now = nowMs();
-  let list = db.messages
-    .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .slice(-200);
-  // GitHub contents can be briefly eventually-consistent across isolates. For chat,
-  // do a short fresh retry instead of returning an empty room right after send.
+  let list = await fetchTursoMessages(roomId, now);
+  if (!Array.isArray(list)) {
+    list = db.messages
+      .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(-200);
+  }
   if (list.length === 0 && roomId.startsWith('dm:')) {
     await sleepMs(900); cacheTimestamp = 0; db = await fetchDatabase({ fresh: true }); now = nowMs();
-    list = db.messages
+    const mirrorRetry = await fetchTursoMessages(roomId, now);
+    list = Array.isArray(mirrorRetry) ? mirrorRetry : db.messages
       .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
       .sort((a, b) => a.createdAt - b.createdAt)
       .slice(-200);
