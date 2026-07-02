@@ -4,7 +4,6 @@
  */
 
 const express = require('express');
-const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
@@ -17,7 +16,39 @@ try {
 }
 
 const app = express();
-app.use(cors());
+function isAllowedCorsOrigin(origin) {
+  if (!origin) return true; // curl/server/API agents send no Origin
+  try {
+    const u = new URL(origin);
+    const h = u.hostname.toLowerCase();
+    if (h === 'priv-spaca.pages.dev' || h.endsWith('.priv-spaca.pages.dev')) return true;
+    if (h === 'localhost' || h === '127.0.0.1') return true;
+  } catch (_) {}
+  return false;
+}
+function isDefaultJwtSecret() {
+  return !JWT_SECRET || JWT_SECRET === 'priv-spaca-dev-secret-change-me-in-production';
+}
+function isProductionHost(req) {
+  const host = String(req.headers.host || '').toLowerCase().split(':')[0];
+  return host === 'priv-spaca.pages.dev' || host.endsWith('.priv-spaca.pages.dev');
+}
+app.use((req, res, next) => {
+  const origin = req.headers.origin || '';
+  if (origin && !isAllowedCorsOrigin(origin)) return res.status(403).json({ error: 'CORS origin denied' });
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Last-Event-ID');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (isProductionHost(req) && isDefaultJwtSecret() && req.path.startsWith('/api/') && req.path !== '/api/health') {
+    return res.status(503).json({ error: 'Server auth secret is not configured' });
+  }
+  next();
+});
 // Body parsing — only use Express's parser when running on a real Node host.
 // When running on Cloudflare Workers (detected via CF_PAGES env), our adapter
 // has already populated req.body, and express.json() depends on body-parser
@@ -575,7 +606,7 @@ let webpush = null;
 try { webpush = require('web-push'); } catch (e) { console.warn('[push] web-push unavailable:', e.message); }
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY  || 'BG5msm1YiW_5l5N2ZNAvz5CkzQDGchg99ZSpkXVhXb4mm70X8vPPZs_7lrsaDXtvPns7QloRkh40vY4J5O0pqlI';
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'cD46cvq1tE2duI2EOZoyu0huGyL6vmZOsFzXMCvfjfQ';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || ''; // must be set as encrypted env secret in production
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@priv-spaca.app';
 if (webpush && VAPID_PUBLIC && VAPID_PRIVATE) {
   try { webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE); }
@@ -584,7 +615,7 @@ if (webpush && VAPID_PUBLIC && VAPID_PRIVATE) {
 
 // GET /api/push/vapid-public — frontend fetches the public key
 app.get('/api/push/vapid-public', (req, res) => {
-  res.json({ key: VAPID_PUBLIC });
+  res.json({ key: VAPID_PUBLIC || '' });
 });
 
 // POST /api/push/subscribe — save subscription on the user record
@@ -716,7 +747,7 @@ app.get('/api/stream', async (req, res) => {
     'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
-    'Access-Control-Allow-Origin': '*',
+    ...(req.headers.origin && isAllowedCorsOrigin(req.headers.origin) ? { 'Access-Control-Allow-Origin': req.headers.origin, 'Vary': 'Origin' } : {}),
   });
   res.write(': connected\n\n');
 
@@ -2019,7 +2050,7 @@ module.exports.helpers = {
   pushNotification, sendWebPush,
   _pushEvent, _broadcastEvent, _eventQueues, _eventSubscribers,
   // Photo upload
-  GH_REPO, GH_BRANCH, GH_FILE, GITHUB_PAT, VAPID_PUBLIC, VAPID_PRIVATE, VAPID_SUBJECT,
+  GH_REPO, GH_BRANCH, GH_FILE, GITHUB_PAT, VAPID_PUBLIC, VAPID_SUBJECT,
   // bcrypt + jwt
   bcrypt, jwt,
   // fetch
