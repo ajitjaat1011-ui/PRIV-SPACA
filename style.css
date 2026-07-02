@@ -2237,7 +2237,7 @@ img{user-select:none;-webkit-user-drag:none}
   .app-shell.chat-thread-open > .topbar{display:none}
   .app-shell.chat-thread-open .bottom-nav-wrap{display:none!important}
   .app-shell.chat-thread-open .view.chat-view.active{height:100%;padding-bottom:0!important}
-  .app-shell.chat-thread-open .chat-pane{height:100vh;height:100dvh}
+  .app-shell.chat-thread-open .chat-pane{height:100vh;height:100dvh;padding-bottom:0!important}
   .app-shell.chat-thread-open .messages-scroll{padding-bottom:12px}
   .app-shell.chat-thread-open .modern-composer{padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
 }

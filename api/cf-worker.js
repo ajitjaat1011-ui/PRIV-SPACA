@@ -1585,7 +1585,7 @@ app.post('/api/user/follow', requireAuth, async (c) => {
   if (!target.followers.includes(myId)) target.followers.push(myId);
   pushNotification(db, targetId, 'follow', myId);
   await saveDatabase(db, false);
-  return c.json({ ok: true, following: me.following.length, followers: target.followers.length });
+  return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
 app.post('/api/user/unfollow', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
@@ -1597,7 +1597,7 @@ app.post('/api/user/unfollow', requireAuth, async (c) => {
   me.following = (me.following || []).filter(id => id !== targetId);
   target.followers = (target.followers || []).filter(id => id !== c.get('userId'));
   await saveDatabase(db, false);
-  return c.json({ ok: true });
+  return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
 app.post('/api/user/block', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));

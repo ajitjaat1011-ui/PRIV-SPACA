@@ -2648,6 +2648,7 @@ function markTabSeen(tab) {
 
 let _lastNotif = { chatUnread: 0, feedUnread: 0 };
 let _lastPostsLoadedAt = 0;
+let _lastFollowNotifSig = '';
 async function pollNotifications() {
   if (!State.token || !State.user) return;
   const meId = State.user.id;
@@ -2663,6 +2664,13 @@ async function pollNotifications() {
       if (n.kind === 'message') chatUnread++;
       else feedUnread++;   // like / comment / follow → home dot
     });
+    const followSig = (r.notifications || []).filter(n => n.kind === 'follow')
+      .map(n => `${n.fromUserId || ''}:${n.createdAt || 0}`).sort().join('|');
+    if (followSig !== _lastFollowNotifSig) {
+      _lastFollowNotifSig = followSig;
+      await loadMembers();
+      if (State.currentTab === 'profile') updateOwnProfileStatCounts(State.user);
+    }
   } catch (_) {}
 
   // 2) New general-group messages (client tracks per-tab lastSeen so unread is true unread)
@@ -6146,7 +6154,17 @@ function renderOtherProfile(data) {
     fb.disabled = true;
     try {
       const action = data.relationship.iFollow ? 'unfollow' : 'follow';
-      await api('/user/' + action, { method: 'POST', body: { targetId: u.id }});
+      const result = await api('/user/' + action, { method: 'POST', body: { targetId: u.id }});
+      State.user.following = Array.isArray(State.user.following) ? State.user.following : [];
+      if (action === 'follow') {
+        if (!State.user.following.includes(u.id)) State.user.following.push(u.id);
+      } else {
+        State.user.following = State.user.following.filter(id => id !== u.id);
+      }
+      const member = (State.members || []).find(m => m.id === u.id);
+      if (member) member.iFollow = action === 'follow';
+      if (Array.isArray(result.followingIds)) State.user.following = result.followingIds;
+      updateOwnProfileStatCounts(State.user);
       // Reload
       const fresh = await api('/user/' + encodeURIComponent(u.id) + '/profile');
       _activeOtherProfile = fresh;
