@@ -2305,196 +2305,193 @@ img{user-select:none;-webkit-user-drag:none}
 .owner-verified-badge .bt-shape{filter:drop-shadow(0 0 2px rgba(21,156,255,.28))}
 .owner-verified-badge .bt-check{filter:drop-shadow(0 1px 1px rgba(0,80,180,.25))}
 
-/* ===== Glassmorphism Frontend Refresh — bottom navigation intentionally untouched ===== */
+/* ===== Clean Frontend Rebuild v1 — fast, simple, Instagram-inspired ===== */
 :root, [data-theme="light"]{
-  --glass-panel:rgba(255,255,255,.64);
-  --glass-panel-strong:rgba(255,255,255,.82);
-  --glass-panel-soft:rgba(255,255,255,.42);
-  --glass-border:rgba(255,255,255,.58);
-  --glass-shadow:0 18px 50px rgba(15,35,60,.12),0 4px 16px rgba(15,35,60,.06);
-  --glass-blur:blur(22px) saturate(1.35);
+  --bg:#f7f9fc;
+  --bg-2:#ffffff;
+  --bg-soft:#f1f5f9;
+  --surface:#ffffff;
+  --surface-2:#eef4f8;
+  --border:#e5edf5;
+  --line:#e9eef5;
+  --line-2:#dce5ef;
+  --text:#111827;
+  --text-2:#334155;
+  --muted:#7b8794;
+  --muted-2:#a8b3bf;
+  --shadow-xs:0 1px 2px rgba(15,23,42,.04);
+  --shadow-sm:0 2px 8px rgba(15,23,42,.06);
+  --shadow:0 8px 24px rgba(15,23,42,.08);
+  --shadow-lg:0 22px 60px rgba(15,23,42,.18);
+  --radius:18px;
+  --radius-sm:14px;
 }
 [data-theme="dark"]{
-  --glass-panel:rgba(21,32,48,.62);
-  --glass-panel-strong:rgba(21,32,48,.82);
-  --glass-panel-soft:rgba(28,40,57,.44);
-  --glass-border:rgba(255,255,255,.10);
-  --glass-shadow:0 20px 55px rgba(0,0,0,.38),0 4px 16px rgba(0,0,0,.24);
+  --bg:#0c1118;
+  --bg-2:#111827;
+  --bg-soft:#182131;
+  --surface:#111827;
+  --surface-2:#1c2636;
+  --border:#243245;
+  --line:#202b3b;
+  --line-2:#2c3a4d;
+  --text:#f8fafc;
+  --text-2:#dbe4ee;
+  --muted:#98a6b6;
+  --muted-2:#657385;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
-    --glass-panel:rgba(21,32,48,.62);
-    --glass-panel-strong:rgba(21,32,48,.82);
-    --glass-panel-soft:rgba(28,40,57,.44);
-    --glass-border:rgba(255,255,255,.10);
-    --glass-shadow:0 20px 55px rgba(0,0,0,.38),0 4px 16px rgba(0,0,0,.24);
+    --bg:#0c1118;
+    --bg-2:#111827;
+    --bg-soft:#182131;
+    --surface:#111827;
+    --surface-2:#1c2636;
+    --border:#243245;
+    --line:#202b3b;
+    --line-2:#2c3a4d;
+    --text:#f8fafc;
+    --text-2:#dbe4ee;
+    --muted:#98a6b6;
+    --muted-2:#657385;
   }
 }
 body{
-  background:
-    radial-gradient(circle at 12% -6%,rgba(var(--accent-rgb),.28),transparent 34%),
-    radial-gradient(circle at 94% 10%,rgba(236,72,153,.18),transparent 28%),
-    radial-gradient(circle at 70% 104%,rgba(124,92,255,.16),transparent 34%),
-    var(--bg);
+  background:var(--bg)!important;
+  color:var(--text);
+  font-size:15.5px;
+  font-weight:600;
 }
 .app-shell{
-  background:
-    linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,.12)),
-    radial-gradient(circle at 20% 0%,rgba(var(--accent-rgb),.11),transparent 38%),
-    radial-gradient(circle at 100% 20%,rgba(236,72,153,.09),transparent 34%),
-    var(--bg);
+  background:var(--bg)!important;
 }
-.topbar,
-.chat-header,
-.rooms-pane,
+.topbar{
+  height:58px;
+  background:var(--surface)!important;
+  border-bottom:1px solid var(--border)!important;
+  box-shadow:none!important;
+}
+.brand-wordmark{
+  font-size:31px;
+  filter:none!important;
+}
+.view.active{background:var(--bg)}
+.feed-wrap,
+.profile-wrap{
+  max-width:680px;
+  margin:0 auto;
+  padding-bottom:110px;
+}
+.stories-rail{
+  background:var(--surface)!important;
+  border-bottom:1px solid var(--border)!important;
+  padding:14px 12px 12px!important;
+}
+.story-cell{width:76px!important;gap:7px!important}
+.story-cell .story-ring{width:66px!important;height:66px!important;box-shadow:none!important}
+.story-cell .story-name{font-size:12px!important;font-weight:700;color:var(--text-2)}
 .composer-card,
 .post-card,
-.profile-wrap,
-.search-bar,
+.req-banner,
+.discover-card,
 .sheet > .sheet-card,
-.sheet-card,
 .modal-card,
 .settings-strip,
-.req-banner,
-.note-bubble,
-.note-viewer-speech,
-.profile-banner-pill,
-.ig-action-btn,
-.discover-card,
-.close-friends-card,
-.story-manage-card,
-.saved-posts-card,
 .profile-relation-card,
-.post-detail-top{
-  background:var(--glass-panel-strong)!important;
-  border:1px solid var(--glass-border)!important;
-  box-shadow:var(--glass-shadow);
-  backdrop-filter:var(--glass-blur);
-  -webkit-backdrop-filter:var(--glass-blur);
+.saved-posts-card{
+  background:var(--surface)!important;
+  border:1px solid var(--border)!important;
+  box-shadow:var(--shadow-sm)!important;
 }
-.topbar{border-left:0!important;border-right:0!important;border-top:0!important}
-.chat-pane{
-  background:
-    radial-gradient(900px 520px at 100% 0%,rgba(var(--accent-rgb),.13),transparent 58%),
-    radial-gradient(700px 500px at 0% 100%,rgba(236,72,153,.08),transparent 56%),
-    linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,.10)),
-    var(--bg-soft)!important;
+.composer-card{
+  border-radius:22px!important;
+  margin:12px 12px 14px!important;
+  padding:14px!important;
 }
-.messages-scroll,
-.feed-view,
-.profile-view,
-.search-view{
-  background:transparent!important;
+.composer-card textarea,
+.note-input,
+.note-song-search,
+.search-bar input,
+.composer-input-section textarea{
+  background:var(--bg-soft)!important;
+  border:1px solid var(--border)!important;
+  color:var(--text)!important;
+  box-shadow:none!important;
 }
 .post-card{
-  border-radius:28px!important;
-  overflow:hidden;
+  border-radius:0!important;
+  border-left:0!important;
+  border-right:0!important;
+  margin:0 0 10px!important;
+  padding:12px 0 10px!important;
+  box-shadow:none!important;
 }
-.post-img-wrap,
-.ig-grid-cell,
-.story-cell .story-ring,
-.avatar,
-.note-avatar{
-  box-shadow:0 10px 30px rgba(15,35,60,.10);
+@media (min-width:700px){
+  .post-card{border-radius:22px!important;border-left:1px solid var(--border)!important;border-right:1px solid var(--border)!important;margin:0 12px 14px!important;padding:12px 0 10px!important;box-shadow:var(--shadow-sm)!important}
 }
-.room-item,
-.member-item,
-.settings-row,
-.popup-action-btn,
-.note-song-item,
-.cf-row,
-.story-manage-item,
-.profile-relation-row,
-.notif-list li{
-  background:rgba(255,255,255,.28);
-  border:1px solid transparent;
-  backdrop-filter:blur(12px) saturate(1.15);
-  -webkit-backdrop-filter:blur(12px) saturate(1.15);
+.post-header-row{padding:0 14px 10px!important}
+.post-header-avatar{background:transparent!important;padding:0!important}
+.post-header-avatar .avatar.md{border:0!important;width:42px!important;height:42px!important}
+.post-img-wrap{border-radius:0!important;background:#000!important;box-shadow:none!important}
+.post-img{max-height:72vh!important;background:#000!important}
+.post-actions{padding:10px 14px 4px!important}
+.liked-by,.post-caption,.post-comments-preview,.post-time{padding-left:14px!important;padding-right:14px!important}
+.feed-music-bar{margin:6px 14px!important;background:var(--bg-soft)!important;color:var(--text-2)!important;border:1px solid var(--border)!important}
+.chat-view{background:var(--bg)!important}
+.chat-pane{
+  background:linear-gradient(180deg,#eff8ff 0%,#f7fbff 100%)!important;
+  padding-bottom:72px;
 }
-.room-item:hover,
-.member-item:hover,
-.settings-row:hover,
-.popup-action-btn:hover,
-.note-song-item:hover,
-.profile-relation-row:active{
-  background:rgba(255,255,255,.52)!important;
-  border-color:var(--glass-border);
+[data-theme="dark"] .chat-pane{background:linear-gradient(180deg,#101827 0%,#0c1118 100%)!important}
+.rooms-pane{
+  background:var(--surface)!important;
+  border-right:1px solid var(--border)!important;
 }
-.modern-composer,
-.reply-banner,
-.attach-preview,
-.secret-banner,
-.typing-indicator{
-  background:var(--glass-panel)!important;
-  border-color:var(--glass-border)!important;
-  backdrop-filter:var(--glass-blur);
-  -webkit-backdrop-filter:var(--glass-blur);
+.chat-header{
+  min-height:64px;
+  background:var(--surface)!important;
+  border-bottom:1px solid var(--border)!important;
+  box-shadow:none!important;
 }
-.composer-input-section textarea,
-.note-input,
-.note-viewer-input,
-.story-reply-input,
-.search-bar input,
-.note-song-search{
-  background:rgba(255,255,255,.58)!important;
-  border:1px solid rgba(255,255,255,.54)!important;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.38);
+.room-item,.member-item{
+  border-radius:16px!important;
+  padding:11px 10px!important;
+  background:transparent!important;
 }
-.message .bubble:not(.image-only),
-.voice-note{
-  backdrop-filter:blur(14px) saturate(1.25);
-  -webkit-backdrop-filter:blur(14px) saturate(1.25);
-  box-shadow:0 10px 28px rgba(15,35,60,.10)!important;
+.room-item.active,.member-item.active{background:var(--accent-softer)!important;color:var(--text)!important}
+.messages-scroll{padding:18px 14px 10px!important}
+.message .bubble{
+  box-shadow:none!important;
+  padding:10px 13px!important;
 }
-.message.mine .bubble:not(.image-only),
-.message.mine .voice-note{
-  box-shadow:0 14px 32px rgba(var(--accent-rgb),.22)!important;
+.message.mine .bubble{box-shadow:none!important}
+.modern-composer{
+  background:var(--surface)!important;
+  border-top:1px solid var(--border)!important;
+  box-shadow:0 -6px 18px rgba(15,23,42,.04);
 }
-.ig-tabs,
-.inbox-segment{
-  background:rgba(255,255,255,.26);
-  backdrop-filter:blur(18px) saturate(1.25);
-  -webkit-backdrop-filter:blur(18px) saturate(1.25);
-  border-top:1px solid var(--glass-border);
-  border-bottom:1px solid var(--glass-border);
+.composer-input-section textarea{
+  background:var(--bg-soft)!important;
+  border-radius:999px!important;
+  min-height:42px!important;
 }
-.story-viewer,
-.lightbox,
-.more-menu .bd,
-.modal,
-.sheet{
-  backdrop-filter:blur(16px) saturate(1.2);
-  -webkit-backdrop-filter:blur(16px) saturate(1.2);
-}
-[data-theme="dark"] .room-item,
-[data-theme="dark"] .member-item,
-[data-theme="dark"] .settings-row,
-[data-theme="dark"] .popup-action-btn,
-[data-theme="dark"] .note-song-item,
-[data-theme="dark"] .cf-row,
-[data-theme="dark"] .story-manage-item,
-[data-theme="dark"] .profile-relation-row,
-[data-theme="dark"] .notif-list li{
-  background:rgba(255,255,255,.045);
-}
-[data-theme="dark"] .composer-input-section textarea,
-[data-theme="dark"] .note-input,
-[data-theme="dark"] .note-viewer-input,
-[data-theme="dark"] .story-reply-input,
-[data-theme="dark"] .search-bar input,
-[data-theme="dark"] .note-song-search{
-  background:rgba(255,255,255,.065)!important;
-  border-color:rgba(255,255,255,.11)!important;
-}
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .room-item,
-  :root:not([data-theme="light"]) .member-item,
-  :root:not([data-theme="light"]) .settings-row,
-  :root:not([data-theme="light"]) .popup-action-btn,
-  :root:not([data-theme="light"]) .note-song-item,
-  :root:not([data-theme="light"]) .cf-row,
-  :root:not([data-theme="light"]) .story-manage-item,
-  :root:not([data-theme="light"]) .profile-relation-row,
-  :root:not([data-theme="light"]) .notif-list li{background:rgba(255,255,255,.045)}
-}
-/* Keep bottom navigation and floating plus exactly as their existing rules define them. */
+.profile-titlebar{background:var(--surface);border-bottom:1px solid var(--border)!important;padding:12px 16px!important}
+.ig-profile-head{padding:20px 18px 12px!important;background:var(--surface)}
+.ig-profile-meta,.ig-profile-actions,.ig-discover-section{background:var(--surface)}
+.ig-action-btn{border-radius:14px!important;box-shadow:none!important;background:var(--bg-soft)!important;color:var(--text)!important}
+.profile-banner-pill{background:var(--bg-soft)!important;border:1px solid var(--border)!important}
+.ig-discover-section{padding-bottom:14px!important;border-bottom:1px solid var(--border)}
+.discover-card{border-radius:18px!important;box-shadow:none!important;background:var(--bg-soft)!important}
+.ig-tabs{background:var(--surface)!important;border-top:1px solid var(--border)!important;border-bottom:1px solid var(--border)!important}
+.ig-posts-grid{background:var(--surface);gap:2px!important;padding:2px!important;margin-bottom:120px!important}
+.ig-grid-cell{border-radius:0!important;background:var(--bg-soft)!important;box-shadow:none!important}
+.search-view{background:var(--bg)!important}
+.search-bar{background:var(--surface)!important;border:1px solid var(--border)!important;box-shadow:none!important}
+.members-list{padding-bottom:120px}
+.sheet{background:rgba(15,23,42,.52)!important;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.sheet > .sheet-card{border-radius:26px 26px 0 0!important;box-shadow:0 -18px 50px rgba(15,23,42,.20)!important}
+.settings-row{min-height:50px;border-radius:14px!important;border-bottom:0!important;margin:3px 0;background:transparent!important}
+.settings-row:hover{background:var(--bg-soft)!important}
+.notif-list li{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:16px!important;margin-bottom:8px}
+.primary-btn,.send-btn,.improved-send,.composer-add-btn,.floating-add-btn{box-shadow:var(--shadow-sm)}
+/* Bottom navigation visual rules remain unchanged by this rebuild. */
