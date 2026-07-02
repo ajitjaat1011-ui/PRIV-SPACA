@@ -253,12 +253,12 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .flower-container{
   position:absolute;bottom:-4px;pointer-events:none;opacity:0;
-  transform:translateY(24px) scale(0.25);
-  transition:all 0.9s cubic-bezier(0.34,1.56,0.64,1);
-  filter:drop-shadow(0 0 5px rgba(255,160,0,0.5));
+  transform:translateY(28px) scale(0.2) rotate(-8deg);
+  transition:all 0.95s cubic-bezier(0.34,1.56,0.64,1);
+  filter:drop-shadow(0 0 8px rgba(255,140,0,0.6));
 }
 .flower-container.animate{
-  opacity:0.95;transform:translateY(0) scale(1);
+  opacity:0.95;transform:translateY(0) scale(1) rotate(0deg);
 }
 .topbar-left-icon{justify-self:start}
 .topbar > .ghost-btn:last-child{justify-self:end}
@@ -274,13 +274,22 @@ img{user-select:none;-webkit-user-drag:none}
 
 /* IG-style cursive wordmark, centered */
 .brand-wordmark{
-  font-family:'Dancing Script', 'Inter', cursive;
-  font-weight:700;font-size:30px;line-height:1;
-  color:var(--text);letter-spacing:.2px;
+  font-family:'Dancing Script', 'Playfair Display', cursive;
+  font-weight:700;font-size:32px;line-height:1;
+  color:var(--text);letter-spacing:0.4px;
   text-align:center;justify-self:center;position:relative;z-index:3;
-  background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;
+  background:linear-gradient(135deg, #fff3b0 0%, #ffbe0b 35%, #ff007f 75%, #9900ff 100%);
+  background-size:200% 200%;
+  -webkit-background-clip:text;background-clip:text;
   -webkit-text-fill-color:transparent;
-  text-shadow:none;user-select:none;padding:0 4px;
+  filter:drop-shadow(0 2px 8px rgba(255,115,0,0.35));
+  animation:floralBrandShimmer 7s ease infinite;
+  user-select:none;padding:0 6px;cursor:pointer;
+}
+@keyframes floralBrandShimmer{
+  0%{background-position:0% 50%}
+  50%{background-position:100% 50%}
+  100%{background-position:0% 50%}
 }
 .topbar .ghost-btn{padding:8px;color:var(--text)}
 .topbar .ghost-btn i{width:24px;height:24px;stroke-width:1.8}
