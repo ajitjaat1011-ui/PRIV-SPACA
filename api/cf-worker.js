@@ -491,7 +491,7 @@ async function signToken(user) {
   const header = { alg: 'HS256', typ: 'JWT' };
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + JWT_EXPIRES_DAYS * 24 * 3600;
-  const payload = { uid: user.id, username: user.username, iat, exp };
+  const payload = { uid: user.id, username: user.username, sv: Number(user.tokenVersion || 0), iat, exp };
   const head = b64urlJson(header);
   const body = b64urlJson(payload);
   const sig = b64url(await hmacSha256(JWT_SECRET, head + '.' + body));
@@ -520,9 +520,16 @@ async function authFromRequest(c) {
 // Hono middleware
 async function requireAuth(c, next) {
   const p = await authFromRequest(c);
-  if (!p) return c.json({ error: 'Missing or invalid token' }, 401);
+  if (!p || !p.uid) return c.json({ error: 'Missing or invalid token' }, 401);
+  const db = await fetchDatabase();
+  const u = (db.users || []).find(x => x.id === p.uid);
+  if (!u) return c.json({ error: 'Missing or invalid token' }, 401);
+  const tokenVersion = Number(p.sv || 0);
+  const userVersion = Number(u.tokenVersion || 0);
+  if (tokenVersion !== userVersion) return c.json({ error: 'Session expired. Please sign in again.' }, 401);
   c.set('userId', p.uid);
-  c.set('username', p.username);
+  c.set('username', u.username || p.username);
+  c.set('authUser', u);
   await next();
 }
 
@@ -964,7 +971,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     const pinHash = await bcrypt.hash(pin, PASSWORD_HASH_ROUNDS);
     const newUser = {
       id: uid('usr'), email: emailLower, username, displayName: cleanDN,
-      bio: '', photoUrl: '', passwordHash, pinHash,
+      bio: '', photoUrl: '', passwordHash, pinHash, tokenVersion: 0,
       followers: [], following: [], blocked: [], closeFriends: [],
       termsAccepted: true, termsVersion: String(termsVersion || '1.0'),
       termsAcceptedAt: nowMs(), createdAt: nowMs(),
@@ -1045,12 +1052,15 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     const pinOk = await bcrypt.compare(pin, user.pinHash);
     if (!pinOk) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
     const oldHash = user.passwordHash;
+    const oldTokenVersion = Number(user.tokenVersion || 0);
     user.passwordHash = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
+    user.tokenVersion = oldTokenVersion + 1;
+    user.passwordChangedAt = nowMs();
     const persisted = await saveDatabaseVerified(db, d => {
       const u2 = (d.users || []).find(u => u.id === user.id);
-      return !!u2 && u2.passwordHash === user.passwordHash;
+      return !!u2 && u2.passwordHash === user.passwordHash && Number(u2.tokenVersion || 0) === user.tokenVersion;
     });
-    if (isPersist() && !persisted) { user.passwordHash = oldHash; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
+    if (isPersist() && !persisted) { user.passwordHash = oldHash; user.tokenVersion = oldTokenVersion; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
     const token = await signToken(user);
     return c.json({ ok: true, token, user: sanitizeUser(user) });
   } catch (e) {
@@ -1930,6 +1940,9 @@ app.get('/api/stream', async (c) => {
   if (!token) return c.text('', 401);
   let payload;
   try { payload = await verifyToken(token); } catch (_) { return c.text('', 401); }
+  const authDb = await fetchDatabase();
+  const authUser = (authDb.users || []).find(u => u.id === payload.uid);
+  if (!authUser || Number(payload.sv || 0) !== Number(authUser.tokenVersion || 0)) return c.text('', 401);
   const userId = payload.uid;
   const lastEventId = c.req.header('last-event-id') || c.req.query('lastEventId') || null;
   const encoder = new TextEncoder();
