@@ -1640,8 +1640,13 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
   const posts = (db.posts || []).filter(p => p.userId === targetId && !p.deletedAt && !isStoryRecord(p))
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => ({ id: p.id, imageUrl: p.imageUrl, text: p.text, createdAt: p.createdAt, likeCount: (p.likes || []).length, commentCount: (p.comments || []).length }));
+  const followerIds = Array.from(new Set([
+    ...(Array.isArray(target.followers) ? target.followers : []),
+    ...(db.users || []).filter(u => Array.isArray(u.following) && u.following.includes(targetId)).map(u => u.id),
+  ])).filter(id => id && id !== targetId);
+  const followingIds = Array.from(new Set(Array.isArray(target.following) ? target.following : [])).filter(id => id && id !== targetId);
   return c.json({
-    user: { ...sanitizeUser(target), followers: (target.followers || []).length, following: (target.following || []).length, postsCount: posts.length },
+    user: { ...sanitizeUser(target), followers: followerIds.length, following: followingIds.length, postsCount: posts.length },
     posts,
     relationship: {
       isMe: targetId === myId,

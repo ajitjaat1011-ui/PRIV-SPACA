@@ -1695,11 +1695,16 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
       id: p.id, imageUrl: p.imageUrl, text: p.text, createdAt: p.createdAt,
       likeCount: (p.likes || []).length, commentCount: (p.comments || []).length,
     }));
+  const followerIds = Array.from(new Set([
+    ...(Array.isArray(target.followers) ? target.followers : []),
+    ...(db.users || []).filter(u => Array.isArray(u.following) && u.following.includes(targetId)).map(u => u.id),
+  ])).filter(id => id && id !== targetId);
+  const followingIds = Array.from(new Set(Array.isArray(target.following) ? target.following : [])).filter(id => id && id !== targetId);
   res.json({
     user: {
       ...sanitizeUser(target),
-      followers: (target.followers || []).length,
-      following: (target.following || []).length,
+      followers: followerIds.length,
+      following: followingIds.length,
       postsCount: posts.length,
     },
     posts,
