@@ -2664,3 +2664,31 @@ body{
   :root:not([data-theme="light"]) .note-bubble{background:#111827!important;border-color:#263245!important;color:#dbe4ee!important}
   :root:not([data-theme="light"]) .member-item .meta .nm{color:#f8fafc!important}
 }
+
+/* Fix mobile inbox overlay glitch: list view must replace the open chat, not float over it */
+@media (max-width:780px){
+  .view.chat-view.active.show-rooms{
+    display:block!important;
+    position:relative;
+    height:100%;
+    overflow:hidden!important;
+  }
+  .chat-view.show-rooms .chat-pane{
+    display:none!important;
+  }
+  .chat-view.show-rooms .rooms-pane{
+    position:relative!important;
+    inset:auto!important;
+    z-index:1!important;
+    display:flex!important;
+    height:100%!important;
+    min-height:0!important;
+    overflow-y:auto!important;
+    background:
+      radial-gradient(circle at 18% -8%, rgba(var(--accent-rgb),.16), transparent 32%),
+      radial-gradient(circle at 88% 10%, rgba(124,92,255,.12), transparent 28%),
+      linear-gradient(180deg,#fbfdff 0%,#f7fbff 52%,#ffffff 100%)!important;
+    border-right:0!important;
+    padding:18px 18px 132px!important;
+  }
+}
