@@ -1705,6 +1705,8 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
       ...sanitizeUser(target),
       followers: followerIds.length,
       following: followingIds.length,
+      followerIds,
+      followingIds,
       postsCount: posts.length,
     },
     posts,
