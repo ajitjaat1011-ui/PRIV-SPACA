@@ -2659,11 +2659,11 @@ function startPolls() {
     _lastNotifPollAt = now;
     pollNotifications();
   }, 2000);
-  // RTC call signaling must always poll as a Cloudflare fallback because SSE events can land on another isolate.
+  // RTC call signaling — poll every 1.5s for fast call pickup
   State.pollTimers.rtc = setInterval(() => {
     if (isStorySurfaceOpen()) return;
     pollRTCSignals();
-  }, 2500);
+  }, 1500);
   // Try SSE — it'll auto-fall-back if not supported
   connectSSE();
 }
@@ -7686,31 +7686,29 @@ function initWebRTC() {
 }
 
 // ---- Call UI state machine ----
-// States: idle → ringing (incoming) | calling (outgoing) → connected → ended
 function showCallUI(status, user, incoming) {
   const overlay = $('#callOverlay');
   overlay.classList.remove('hidden', 'video-active');
   _callConnected = false;
-  _callConnecting = false;
+  _callConnecting = !incoming;
 
-  // Info section — always visible during ringing/calling
+  // Info section
   $('#callInfo').classList.remove('minimized');
   $('#callName').textContent = (user.displayName || user.username || 'User');
   renderAvatar($('#callAvatar'), user);
   $('#callStatusText').textContent = status;
   $('#callTimer').classList.add('hidden');
   $('#callTimer').textContent = '00:00';
-
-  // Video hidden until connected
   $('#callVideos').classList.add('hidden');
-
-  // Active controls HIDDEN until connected
-  $('#callActiveControls').classList.add('hidden');
 
   // Reset control button states
   resetCallControlBtns();
 
-  // Bottom bar: show accept+reject for incoming, only reject for outgoing
+  // SHOW controls immediately for ALL calls (outgoing + incoming)
+  // User needs mute/speaker from the moment the overlay appears
+  $('#callActiveControls').classList.remove('hidden');
+
+  // Bottom bar
   if (incoming) {
     $('#rtcAcceptBtn').classList.remove('hidden');
   } else {
@@ -7814,9 +7812,9 @@ async function handleRTCSignal(data) {
   const author = data.author;
 
   if (signal.type === 'offer') {
-    // Reject stale offers (>25s old)
+    // Reject stale offers (>45s old — allows for DB write lag + polling delay)
     const age = Date.now() - (data.createdAt || 0);
-    if (data.createdAt && age > 25000) return;
+    if (data.createdAt && age > 45000) return;
     // Deduplicate
     if (window._handledRtcOffers && window._handledRtcOffers.has(data.id)) return;
     if (!window._handledRtcOffers) window._handledRtcOffers = new Set();
