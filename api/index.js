@@ -639,27 +639,32 @@ async function syncTursoMirror(db) {
 }
 async function fetchTursoMirror(fallbackDb = null) {
   if (!isTursoConfigured()) return fallbackDb ? normalizeDb(fallbackDb) : normalizeDb({});
-  await tursoEnsure();
-  const c = tursoClient();
-  if (!_tursoBootstrapped) {
-    const meta = await c.execute({ sql: 'SELECT value FROM ps_meta WHERE key = ?', args: ['bootstrap_v1'] }).catch(() => ({ rows: [] }));
-    if (!meta.rows || meta.rows.length === 0) {
-      if (fallbackDb) await syncTursoMirror(fallbackDb);
-    } else {
-      _tursoBootstrapped = true;
+  try {
+    await tursoEnsure();
+    const c = tursoClient();
+    if (!_tursoBootstrapped) {
+      const meta = await c.execute({ sql: 'SELECT value FROM ps_meta WHERE key = ?', args: ['bootstrap_v1'] }).catch(() => ({ rows: [] }));
+      if (!meta.rows || meta.rows.length === 0) {
+        if (fallbackDb) await syncTursoMirror(fallbackDb);
+      } else {
+        _tursoBootstrapped = true;
+      }
     }
+    let usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
+    let postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC');
+    if ((!usersRows.rows?.length && !postsRows.rows?.length) && fallbackDb) {
+      await syncTursoMirror(fallbackDb);
+      usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
+      postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC');
+    }
+    return normalizeDb({
+      users: (usersRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
+      posts: (postsRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
+    });
+  } catch (e) {
+    console.warn('[turso] mirror read failed', e && e.message);
+    return fallbackDb ? normalizeDb(fallbackDb) : normalizeDb({});
   }
-  let usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
-  let postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC');
-  if ((!usersRows.rows?.length && !postsRows.rows?.length) && fallbackDb) {
-    await syncTursoMirror(fallbackDb);
-    usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
-    postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC');
-  }
-  return normalizeDb({
-    users: (usersRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
-    posts: (postsRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
-  });
 }
 async function fetchTursoUserById(userId) {
   if (!isTursoConfigured() || !userId) return null;
