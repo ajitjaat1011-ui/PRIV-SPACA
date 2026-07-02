@@ -83,6 +83,7 @@ async function api(path, options = {}) {
     if (cacheKey) _apiCache.set(cacheKey, { ts: Date.now(), data });
     // Bust GET cache when a mutation happens for related endpoints
     if (!isGet) {
+      _apiCache.delete('/notifications');
       if (path.startsWith('/messages')) {
         for (const k of [..._apiCache.keys()]) if (k.startsWith('/messages')) _apiCache.delete(k);
       } else if (path.startsWith('/posts')) {
@@ -5245,7 +5246,7 @@ function buildNotifRow(n, i) {
   wrap.appendChild(av);
   const badge = document.createElement('span');
   badge.className = 'notif-kind-badge ' + n.kind;
-  const ico = { like: 'heart', comment: 'message-circle', follow: 'user-plus', message: 'send' }[n.kind] || 'bell';
+  const ico = { like: 'heart', comment: 'message-circle', follow: 'user-plus', message: 'send', story_reply: 'reply' }[n.kind] || 'bell';
   badge.innerHTML = `<i data-lucide="${ico}"></i>`;
   wrap.appendChild(badge);
   li.appendChild(wrap);
@@ -5259,6 +5260,7 @@ function buildNotifRow(n, i) {
   if (n.kind === 'comment') msg = `<strong>${escapeHtml(fromName)}</strong> commented:`;
   if (n.kind === 'follow')  msg = `<strong>${escapeHtml(fromName)}</strong> started following you.`;
   if (n.kind === 'message') msg = `<strong>${escapeHtml(fromName)}</strong> sent you a message:`;
+  if (n.kind === 'story_reply') msg = `<strong>${escapeHtml(fromName)}</strong> replied to your story:`;
   body.innerHTML = msg + `<div class="nm">${escapeHtml(timeAgo(n.createdAt))}</div>`;
   if (n.text) {
     const preview = document.createElement('div');
@@ -5282,10 +5284,10 @@ function buildNotifRow(n, i) {
   // Click → navigate
   li.addEventListener('click', () => {
     closeNotifications();
-    if (n.kind === 'follow' || n.kind === 'message' || n.kind === 'like' || n.kind === 'comment') {
-      if (n.kind === 'message' && n.fromUserId) {
+    if (n.kind === 'follow' || n.kind === 'message' || n.kind === 'like' || n.kind === 'comment' || n.kind === 'story_reply') {
+      if ((n.kind === 'message' || n.kind === 'story_reply') && n.fromUserId) {
         // Open DM with sender
-        const member = (State.members || []).find(m => m.id === n.fromUserId);
+        const member = (State.members || []).find(m => m.id === n.fromUserId) || n.from;
         if (member) { openDM(member); switchTab('chat'); return; }
       }
       // Open the user's profile
