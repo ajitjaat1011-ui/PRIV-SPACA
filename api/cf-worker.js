@@ -2645,10 +2645,10 @@ app.get('/api/feed', requireAuth, async (c) => {
   }
 
   await tursoEnsure();
-  const c = tursoClient();
+  const tc = tursoClient();
 
   // 1. Get pre-fanned posts from ps_user_feeds (push model)
-  const feedRows = await c.execute({
+  const feedRows = await tc.execute({
     sql: `SELECT post_id, created_at FROM ps_user_feeds WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
     args: [myId, limit * 2]
   }).catch(() => ({ rows: [] }));
@@ -2663,7 +2663,7 @@ app.get('/api/feed', requireAuth, async (c) => {
 
   if (allFollowing.length > 0) {
     const placeholders = allFollowing.map(() => '?').join(',');
-    const recentPosts = await c.execute({
+    const recentPosts = await tc.execute({
       sql: `SELECT id FROM ps_posts WHERE user_id IN (${placeholders}) AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT ?`,
       args: [...allFollowing, limit]
     }).catch(() => ({ rows: [] }));
@@ -2676,7 +2676,7 @@ app.get('/api/feed', requireAuth, async (c) => {
   if (!finalPostIds.length) return c.json({ posts: [] });
 
   const idPlaceholders = finalPostIds.map(() => '?').join(',');
-  const postData = await c.execute({
+  const postData = await tc.execute({
     sql: `SELECT data_json FROM ps_posts WHERE id IN (${idPlaceholders})`,
     args: finalPostIds
   }).catch(() => ({ rows: [] }));
