@@ -6195,9 +6195,21 @@ function renderOtherProfile(data) {
 }
 
 function buildGridCell(p) {
+  p = normalizeProfilePost(p) || p;
   const cell = document.createElement('div');
   cell.className = 'ig-grid-cell';
-  if (p.imageUrl) {
+  if (p.videoUrl) {
+    const vid = document.createElement('video');
+    vid.src = p.videoUrl;
+    vid.muted = true;
+    vid.playsInline = true;
+    vid.preload = 'metadata';
+    cell.appendChild(vid);
+    const play = document.createElement('span');
+    play.className = 'video-badge';
+    play.textContent = '▶';
+    cell.appendChild(play);
+  } else if (p.imageUrl) {
     const img = lazyImg(p.imageUrl, '', p.id);
     img.addEventListener('error', () => {
       img.remove();
@@ -6207,10 +6219,10 @@ function buildGridCell(p) {
       cell.appendChild(fb);
     });
     cell.appendChild(img);
-  } else if (p.text) {
+  } else {
     const div = document.createElement('div');
     div.className = 'text-only';
-    div.textContent = p.text.slice(0, 200);
+    div.textContent = (p.text || 'Post').slice(0, 200);
     cell.appendChild(div);
   }
   if (p.likeCount > 0 || p.commentCount > 0) {
@@ -6220,7 +6232,8 @@ function buildGridCell(p) {
     cell.appendChild(badge);
   }
   cell.addEventListener('click', () => {
-    if (p.imageUrl) openLightbox(p.imageUrl, '');
+    if (p.videoUrl) openLightbox(p.videoUrl, 'Video');
+    else if (p.imageUrl) openLightbox(p.imageUrl, '');
     else toast(p.text || '');
   });
   return cell;
@@ -6280,6 +6293,46 @@ function bindUserProfileSheet() {
 // ============================================================
 let _profileTab = 'posts';
 
+
+function isOwnProfilePost(p, user = State.user) {
+  if (!p || !user || isStoryRecord(p)) return false;
+  const uid = user.id || '';
+  const uname = String(user.username || '').toLowerCase();
+  const author = p.author || p.authorSnapshot || {};
+  return p.userId === uid
+    || author.id === uid
+    || (uname && String(author.username || '').toLowerCase() === uname)
+    || (uname && String(p.username || '').toLowerCase() === uname);
+}
+
+function normalizeProfilePost(p) {
+  if (!p) return null;
+  const images = Array.isArray(p.images) ? p.images : [];
+  return {
+    ...p,
+    imageUrl: p.imageUrl || images[0] || null,
+    videoUrl: p.videoUrl || null,
+    text: p.text || '',
+    likeCount: Number(p.likeCount || (Array.isArray(p.likes) ? p.likes.length : 0)) || 0,
+    commentCount: Number(p.commentCount || (Array.isArray(p.comments) ? p.comments.length : 0)) || 0,
+  };
+}
+
+function mergeProfilePosts(primary, fallback, user = State.user) {
+  const out = [];
+  const seen = new Set();
+  const add = (p, requireOwn = false) => {
+    const n = normalizeProfilePost(p);
+    if (!n || !n.id || seen.has(n.id)) return;
+    if (requireOwn && !isOwnProfilePost(n, user)) return;
+    seen.add(n.id);
+    out.push(n);
+  };
+  (primary || []).forEach(p => add(p, false));
+  (fallback || []).forEach(p => add(p, true));
+  return out.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
 async function renderOwnProfile() {
   if (!State.user) return;
   const cachedUsername = State.user.username || State.user.displayName || 'me';
@@ -6288,8 +6341,9 @@ async function renderOwnProfile() {
   if (titleU) titleU.textContent = cachedUsername;
   if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
   if ($('#profileUsername')) $('#profileUsername').textContent = '@' + (State.user.username || cachedUsername);
-  // Fetch fresh relationship data so follower/following counts and sheets are correct.
+  // Fetch fresh relationship/post data so profile stats and grid are correct.
   try { await loadMembers(); updateOwnProfileStatCounts(State.user); } catch (_) {}
+  try { await loadPosts(); } catch (_) {}
   // Fetch fresh data (own profile uses same endpoint)
   try {
     const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
@@ -6317,16 +6371,13 @@ async function renderOwnProfile() {
     // Grid
     const grid = $('#profilePostsGrid');
     grid.innerHTML = '';
-    let postsToShow = data.posts;
-    updateOwnProfileStatCounts({ ...u, postsCount: Array.isArray(postsToShow) ? postsToShow.length : (u.postsCount || 0) });
+    let postsToShow = mergeProfilePosts(data.posts || [], State.posts || [], State.user);
     if (_profileTab === 'saved') {
       // Use the bookmark localStorage to filter ALL posts
       const saved = getSaved();
-      postsToShow = (State.posts || []).filter(p => !isStoryRecord(p) && saved[p.id]).map(p => ({
-        id: p.id, imageUrl: p.imageUrl, text: p.text,
-        likeCount: p.likeCount, commentCount: p.commentCount
-      }));
+      postsToShow = (State.posts || []).filter(p => !isStoryRecord(p) && saved[p.id]).map(normalizeProfilePost).filter(Boolean);
     }
+    updateOwnProfileStatCounts({ ...u, postsCount: Array.isArray(postsToShow) ? postsToShow.length : (u.postsCount || 0) });
     if (!postsToShow || postsToShow.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'ig-grid-empty';
