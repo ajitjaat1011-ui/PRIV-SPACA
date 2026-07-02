@@ -754,6 +754,7 @@ async function loadMembers() {
     const data = await api('/users');
     State.members = data.users || [];
     renderMembers();
+    if (typeof renderStoriesRail === 'function') renderStoriesRail();
   } catch (_) {}
 }
 
@@ -2472,14 +2473,11 @@ let _storiesRendered = false;
 let _lastStoriesSig = '';
 function renderStoriesRail() {
   const rail = $('#storiesRail');
-  if (!rail) return;
-  if (!State.members || State.members.length === 0 || !State.user) {
-    rail.style.display = 'none';
-    return;
-  }
+  if (!rail || !State.user) return;
+  const members = State.members || [];
   const meId = State.user.id;
-  const me = State.members.find(m => m.id === meId) || State.user;
-  const others = State.members
+  const me = members.find(m => m.id === meId) || State.user;
+  const others = members
     .filter(m => m.id !== meId && hasActiveStory(m.id))
     .sort((a, b) => {
       const bt = (getLatestStory(b.id)?.createdAt || 0) - (getLatestStory(a.id)?.createdAt || 0);

@@ -239,7 +239,7 @@ img{user-select:none;-webkit-user-drag:none}
 /* ===== App Shell (mobile-first IG layout) ===== */
 .app-shell{
   display:grid;
-  grid-template-rows:54px 1fr 58px;
+  grid-template-rows:54px 1fr;
   height:100%;background:var(--bg);animation:fade-in .3s ease;
   width:100%;max-width:100vw;overflow-x:hidden;box-sizing:border-box;
 }
@@ -553,6 +553,7 @@ img{user-select:none;-webkit-user-drag:none}
     radial-gradient(900px 500px at 0% 100%, rgba(150,47,191,.04), transparent 55%),
     var(--bg-soft);
   min-width:0;height:100%;overflow:hidden;min-height:0;
+  padding-bottom:74px;box-sizing:border-box;
 }
 .messages-scroll{min-height:0}
 .chat-header{
@@ -824,7 +825,7 @@ img{user-select:none;-webkit-user-drag:none}
 /* ===================== FEED (Instagram-grade) ===================== */
 .feed-view{background:var(--bg)}
 .feed-wrap{
-  max-width:560px;margin:0 auto;padding:0 0 24px;
+  max-width:560px;margin:0 auto;padding:0 0 84px;
   display:flex;flex-direction:column;gap:0;
   box-sizing:border-box;width:100%;min-width:0;
 }
@@ -835,7 +836,7 @@ img{user-select:none;-webkit-user-drag:none}
 .search-view{background:var(--bg)}
 .search-wrap{
   max-width:600px;margin:0 auto;
-  padding:14px 12px 24px;
+  padding:14px 12px 84px;
   display:flex;flex-direction:column;gap:14px;
   box-sizing:border-box;width:100%;min-width:0;
 }
@@ -1677,7 +1678,7 @@ img{user-select:none;-webkit-user-drag:none}
 /* ===== Profile view (Instagram-style) ===== */
 .profile-view{background:var(--bg)}
 .profile-wrap{
-  max-width:600px;margin:0 auto;padding:0;
+  max-width:600px;margin:0 auto;padding:0 0 84px;
   box-sizing:border-box;width:100%;min-width:0;
 }
 .profile-mode{animation:fade-in .25s ease}
