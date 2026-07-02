@@ -918,18 +918,58 @@
 
 <!-- ====== WEBRTC CALL OVERLAY ====== -->
 <div id="callOverlay" class="call-overlay hidden">
+  <!-- Animated background particles -->
+  <div class="call-bg-particles">
+    <span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span>
+  </div>
+
   <div class="call-box">
-    <div class="call-info">
-      <div id="callName" class="call-name">Incoming Call...</div>
-      <div id="callStatusText" class="call-status muted">Calling...</div>
-    </div>
+    <!-- Video layer (shown during connected video calls) -->
     <div class="call-videos hidden" id="callVideos">
       <video id="rtcRemoteVideo" autoplay playsinline></video>
       <video id="rtcLocalVideo" autoplay playsinline muted></video>
     </div>
-    <div class="call-controls">
-      <button id="rtcAcceptBtn" class="call-btn accept hidden"><i data-lucide="phone"></i></button>
-      <button id="rtcRejectBtn" class="call-btn reject"><i data-lucide="phone-off"></i></button>
+
+    <!-- Caller info (shown during ringing + audio calls) -->
+    <div class="call-info" id="callInfo">
+      <div class="call-avatar-ring">
+        <span id="callAvatar" class="avatar lg"></span>
+        <div class="call-avatar-pulse"></div>
+      </div>
+      <div id="callName" class="call-name">Incoming Call...</div>
+      <div id="callStatusText" class="call-status">Calling...</div>
+      <div id="callTimer" class="call-timer hidden">00:00</div>
+    </div>
+
+    <!-- Active call controls (glass pill bar) -->
+    <div class="call-active-controls hidden" id="callActiveControls">
+      <button id="callMuteBtn" class="glass-btn" title="Mute" aria-label="Mute">
+        <i data-lucide="mic"></i>
+        <span>Mute</span>
+      </button>
+      <button id="callSpeakerBtn" class="glass-btn" title="Speaker" aria-label="Speaker">
+        <i data-lucide="volume-2"></i>
+        <span>Speaker</span>
+      </button>
+      <button id="callVideoToggleBtn" class="glass-btn hidden" title="Camera" aria-label="Toggle camera">
+        <i data-lucide="video"></i>
+        <span>Camera</span>
+      </button>
+      <button id="callFlipBtn" class="glass-btn hidden" title="Flip camera" aria-label="Flip camera">
+        <i data-lucide="refresh-cw"></i>
+        <span>Flip</span>
+      </button>
+    </div>
+
+    <!-- Bottom action bar -->
+    <div class="call-bottom-bar">
+      <button id="rtcAcceptBtn" class="call-circle-btn accept hidden" aria-label="Accept call">
+        <i data-lucide="phone"></i>
+      </button>
+      <button id="rtcRejectBtn" class="call-circle-btn reject" aria-label="End call">
+        <i data-lucide="phone-off"></i>
+      </button>
     </div>
   </div>
 </div>
