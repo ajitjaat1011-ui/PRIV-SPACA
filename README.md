@@ -1,4 +1,4 @@
-# PRIV SPACA
+# PRIV SPACA - Updated 2026-07-02
 
 **🚀 Live:** https://priv-spaca-app.vercel.app
 
