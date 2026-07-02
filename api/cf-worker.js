@@ -670,6 +670,22 @@ async function fetchTursoMessages(roomId, now = nowMs()) {
     return null;
   }
 }
+async function tursoUpsertUser(user) {
+  if (!isTursoConfigured() || !user) return false;
+  await tursoEnsure();
+  const ts = nowMs();
+  try {
+    await tursoClient().execute({
+      sql: 'INSERT INTO ps_users (id, username_lower, email_lower, created_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET username_lower=excluded.username_lower, email_lower=excluded.email_lower, updated_at=excluded.updated_at, data_json=excluded.data_json',
+      args: [user.id, String(user.username || '').toLowerCase(), String(user.email || '').toLowerCase(), Number(user.createdAt || 0), ts, JSON.stringify(user)],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[turso] user upsert failed', e && e.message);
+    return false;
+  }
+}
+
 async function tursoUpsertPosts(posts) {
   if (!isTursoConfigured()) return false;
   const list = (posts || []).filter(Boolean);
@@ -834,7 +850,6 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
   if (ok) {
     localCache = normalizeDb(toWrite);
     cacheTimestamp = nowMs();
-    if (isTursoConfigured() && !opts.skipSecondarySync) await syncTursoMirror(localCache);
   }
   return ok;
 }
@@ -1418,6 +1433,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
       db.users = db.users.filter(u => u.id !== newUser.id);
       return c.json({ error: 'Storage temporarily unavailable. Please try again in a moment.' }, 503);
     }
+    if (isTursoConfigured()) await tursoUpsertUser(newUser);
     const token = await signToken(newUser);
     return c.json({ token, user: sanitizeUser(newUser) });
   } catch (e) {
@@ -1590,6 +1606,7 @@ app.post('/api/user/update', requireAuth, async (c) => {
       if (cleanPhoto === '' || isSafeImageUrl(cleanPhoto)) user.photoUrl = cleanPhoto;
     }
     await saveDatabase(db, false);
+    if (isTursoConfigured()) await tursoUpsertUser(user);
     return c.json({ user: sanitizeUser(user) });
   } catch (e) { console.error('[user/update]', e); return c.json({ error: 'Update failed' }, 500); }
 });
@@ -1607,6 +1624,7 @@ app.post('/api/user/vip/redeem', requireAuth, async (c) => {
     user.verified = true;
     user.verifiedAt = user.verifiedAt || nowMs();
     await saveDatabase(db, false);
+    if (isTursoConfigured()) await tursoUpsertUser(user);
     return c.json({ ok: true, user: sanitizeUser(user) });
   } catch (e) { console.error('[vip/redeem]', e); return c.json({ error: 'VIP activation failed' }, 500); }
 });
@@ -1638,6 +1656,7 @@ app.post('/api/user/close-friends', requireAuth, async (c) => {
     else set.add(targetId);
     me.closeFriends = Array.from(set).slice(0, 500);
     await saveDatabase(db, false);
+    if (isTursoConfigured()) await tursoUpsertUser(me);
     return c.json({ ids: me.closeFriends, added: me.closeFriends.includes(targetId) });
   } catch (e) { console.error('[close-friends]', e); return c.json({ error: 'Update failed' }, 500); }
 });
@@ -2047,6 +2066,10 @@ app.post('/api/user/follow', requireAuth, async (c) => {
   if (!target.followers.includes(myId)) target.followers.push(myId);
   pushNotification(db, targetId, 'follow', myId);
   await saveDatabase(db, false);
+  if (isTursoConfigured()) {
+    await tursoUpsertUser(me);
+    await tursoUpsertUser(target);
+  }
   return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
 app.post('/api/user/unfollow', requireAuth, async (c) => {
@@ -2059,6 +2082,10 @@ app.post('/api/user/unfollow', requireAuth, async (c) => {
   me.following = (me.following || []).filter(id => id !== targetId);
   target.followers = (target.followers || []).filter(id => id !== c.get('userId'));
   await saveDatabase(db, false);
+  if (isTursoConfigured()) {
+    await tursoUpsertUser(me);
+    await tursoUpsertUser(target);
+  }
   return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
 app.post('/api/user/block', requireAuth, async (c) => {
@@ -2077,6 +2104,10 @@ app.post('/api/user/block', requireAuth, async (c) => {
   me.followers = (me.followers || []).filter(id => id !== targetId);
   db.notifications = (db.notifications || []).filter(n => !((n.userId === myId && n.fromUserId === targetId) || (n.userId === targetId && n.fromUserId === myId)));
   await saveDatabase(db, false);
+  if (isTursoConfigured()) {
+    await tursoUpsertUser(me);
+    await tursoUpsertUser(target);
+  }
   return c.json({ ok: true });
 });
 app.post('/api/user/unblock', requireAuth, async (c) => {
@@ -2087,6 +2118,7 @@ app.post('/api/user/unblock', requireAuth, async (c) => {
   if (!me) return c.json({ error: 'Not found' }, 404);
   me.blocked = (me.blocked || []).filter(id => id !== targetId);
   await saveDatabase(db, false);
+  if (isTursoConfigured()) await tursoUpsertUser(me);
   return c.json({ ok: true });
 });
 app.get('/api/user/:id/profile', requireAuth, async (c) => {
@@ -2566,8 +2598,8 @@ async function tursoUpsertUserFeeds(userFeeds) {
 }
 
 async function getFollowerCount(userId, db) {
-  if (!db || !db.follows) return 0;
-  return (db.follows || []).filter(f => f.targetId === userId).length;
+  const user = (db.users || []).find(u => u.id === userId);
+  return user && Array.isArray(user.followers) ? user.followers.length : 0;
 }
 
 async function fanoutPostToFollowers(post, db) {
@@ -2581,7 +2613,8 @@ async function fanoutPostToFollowers(post, db) {
   }
   
   // Normal user: fan-out to followers
-  const followers = (db.follows || []).filter(f => f.targetId === authorId).map(f => f.userId);
+  const author = (db.users || []).find(u => u.id === authorId);
+  const followers = (author && Array.isArray(author.followers)) ? author.followers : [];
   if (!followers.length) return;
 
   const feedRows = followers.map(fid => ({
@@ -2601,10 +2634,11 @@ app.get('/api/feed', requireAuth, async (c) => {
   if (!isTursoConfigured()) {
     // Fallback to existing posts endpoint behavior
     const db = await fetchDatabase();
-    const following = (db.follows || []).filter(f => f.userId === myId).map(f => f.targetId);
-    following.push(myId);
+    const me = (db.users || []).find(u => u.id === myId);
+    const following = (me && Array.isArray(me.following)) ? me.following : [];
+    const allFollowing = [...following, myId];
     const posts = (db.posts || [])
-      .filter(p => following.includes(p.userId) && !p.story)
+      .filter(p => allFollowing.includes(p.userId) && !p.story)
       .sort((a,b) => (b.createdAt||0) - (a.createdAt||0))
       .slice(0, limit);
     return c.json({ posts, source: 'full-db-fallback' });
@@ -2623,14 +2657,15 @@ app.get('/api/feed', requireAuth, async (c) => {
 
   // 2. Also fetch recent posts from people I follow (for celebrities + new follows)
   const db = await fetchDatabase();
-  const following = (db.follows || []).filter(f => f.userId === myId).map(f => f.targetId);
-  following.push(myId);
+  const me = (db.users || []).find(u => u.id === myId);
+  const following = (me && Array.isArray(me.following)) ? me.following : [];
+  const allFollowing = [...following, myId];
 
-  if (following.length > 0) {
-    const placeholders = following.map(() => '?').join(',');
+  if (allFollowing.length > 0) {
+    const placeholders = allFollowing.map(() => '?').join(',');
     const recentPosts = await c.execute({
       sql: `SELECT id FROM ps_posts WHERE user_id IN (${placeholders}) AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT ?`,
-      args: [...following, limit]
+      args: [...allFollowing, limit]
     }).catch(() => ({ rows: [] }));
 
     recentPosts.rows?.forEach(r => postIds.add(r.id));
