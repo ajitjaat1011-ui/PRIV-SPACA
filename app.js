@@ -1706,6 +1706,129 @@ function renderMessages(forceScroll) {
   }
 }
 
+
+function isAudioAttachmentUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const raw = url.trim();
+  const clean = raw.split('#')[0].split('?')[0].toLowerCase();
+  return raw.startsWith('data:audio/')
+    || /\.(webm|mp3|m4a|ogg|oga|wav|aac|opus|flac)$/i.test(clean)
+    || /(^|[\/_-])voice[\w-]*note/i.test(raw)
+    || /(^|[\/_-])audio[\w-]*(\.|\/)/i.test(raw);
+}
+
+function formatAudioTime(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return '0:00';
+  const mins = Math.floor(n / 60);
+  const secs = Math.floor(n % 60);
+  return mins + ':' + String(secs).padStart(2, '0');
+}
+
+function createVoiceNoteElement(src, isMine, opts = {}) {
+  const root = document.createElement('div');
+  root.className = 'voice-note' + (isMine ? ' mine' : ' theirs') + (opts.preview ? ' preview' : '');
+  root.setAttribute('role', 'group');
+  root.setAttribute('aria-label', opts.preview ? 'Voice note preview' : 'Voice note message');
+
+  const audio = document.createElement('audio');
+  audio.preload = 'metadata';
+  audio.src = src;
+  audio.className = 'voice-note-audio';
+
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'voice-play-btn';
+  playBtn.setAttribute('aria-label', 'Play voice note');
+  playBtn.innerHTML = '<i data-lucide="play"></i>';
+
+  const body = document.createElement('div');
+  body.className = 'voice-note-body';
+
+  const top = document.createElement('div');
+  top.className = 'voice-note-top';
+  const title = document.createElement('span');
+  title.className = 'voice-note-title';
+  title.textContent = 'Voice note';
+  const duration = document.createElement('span');
+  duration.className = 'voice-note-duration';
+  duration.textContent = opts.duration || '0:00';
+  top.append(title, duration);
+
+  const wave = document.createElement('div');
+  wave.className = 'voice-waveform';
+  wave.setAttribute('aria-hidden', 'true');
+  const bars = [14, 22, 12, 28, 18, 34, 16, 25, 13, 30, 20, 36, 15, 26, 18, 32, 12, 24, 17, 29, 14, 21];
+  bars.forEach((h, idx) => {
+    const b = document.createElement('span');
+    b.className = 'voice-wave-bar';
+    b.style.setProperty('--bar-h', h + 'px');
+    b.style.setProperty('--bar-delay', (idx * 28) + 'ms');
+    wave.appendChild(b);
+  });
+
+  const meta = document.createElement('div');
+  meta.className = 'voice-note-meta';
+  const mic = document.createElement('span');
+  mic.className = 'voice-note-mic';
+  mic.innerHTML = '<i data-lucide="mic-2"></i>';
+  const hint = document.createElement('span');
+  hint.textContent = opts.preview ? 'Ready to send' : (isMine ? 'Sent audio' : 'Audio message');
+  meta.append(mic, hint);
+
+  body.append(top, wave, meta);
+  root.append(playBtn, body, audio);
+
+  const setIcon = (name) => {
+    playBtn.innerHTML = '<i data-lucide="' + name + '"></i>';
+    if (typeof refreshIcons === 'function') refreshIcons();
+  };
+  const updateProgress = () => {
+    const dur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    const pct = dur ? Math.min(1, Math.max(0, audio.currentTime / dur)) : 0;
+    const activeBars = Math.round(pct * bars.length);
+    wave.querySelectorAll('.voice-wave-bar').forEach((bar, idx) => bar.classList.toggle('played', idx < activeBars));
+    if (dur) {
+      duration.textContent = audio.paused || audio.ended
+        ? formatAudioTime(dur)
+        : formatAudioTime(audio.currentTime) + ' / ' + formatAudioTime(dur);
+    }
+  };
+
+  playBtn.addEventListener('click', async () => {
+    try {
+      if (!audio.paused) {
+        audio.pause();
+        return;
+      }
+      const active = window.__privSpacaActiveVoiceAudio;
+      if (active && active !== audio && !active.paused) active.pause();
+      window.__privSpacaActiveVoiceAudio = audio;
+      await audio.play();
+    } catch (_) {
+      toast('Could not play this voice note', 'error');
+    }
+  });
+  wave.addEventListener('click', (e) => {
+    const dur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    if (!dur) return;
+    const rect = wave.getBoundingClientRect();
+    const pct = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    audio.currentTime = pct * dur;
+    updateProgress();
+  });
+  audio.addEventListener('loadedmetadata', updateProgress);
+  audio.addEventListener('durationchange', updateProgress);
+  audio.addEventListener('timeupdate', updateProgress);
+  audio.addEventListener('play', () => { root.classList.add('playing'); setIcon('pause'); });
+  audio.addEventListener('pause', () => { root.classList.remove('playing'); if (!audio.ended) setIcon('play'); updateProgress(); });
+  audio.addEventListener('ended', () => { root.classList.remove('playing'); setIcon('rotate-ccw'); updateProgress(); });
+  audio.addEventListener('error', () => { duration.textContent = 'Audio unavailable'; root.classList.add('voice-error'); });
+
+  requestAnimationFrame(() => { if (typeof refreshIcons === 'function') refreshIcons(); });
+  return root;
+}
+
 function renderMessage(m, meId, grouped) {
   const row = document.createElement('div');
   row.className = 'message';
@@ -1736,7 +1859,8 @@ function renderMessage(m, meId, grouped) {
   }
 
   const bubble = document.createElement('div');
-  const isImageOnly = !!m.imageUrl && !m.text && !m.replyTo;
+  const hasAudioAttachment = isAudioAttachmentUrl(m.imageUrl);
+  const isImageOnly = !!m.imageUrl && !hasAudioAttachment && !m.text && !m.replyTo;
   bubble.className = 'bubble' + (isImageOnly ? ' image-only' : '');
   // Per-user pastel bubble color (only for "their" messages)
   if (!isMine && !isImageOnly) {
@@ -1748,7 +1872,7 @@ function renderMessage(m, meId, grouped) {
   if (m.replyTo) {
     const q = document.createElement('div');
     q.className = 'reply-quote';
-    const previewText = m.replyTo.text ? m.replyTo.text : (m.replyTo.imageUrl ? '📷 Photo' : '…');
+    const previewText = m.replyTo.text ? m.replyTo.text : (isAudioAttachmentUrl(m.replyTo.imageUrl) ? '🎙️ Voice note' : (m.replyTo.imageUrl ? '📷 Photo' : '…'));
     q.innerHTML = `<strong>@${escapeHtml(m.replyTo.username || 'user')}</strong><div class="quoted-text">${escapeHtml(previewText.slice(0, 140))}</div>`;
     q.addEventListener('click', () => {
       const el = $('#messagesList .message[data-id="' + m.replyTo.id + '"]');
@@ -1832,15 +1956,10 @@ function renderMessage(m, meId, grouped) {
     }
   }
   if (m.imageUrl) {
-    if (m.imageUrl.includes('.webm') || m.imageUrl.includes('.mp3') || m.imageUrl.startsWith('data:audio/')) {
-      const au = document.createElement('audio');
-      au.controls = true;
-      au.src = m.imageUrl;
-      au.style.width = '200px';
-      au.style.display = 'block';
-      au.style.borderRadius = '24px';
-      au.style.marginTop = '4px';
-      bubble.appendChild(au);
+    if (hasAudioAttachment) {
+      bubble.classList.add('has-audio-attach');
+      if (!m.text && !m.replyTo && !m.storyReply && !m.encrypted) bubble.classList.add('voice-only');
+      bubble.appendChild(createVoiceNoteElement(m.imageUrl, isMine));
     } else {
       const img = document.createElement('img');
       img.className = 'img-attach';
@@ -1899,7 +2018,7 @@ function setReplyTo(m) {
   const author = resolveAuthor(m.author, m.userId);
   State.replyTo = {
     id: m.id,
-    text: m.text || (m.imageUrl ? '📷 Photo' : ''),
+    text: m.text || (isAudioAttachmentUrl(m.imageUrl) ? '🎙️ Voice note' : (m.imageUrl ? '📷 Photo' : '')),
     username: author.username || 'user',
     imageUrl: m.imageUrl || null
   };
@@ -2117,8 +2236,10 @@ async function handleAttach(file) {
 }
 
 function showAttachPreview(att) {
-  const isAudio = att.isAudio || (att.file && att.file.type && att.file.type.startsWith('audio/')) || (att.url && (att.url.startsWith('data:audio/') || att.url.includes('voice_note') || att.url.endsWith('.webm') || att.url.endsWith('.mp3')));
+  const isAudio = att.isAudio || (att.file && att.file.type && att.file.type.startsWith('audio/')) || isAudioAttachmentUrl(att.url);
   
+  const previewEl = $('#attachPreview');
+  if (previewEl) previewEl.classList.toggle('audio-attach', !!isAudio);
   const imgEl = $('#attachThumb');
   let audioBox = $('#attachAudioBox');
   if (!audioBox && imgEl) {
@@ -2132,19 +2253,10 @@ function showAttachPreview(att) {
     if (imgEl) imgEl.style.display = 'none';
     if (infoEl) infoEl.style.display = 'none';
     if (audioBox) {
-      audioBox.style.display = 'flex';
-      audioBox.style.alignItems = 'center';
-      audioBox.style.justifyContent = 'space-between';
-      audioBox.style.flex = '1';
-      audioBox.style.minWidth = '0';
-      audioBox.style.gap = '8px';
-      audioBox.innerHTML = `
-        <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:0;">
-          <div style="width:34px; height:34px; border-radius:50%; background:rgba(236,72,153,0.2); color:#ec4899; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;">🎙️</div>
-          <div style="font-weight:600; font-size:13px; color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Voice Note</div>
-          <audio controls src="${att.url}" style="height:32px; flex:1; min-width:140px; max-width:210px; outline:none;"></audio>
-        </div>
-      `;
+      audioBox.className = 'attach-audio-box';
+      audioBox.style.display = 'block';
+      audioBox.innerHTML = '';
+      audioBox.appendChild(createVoiceNoteElement(att.url, true, { preview: true }));
     }
   } else {
     if (imgEl) {
@@ -2165,6 +2277,7 @@ function showAttachPreview(att) {
 function clearAttach() {
   State.attach = null;
   $('#attachPreview').classList.add('hidden');
+  $('#attachPreview').classList.remove('audio-attach');
   const imgEl = $('#attachThumb');
   if (imgEl) {
     imgEl.src = '';
