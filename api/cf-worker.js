@@ -146,6 +146,13 @@ async function neonEnsure() {
     value JSONB NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`;
+  await sql`CREATE TABLE IF NOT EXISTS priv_spaca_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    data JSONB NOT NULL,
+    created_at BIGINT NOT NULL
+  )`.catch(() => {});
   const rows = await sql`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
   if (rows.length === 0) {
     const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', createdAt: Date.now() } });
@@ -512,7 +519,7 @@ function clientIp(c) {
 }
 async function authRateLimit(c, next) {
   const ip = clientIp(c);
-  const r = rateLimit({ key: 'auth:' + ip + ':' + c.req.path, limit: 10, windowMs: 15 * 60_000 });
+  const r = rateLimit({ key: 'auth:' + ip + ':' + c.req.path, limit: 40, windowMs: 15 * 60_000 });
   if (!r.allowed) {
     c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
     return c.json({ error: 'Too many auth attempts. Try again in 15 minutes.' }, 429);
@@ -521,8 +528,8 @@ async function authRateLimit(c, next) {
 }
 async function globalRateLimit(c, next) {
   const ip = clientIp(c);
-  const r = rateLimit({ key: 'global:' + ip, limit: 120, windowMs: 60_000 });
-  c.header('X-RateLimit-Limit', '120');
+  const r = rateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
+  c.header('X-RateLimit-Limit', '400');
   c.header('X-RateLimit-Remaining', String(r.remaining));
   if (!r.allowed) {
     c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
@@ -565,12 +572,20 @@ function _pushEvent(userId, kind, data) {
     try { sub.write(`id: ${evt.id}\nevent: ${evt.kind}\ndata: ${JSON.stringify(evt)}\n\n`); }
     catch (_) { sub.closed = true; }
   }
+  if (isNeonConfigured()) {
+    neonClient()`INSERT INTO priv_spaca_events (id, user_id, kind, data, created_at)
+      VALUES (${evt.id}, ${userId}, ${kind}, ${JSON.stringify(evt)}::jsonb, ${evt.ts})
+      ON CONFLICT (id) DO NOTHING`.catch(() => {});
+  }
   return evt;
 }
 function _broadcastEvent(kind, data, excludeUserId) {
   for (const userId of new Set([..._eventSubscribers.keys(), ..._eventQueues.keys()])) {
     if (userId === excludeUserId) continue;
     _pushEvent(userId, kind, data);
+  }
+  if (isNeonConfigured()) {
+    _pushEvent('__ALL__', kind, data);
   }
 }
 
@@ -1873,11 +1888,36 @@ app.get('/api/stream', async (c) => {
       if (!_eventSubscribers.has(userId)) _eventSubscribers.set(userId, new Set());
       _eventSubscribers.get(userId).add(sub);
       const heartbeat = setInterval(() => { try { send(': ping\n\n'); } catch (_) {} }, 10000);
+      let lastSeenTs = Date.now() - 1500;
+      const sentIds = new Set();
+      const neonPoller = isNeonConfigured() ? setInterval(async () => {
+        if (sub.closed) return;
+        try {
+          const sql = neonClient();
+          const rows = await sql`SELECT id, kind, data, created_at FROM priv_spaca_events
+            WHERE (user_id = ${userId} OR user_id = '__ALL__') AND created_at > ${lastSeenTs}
+            ORDER BY created_at ASC LIMIT 30`;
+          for (const r of rows || []) {
+            const ts = Number(r.created_at);
+            if (ts > lastSeenTs) lastSeenTs = ts;
+            if (!sentIds.has(r.id)) {
+              sentIds.add(r.id);
+              const payloadStr = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+              send(`id: ${r.id}\nevent: ${r.kind}\ndata: ${payloadStr}\n\n`);
+            }
+          }
+          if (Math.random() < 0.03) {
+            const oldTs = Date.now() - 300_000;
+            sql`DELETE FROM priv_spaca_events WHERE created_at < ${oldTs}`.catch(() => {});
+          }
+        } catch (_) {}
+      }, 1500) : null;
       const autoclose = setTimeout(() => cleanup(), 24000);
       function cleanup() {
         if (sub.closed) return;
         sub.closed = true;
         clearInterval(heartbeat);
+        if (neonPoller) clearInterval(neonPoller);
         clearTimeout(autoclose);
         const set = _eventSubscribers.get(userId);
         if (set) { set.delete(sub); if (set.size === 0) _eventSubscribers.delete(userId); }

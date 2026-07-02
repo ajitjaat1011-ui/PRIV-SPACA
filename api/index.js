@@ -66,12 +66,12 @@ setInterval(() => {
   for (const [k, v] of _rateBuckets) if (v.resetAt < now) _rateBuckets.delete(k);
 }, 60000).unref?.();
 
-// Global throttle: 120 req/min per IP for all /api/* routes
+// Global throttle: 400 req/min per IP for all /api/* routes
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api')) return next();
   const ip = clientIp(req);
-  const r = rateLimit({ key: 'global:' + ip, limit: 120, windowMs: 60_000 });
-  res.setHeader('X-RateLimit-Limit', '120');
+  const r = rateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
+  res.setHeader('X-RateLimit-Limit', '400');
   res.setHeader('X-RateLimit-Remaining', String(r.remaining));
   if (!r.allowed) {
     res.setHeader('Retry-After', String(Math.ceil((r.resetAt - Date.now())/1000)));
@@ -80,11 +80,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Auth-specific rate limit: 10 attempts / 15 min per IP for signup, login, reset
+// Auth-specific rate limit: 40 attempts / 15 min per IP for signup, login, reset
 function authRateLimit(req, res, next) {
   const ip = clientIp(req);
   const key = 'auth:' + ip + ':' + req.path;
-  const r = rateLimit({ key, limit: 10, windowMs: 15 * 60_000 });
+  const r = rateLimit({ key, limit: 40, windowMs: 15 * 60_000 });
   if (!r.allowed) {
     res.setHeader('Retry-After', String(Math.ceil((r.resetAt - Date.now())/1000)));
     return res.status(429).json({ error: 'Too many auth attempts. Try again in 15 minutes.' });
