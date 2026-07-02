@@ -1024,12 +1024,21 @@ async function searchNoteSongs(q) {
   try {
     const res = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(q) + '&media=music&limit=15');
     const data = await res.json();
-    const list = (data.results || []).filter(r => r.previewUrl).map(r => ({
+    let list = (data.results || []).filter(r => r.previewUrl).map(r => ({
       title: r.trackName || 'Song', artist: r.artistName || 'Artist',
       art: r.artworkUrl100 || '', audio: r.previewUrl,
     }));
+    if (list.length === 0 && typeof storyMusicCatalog !== 'undefined') {
+      const ql = q.toLowerCase();
+      list = storyMusicCatalog.filter(s => s.title.toLowerCase().includes(ql) || s.artist.toLowerCase().includes(ql));
+    }
     renderNoteSongResults(list);
   } catch (e) {
+    if (typeof storyMusicCatalog !== 'undefined') {
+      const ql = q.toLowerCase();
+      const list = storyMusicCatalog.filter(s => s.title.toLowerCase().includes(ql) || s.artist.toLowerCase().includes(ql));
+      if (list.length > 0) { renderNoteSongResults(list); return; }
+    }
     if (box) box.innerHTML = '<div class="note-song-empty">Search failed — check your connection.</div>';
   }
 }
@@ -6149,6 +6158,8 @@ function lazyImg(src, alt = '', seed = '') {
   });
   img.addEventListener('error', () => {
     img.style.opacity = '1';   // keep placeholder color visible
+    img.removeAttribute('src');
+    img.alt = 'Image unavailable';
   });
   // Use IntersectionObserver to defer src assignment for off-screen images
   if ('IntersectionObserver' in window) {
