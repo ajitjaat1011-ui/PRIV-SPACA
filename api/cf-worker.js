@@ -1224,7 +1224,7 @@ app.use('/api/*', globalRateLimit);
 app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
   persistence: isNeonConfigured() ? 'neon-postgres' : (isRepo() ? 'github-repo' : 'in-memory'),
-  secondaryPersistence: isTursoConfigured() ? 'turso-mirror-users-posts' : null,
+  secondaryPersistence: isTursoConfigured() ? 'turso-structured-social' : null,
   runtime: 'cloudflare-workers',
   time: nowMs(), version: 'phase1-neon-json-storage',
 }));
