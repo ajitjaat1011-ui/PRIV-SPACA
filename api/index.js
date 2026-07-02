@@ -1041,6 +1041,7 @@ app.get('/api/users', authMiddleware, async (req, res) => {
       blockedMe.add(u.id);
     }
   });
+  const myFollowing = new Set((me && me.following) || []);
   const list = db.users
     .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
     .map(u => {
@@ -1049,6 +1050,8 @@ app.get('/api/users', authMiddleware, async (req, res) => {
         ...sanitizeUser(u),
         online: now - hb < 45000,
         lastSeen: hb,
+        iFollow: myFollowing.has(u.id),
+        followsMe: Array.isArray(u.following) && u.following.includes(req.userId),
       };
     });
   res.json({ users: list });

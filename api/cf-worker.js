@@ -1104,9 +1104,16 @@ app.get('/api/users', requireAuth, async (c) => {
     if (u.id !== myId && Array.isArray(u.blocked) && u.blocked.includes(myId)) blockedMe.add(u.id);
   });
   const now = nowMs();
+  const myFollowing = new Set((me && me.following) || []);
   const list = db.users
     .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
-    .map(u => ({ ...sanitizeUser(u), online: now - (db.heartbeat[u.id] || 0) < 45000, lastSeen: db.heartbeat[u.id] || 0 }));
+    .map(u => ({
+      ...sanitizeUser(u),
+      online: now - (db.heartbeat[u.id] || 0) < 45000,
+      lastSeen: db.heartbeat[u.id] || 0,
+      iFollow: myFollowing.has(u.id),
+      followsMe: Array.isArray(u.following) && u.following.includes(myId),
+    }));
   return c.json({ users: list });
 });
 
