@@ -7674,6 +7674,128 @@ function initWebRTC() {
   if(btnVideo) btnVideo.addEventListener('click', () => { if (chooser) chooser.classList.add('hidden'); startCall(true); });
   if(btnAccept) btnAccept.addEventListener('click', acceptCall);
   if(btnReject) btnReject.addEventListener('click', endCall);
+  // Active call controls
+  const muteBtn = $('#callMuteBtn');
+  const speakerBtn = $('#callSpeakerBtn');
+  const videoToggleBtn = $('#callVideoToggleBtn');
+  const flipBtn = $('#callFlipBtn');
+  if (muteBtn) muteBtn.addEventListener('click', toggleMute);
+  if (speakerBtn) speakerBtn.addEventListener('click', toggleSpeaker);
+  if (videoToggleBtn) videoToggleBtn.addEventListener('click', toggleVideoUpgrade);
+  if (flipBtn) flipBtn.addEventListener('click', flipCamera);
+}
+// ====== Call state ======
+let _callMuted = false;
+let _callSpeakerOn = false;
+let _callFacingMode = 'user';
+let _callTimerInterval = null;
+let _callConnectedAt = 0;
+function toggleMute() {
+  if (!rtcLocalStream) return;
+  const audioTracks = rtcLocalStream.getAudioTracks();
+  if (!audioTracks.length) return;
+  _callMuted = !_callMuted;
+  audioTracks.forEach(t => { t.enabled = !_callMuted; });
+  const btn = $('#callMuteBtn');
+  if (btn) {
+    btn.classList.toggle('active', _callMuted);
+    btn.querySelector('i').setAttribute('data-lucide', _callMuted ? 'mic-off' : 'mic');
+    btn.querySelector('span').textContent = _callMuted ? 'Unmute' : 'Mute';
+    refreshIcons();
+  }
+}
+function toggleSpeaker() {
+  _callSpeakerOn = !_callSpeakerOn;
+  try {
+    const remoteVideo = $('#rtcRemoteVideo');
+    if (remoteVideo && remoteVideo.setSinkId) {
+      navigator.mediaDevices.enumerateDevices().then(devices => {
+        const speakers = devices.filter(d => d.kind === 'audiooutput');
+        const speaker = speakers.find(d => d.label.toLowerCase().includes('speaker') || d.label.toLowerCase().includes('loud'));
+        const earpiece = speakers.find(d => d.label.toLowerCase().includes('earpiece') || d.label.toLowerCase().includes('default'));
+        const target = _callSpeakerOn ? (speaker || speakers[0]) : (earpiece || speakers[0]);
+        if (target) remoteVideo.setSinkId(target.deviceId).catch(() => {});
+      });
+    }
+  } catch (_) {}
+  const btn = $('#callSpeakerBtn');
+  if (btn) {
+    btn.classList.toggle('active', _callSpeakerOn);
+    btn.querySelector('i').setAttribute('data-lucide', _callSpeakerOn ? 'volume-x' : 'volume-2');
+    btn.querySelector('span').textContent = _callSpeakerOn ? 'Earpiece' : 'Speaker';
+    refreshIcons();
+  }
+}
+async function toggleVideoUpgrade() {
+  if (!rtcPeerConnection || !rtcCurrentPeer) return;
+  if (isVideoCall) {
+    const videoTracks = rtcLocalStream ? rtcLocalStream.getVideoTracks() : [];
+    if (videoTracks.length) {
+      const track = videoTracks[0];
+      track.enabled = !track.enabled;
+      const btn = $('#callVideoToggleBtn');
+      if (btn) {
+        btn.classList.toggle('active', !track.enabled);
+        btn.querySelector('i').setAttribute('data-lucide', track.enabled ? 'video' : 'video-off');
+        btn.querySelector('span').textContent = track.enabled ? 'Camera' : 'Camera Off';
+        refreshIcons();
+      }
+    }
+    return;
+  }
+  try {
+    const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: _callFacingMode } });
+    const videoTrack = videoStream.getVideoTracks()[0];
+    if (rtcLocalStream) rtcLocalStream.addTrack(videoTrack);
+    rtcPeerConnection.addTrack(videoTrack, rtcLocalStream || videoStream);
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+    isVideoCall = true;
+    const offer = await rtcPeerConnection.createOffer();
+    await rtcPeerConnection.setLocalDescription(offer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: true });
+    $('#callVideos').classList.remove('hidden');
+    $('#callOverlay').classList.add('video-active');
+    $('#callFlipBtn').classList.remove('hidden');
+    refreshIcons();
+  } catch (err) { toast('Could not access camera', 'error'); }
+}
+async function flipCamera() {
+  if (!rtcLocalStream) return;
+  const videoTracks = rtcLocalStream.getVideoTracks();
+  if (!videoTracks.length) return;
+  _callFacingMode = _callFacingMode === 'user' ? 'environment' : 'user';
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: _callFacingMode } });
+    const newTrack = newStream.getVideoTracks()[0];
+    const oldTrack = videoTracks[0];
+    const sender = rtcPeerConnection.getSenders().find(s => s.track === oldTrack);
+    if (sender) await sender.replaceTrack(newTrack);
+    rtcLocalStream.removeTrack(oldTrack); oldTrack.stop();
+    rtcLocalStream.addTrack(newTrack);
+    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (_) {
+    _callFacingMode = _callFacingMode === 'user' ? 'environment' : 'user';
+    toast('Could not flip camera', 'error');
+  }
+}
+function startCallTimer() {
+  _callConnectedAt = Date.now();
+  const timerEl = $('#callTimer');
+  if (timerEl) timerEl.classList.remove('hidden');
+  clearInterval(_callTimerInterval);
+  _callTimerInterval = setInterval(() => {
+    if (!timerEl) return;
+    const elapsed = Math.floor((Date.now() - _callConnectedAt) / 1000);
+    const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const secs = String(elapsed % 60).padStart(2, '0');
+    timerEl.textContent = mins + ':' + secs;
+  }, 1000);
+}
+function stopCallTimer() {
+  clearInterval(_callTimerInterval);
+  _callTimerInterval = null;
+  const timerEl = $('#callTimer');
+  if (timerEl) { timerEl.textContent = '00:00'; timerEl.classList.add('hidden'); }
 }
 
 function sendRTCSignal(targetId, signal) {
@@ -7736,7 +7858,14 @@ async function handleRTCSignal(data) {
     if (rtcPeerConnection && rtcCurrentPeer === peerId) {
       rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
       $('#callStatusText').textContent = 'Connected';
+      $('#callActiveControls').classList.remove('hidden');
+      if (isVideoCall) {
+        $('#callVideoToggleBtn').classList.remove('hidden');
+        $('#callFlipBtn').classList.remove('hidden');
+      }
+      startCallTimer();
       _disarmCallTimeout();
+      refreshIcons();
     }
   } else if (signal.type === 'candidate') {
     if (rtcPeerConnection && rtcCurrentPeer === peerId) {
@@ -7763,7 +7892,6 @@ async function acceptCall() {
   }
   createPeerConnection();
   rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  
   try {
     await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
     const answer = await rtcPeerConnection.createAnswer();
@@ -7788,16 +7916,34 @@ function createPeerConnection() {
   rtcPeerConnection.ontrack = (e) => {
     e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
     $('#callVideos').classList.remove('hidden');
-    $('#callStatusText').textContent = '';
+    $('#callOverlay').classList.add('video-active');
+    $('#callStatusText').textContent = 'Connected';
+    $('#callActiveControls').classList.remove('hidden');
+    // Show video-specific controls if it's a video call
+    if (isVideoCall) {
+      $('#callVideoToggleBtn').classList.remove('hidden');
+      $('#callFlipBtn').classList.remove('hidden');
+    }
+    startCallTimer();
+    _disarmCallTimeout();
+    refreshIcons();
   };
   rtcPeerConnection.oniceconnectionstatechange = () => {
+    if (!rtcPeerConnection) return;
     const st = rtcPeerConnection.iceConnectionState;
-    if (st === 'failed') {
+    if (st === 'connected') {
+      $('#callStatusText').textContent = 'Connected';
+      $('#callActiveControls').classList.remove('hidden');
+      if (isVideoCall) {
+        $('#callVideoToggleBtn').classList.remove('hidden');
+        $('#callFlipBtn').classList.remove('hidden');
+      }
+      startCallTimer();
+      _disarmCallTimeout();
+    } else if (st === 'failed') {
       toast('Call failed to connect (network/NAT issue). Try again or switch networks.', 'error');
       endCall(true);
     } else if (st === 'disconnected') {
-      // Give a brief grace period — mobile networks often flicker to
-      // "disconnected" for a second before recovering on their own.
       setTimeout(() => {
         if (rtcPeerConnection && rtcPeerConnection.iceConnectionState === 'disconnected') {
           toast('Call connection lost.', 'error');
@@ -7825,16 +7971,33 @@ function _disarmCallTimeout() { clearTimeout(_rtcConnectTimeout); _rtcConnectTim
 
 
 function showCallUI(status, user, incoming = false) {
+  const overlay = $('#callOverlay');
+  overlay.classList.remove('hidden', 'video-active');
   $('#callStatusText').textContent = status;
-  $('#callName').innerHTML = displayNameWithOwnerBadge(user, user.displayName || user.username || 'User', 'inline');
+  $('#callName').textContent = (user.displayName || user.username || 'User');
+  renderAvatar($('#callAvatar'), user);
   $('#callVideos').classList.add('hidden');
-  $('#callOverlay').classList.remove('hidden');
-  if (incoming) $('#rtcAcceptBtn').classList.remove('hidden');
-  else $('#rtcAcceptBtn').classList.add('hidden');
+  $('#callActiveControls').classList.add('hidden');
+  // Reset control states
+  _callMuted = false; _callSpeakerOn = false;
+  const muteBtn = $('#callMuteBtn');
+  if (muteBtn) { muteBtn.classList.remove('active'); muteBtn.querySelector('i').setAttribute('data-lucide', 'mic'); muteBtn.querySelector('span').textContent = 'Mute'; }
+  const speakerBtn = $('#callSpeakerBtn');
+  if (speakerBtn) { speakerBtn.classList.remove('active'); speakerBtn.querySelector('i').setAttribute('data-lucide', 'volume-2'); speakerBtn.querySelector('span').textContent = 'Speaker'; }
+  const videoToggleBtn = $('#callVideoToggleBtn');
+  if (videoToggleBtn) { videoToggleBtn.classList.remove('active'); videoToggleBtn.querySelector('i').setAttribute('data-lucide', 'video'); videoToggleBtn.querySelector('span').textContent = 'Camera'; }
+  if (incoming) {
+    $('#rtcAcceptBtn').classList.remove('hidden');
+    $('#callActiveControls').classList.add('hidden');
+  } else {
+    $('#rtcAcceptBtn').classList.add('hidden');
+  }
+  refreshIcons();
 }
 
 function endCall(remote = false) {
   _disarmCallTimeout();
+  stopCallTimer();
   if (rtcPeerConnection) {
     rtcPeerConnection.close();
     rtcPeerConnection = null;
@@ -7847,7 +8010,15 @@ function endCall(remote = false) {
     sendRTCSignal(rtcCurrentPeer, { type: 'end' });
   }
   rtcCurrentPeer = null;
-  $('#callOverlay').classList.add('hidden');
+  _callMuted = false;
+  _callSpeakerOn = false;
+  _callFacingMode = 'user';
+  const overlay = $('#callOverlay');
+  overlay.classList.add('hidden');
+  overlay.classList.remove('video-active');
+  $('#callVideos').classList.add('hidden');
+  $('#callActiveControls').classList.add('hidden');
+  $('#callFlipBtn').classList.add('hidden');
   $('#rtcLocalVideo').srcObject = null;
   $('#rtcRemoteVideo').srcObject = null;
 }
