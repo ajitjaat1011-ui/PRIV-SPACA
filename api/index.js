@@ -727,9 +727,16 @@ async function fetchTursoMessages(roomId, now = nowMs()) {
   }
 }
 
-async function fetchDatabase() {
+async function fetchPrimaryDatabase() {
+  const remote = await persistRead();
+  if (remote && typeof remote === 'object') return normalizeDb(remote);
+  return normalizeDb(localCache);
+}
+
+async function fetchDatabase({ includeTurso = true } = {}) {
+  const freshPrimary = !includeTurso;
   const now = nowMs();
-  if (now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
+  if (!freshPrimary && now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
     runScheduler(localCache);
     return localCache;
   }
@@ -746,7 +753,7 @@ async function fetchDatabase() {
       rtcSignals: Array.isArray(remote.rtcSignals) ? remote.rtcSignals : [],
     };
   }
-  if (isTursoConfigured()) {
+  if (includeTurso && isTursoConfigured()) {
     const mirror = await fetchTursoMirror(localCache);
     if ((mirror.users || []).length > 0) localCache.users = mirror.users;
     if ((mirror.posts || []).length > 0) localCache.posts = mirror.posts;
@@ -871,12 +878,10 @@ async function authMiddleware(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    let user = null;
-    if (isTursoConfigured()) user = await fetchTursoUserById(payload.uid);
-    if (!user) {
-      const db = await fetchDatabase();
-      user = (db.users || []).find(u => u.id === payload.uid);
-    }
+    // Auth/session validation must use the primary write store. Turso is a
+    // read mirror and can lag briefly after password/PIN changes.
+    const authDb = await fetchPrimaryDatabase();
+    const user = (authDb.users || []).find(u => u.id === payload.uid);
     if (!user) return res.status(401).json({ error: 'Invalid or expired token' });
     if (Number(payload.sv || 0) !== Number(user.tokenVersion || 0)) {
       return res.status(401).json({ error: 'Session expired. Please sign in again.' });
@@ -1194,7 +1199,7 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
       return res.status(400).json({ error: 'You must accept the Terms & Community Guidelines.' });
     }
 
-    const db = await fetchDatabase();
+    const db = await fetchPrimaryDatabase();
     const emailLower = email.toLowerCase();
     const usernameLower = username.toLowerCase();
 
@@ -1260,7 +1265,7 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
       res.setHeader('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return res.status(429).json({ error: 'Too many login attempts. Please wait and try again.' });
     }
-    const db = await fetchDatabase();
+    const db = await fetchPrimaryDatabase();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) { await authFailureDelay(); return res.status(401).json({ error: AUTH_GENERIC_ERROR }); }
     const lock = checkAccountLock(user.id);
@@ -1296,7 +1301,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
       res.setHeader('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return res.status(429).json({ error: 'Too many reset attempts. Please wait and try again.' });
     }
-    const db = await fetchDatabase();
+    const db = await fetchPrimaryDatabase();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) { await authFailureDelay(); return res.status(401).json({ error: 'Invalid reset details.' }); }
     const pinOk = await bcrypt.compare(pin, user.pinHash);
@@ -1322,12 +1327,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
 });
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
-  let u = null;
-  if (isTursoConfigured()) u = await fetchTursoUserById(req.userId);
-  if (!u) {
-    const db = await fetchDatabase();
-    u = db.users.find(x => x.id === req.userId);
-  }
+  const u = req.authUser;
   if (!u) return res.status(404).json({ error: 'Not found' });
   res.json({ user: sanitizeUser(u) });
 });
