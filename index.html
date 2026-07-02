@@ -26,7 +26,7 @@
 <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 <!-- Motion One v10 - lightweight (~3 KB gz) Framer-Motion-style animations for vanilla JS -->
 <script defer src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.min.js"></script>
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=51-scroll-tabs" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300c6ff'/%3E%3Cstop offset='1' stop-color='%230072ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Cpath fill='%23fff' d='M14 32 50 14 42 50 32 36 14 32z'/%3E%3C/svg%3E" />
 </head>
 <body>
@@ -180,7 +180,7 @@
           <i data-lucide="hash"></i> <span>Groups</span> <span class="seg-badge" id="segGroupsBadge">0</span>
         </button>
         <button type="button" class="inbox-seg-btn" data-seg="primary">
-          <i data-lucide="send"></i> <span>Primary</span> <span class="seg-badge" id="segPrimaryBadge">0</span>
+          <i data-lucide="send"></i> <span>Primary</span> <span class="seg-badge hidden" id="segPrimaryBadge" aria-hidden="true">0</span>
         </button>
       </div>
 
@@ -1127,6 +1127,6 @@ window.__privSpacaLoaderFallback = setTimeout(function () {
   } catch (_) {}
 }, 6500);
 </script>
-<script src="app.js?v=50-vip-blue-tick-fix"></script>
+<script src="app.js?v=51-scroll-tabs"></script>
 </body>
 </html>

@@ -736,6 +736,65 @@ function closePostComposer() {
   if (pm) pm.classList.add('hidden');
 }
 
+const _scrollMemory = {
+  feed: 0,
+  search: 0,
+  profile: 0,
+  roomsPane: 0,
+  membersList: 0,
+  messagesScroll: 0,
+};
+function bindScrollMemory() {
+  const watch = [
+    ['feed', '#feedView'],
+    ['search', '#searchView'],
+    ['profile', '#profileView'],
+    ['roomsPane', '.rooms-pane'],
+    ['membersList', '#membersList'],
+    ['messagesScroll', '#messagesScroll'],
+  ];
+  watch.forEach(([key, sel]) => {
+    const el = $(sel);
+    if (!el || el.dataset.scrollBound === '1') return;
+    el.dataset.scrollBound = '1';
+    let ticking = false;
+    el.addEventListener('scroll', () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        _scrollMemory[key] = el.scrollTop || 0;
+        ticking = false;
+      });
+    }, { passive: true });
+  });
+}
+function rememberCurrentScroll() {
+  const map = [
+    ['feed', '#feedView'],
+    ['search', '#searchView'],
+    ['profile', '#profileView'],
+    ['roomsPane', '.rooms-pane'],
+    ['membersList', '#membersList'],
+    ['messagesScroll', '#messagesScroll'],
+  ];
+  map.forEach(([key, sel]) => {
+    const el = $(sel);
+    if (el) _scrollMemory[key] = el.scrollTop || 0;
+  });
+}
+function restoreScrollForTab(tab) {
+  requestAnimationFrame(() => {
+    if (tab === 'feed') { const el = $('#feedView'); if (el) el.scrollTop = _scrollMemory.feed || 0; }
+    if (tab === 'search') { const el = $('#searchView'); if (el) el.scrollTop = _scrollMemory.search || 0; }
+    if (tab === 'profile') { const el = $('#profileView'); if (el) el.scrollTop = _scrollMemory.profile || 0; }
+    if (tab === 'chat' || tab === 'groups') {
+      const rooms = $('.rooms-pane'); if (rooms) rooms.scrollTop = _scrollMemory.roomsPane || 0;
+      const members = $('#membersList'); if (members) members.scrollTop = _scrollMemory.membersList || 0;
+      const msgs = $('#messagesScroll'); if (msgs && !$('#chatView').classList.contains('show-rooms')) msgs.scrollTop = _scrollMemory.messagesScroll || 0;
+    }
+  });
+}
+
 function bindTabs() {
   $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   const bw = $('#brandWordmarkBtn') || $('#brandWordmark');
@@ -743,8 +802,9 @@ function bindTabs() {
     switchTab('feed');
     const fv = $('#feedView');
     if (fv) fv.scrollTo({ top: 0, behavior: 'smooth' });
+    _scrollMemory.feed = 0;
     lastPostsSignature = null;
-    loadPosts();
+    loadPosts(true);
   });
   // Legacy top-chat button is gone; keep guard in case markup is cached
   const tc = $('#topChatBtn');
@@ -767,6 +827,7 @@ function bindTabs() {
 }
 
 function switchTab(tab) {
+  rememberCurrentScroll();
   State.currentTab = tab;
   $$('.bn-btn[data-tab]').forEach(b => {
     const active = b.dataset.tab === tab;
@@ -813,7 +874,8 @@ function switchTab(tab) {
   }
   updateTopbarHeader(tab);
   updateChatThreadChrome();
-  if (activeView) springIn(activeView, { duration: 0.28 });
+  restoreScrollForTab(tab);
+  if (activeView) springIn(activeView, { duration: 0.22 });
   refreshIcons();
   if (typeof updateNotifDots === 'function') updateNotifDots();
 }
@@ -837,13 +899,30 @@ function updateTopbarHeader(tab) {
 }
 
 // ====== Rooms & Members ======
-async function loadMembers() {
-  try {
-    const data = await api('/users');
-    State.members = data.users || [];
+let _lastMembersLoadedAt = 0;
+let _loadMembersPromise = null;
+async function loadMembers(force = false) {
+  if (_loadMembersPromise) return _loadMembersPromise;
+  if (!force && _lastMembersLoadedAt && (Date.now() - _lastMembersLoadedAt) < 2500 && Array.isArray(State.members) && State.members.length) {
     renderMembers();
     if (typeof renderStoriesRail === 'function') renderStoriesRail();
-  } catch (_) {}
+    return State.members;
+  }
+  _loadMembersPromise = (async () => {
+    try {
+      const data = await api('/users');
+      State.members = data.users || [];
+      _lastMembersLoadedAt = Date.now();
+      renderMembers();
+      if (typeof renderStoriesRail === 'function') renderStoriesRail();
+      return State.members;
+    } catch (_) {
+      return State.members;
+    } finally {
+      _loadMembersPromise = null;
+    }
+  })();
+  return _loadMembersPromise;
 }
 
 // Inbox segment state: 'groups' or 'primary'. Requests is a sub-view of primary.
@@ -2788,17 +2867,31 @@ function updateNotifDots() {
 // treated as "unchanged" and skip renderPosts()/renderStoriesRail(). Without
 // this fix, a new/empty account never sees the "Your story" cell appear.
 let lastPostsSignature = null;
-async function loadPosts() {
-  try {
-    const data = await api('/posts');
-    const newPosts = data.posts || [];
-    _lastPostsLoadedAt = Date.now();
-    const sig = newPosts.map(p => p.id + ':' + p.likeCount + ':' + p.commentCount).join('|');
-    if (lastPostsSignature !== null && sig === lastPostsSignature) return;
-    lastPostsSignature = sig;
-    State.posts = newPosts;
-    renderPosts();
-  } catch (_) {}
+let _loadPostsPromise = null;
+async function loadPosts(force = false) {
+  if (_loadPostsPromise) return _loadPostsPromise;
+  if (!force && _lastPostsLoadedAt && (Date.now() - _lastPostsLoadedAt) < 2500 && lastPostsSignature !== null) {
+    if ($('#feedList') && $('#feedList').children.length === 0) renderPosts();
+    return State.posts;
+  }
+  _loadPostsPromise = (async () => {
+    try {
+      const data = await api('/posts');
+      const newPosts = data.posts || [];
+      _lastPostsLoadedAt = Date.now();
+      const sig = newPosts.map(p => p.id + ':' + p.likeCount + ':' + p.commentCount).join('|');
+      if (lastPostsSignature !== null && sig === lastPostsSignature) return State.posts;
+      lastPostsSignature = sig;
+      State.posts = newPosts;
+      renderPosts();
+      return State.posts;
+    } catch (_) {
+      return State.posts;
+    } finally {
+      _loadPostsPromise = null;
+    }
+  })();
+  return _loadPostsPromise;
 }
 
 const STORY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -7177,7 +7270,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=45-profile-grid-immediate').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=51-scroll-tabs').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
@@ -7270,7 +7363,7 @@ function boot() {
   // handler function) can't crash the whole boot sequence and silently skip
   // session restore below — that was causing "logged out on every refresh".
   const bindSteps = [
-    bindTabs, bindRooms, bindInboxSegment, bindNotes, bindComposer, bindFeedComposer, bindProfile,
+    bindTabs, bindScrollMemory, bindRooms, bindInboxSegment, bindNotes, bindComposer, bindFeedComposer, bindProfile,
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
     bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,

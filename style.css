@@ -98,12 +98,14 @@ button{font-family:inherit}
 img{user-select:none;-webkit-user-drag:none}
 
 /* Scrollbars */
-.messages-scroll, .feed-list, .members-list, .schedule-list, #appShell, textarea, .feed-view, .profile-view{
+.messages-scroll, .feed-list, .members-list, .schedule-list, #appShell, textarea, .feed-view, .profile-view, .search-view, .rooms-pane{
   scrollbar-width:thin;
   scrollbar-color:#c4d4df transparent;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:contain;
 }
-.messages-scroll::-webkit-scrollbar, .feed-list::-webkit-scrollbar, .members-list::-webkit-scrollbar, .schedule-list::-webkit-scrollbar, textarea::-webkit-scrollbar, .feed-view::-webkit-scrollbar, .profile-view::-webkit-scrollbar{width:8px;height:8px}
-.messages-scroll::-webkit-scrollbar-thumb, .feed-list::-webkit-scrollbar-thumb, .members-list::-webkit-scrollbar-thumb, .schedule-list::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb, .feed-view::-webkit-scrollbar-thumb, .profile-view::-webkit-scrollbar-thumb{background:#d4dde5;border-radius:8px}
+.messages-scroll::-webkit-scrollbar, .feed-list::-webkit-scrollbar, .members-list::-webkit-scrollbar, .schedule-list::-webkit-scrollbar, textarea::-webkit-scrollbar, .feed-view::-webkit-scrollbar, .profile-view::-webkit-scrollbar, .search-view::-webkit-scrollbar, .rooms-pane::-webkit-scrollbar{width:8px;height:8px}
+.messages-scroll::-webkit-scrollbar-thumb, .feed-list::-webkit-scrollbar-thumb, .members-list::-webkit-scrollbar-thumb, .schedule-list::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb, .feed-view::-webkit-scrollbar-thumb, .profile-view::-webkit-scrollbar-thumb, .search-view::-webkit-scrollbar-thumb, .rooms-pane::-webkit-scrollbar-thumb{background:#d4dde5;border-radius:8px}
 .messages-scroll::-webkit-scrollbar-thumb:hover{background:#b4c0cc}
 
 /* ===== Animations ===== */
@@ -440,9 +442,9 @@ img{user-select:none;-webkit-user-drag:none}
 
 /* ===== Views ===== */
 .view{display:none;overflow:hidden;height:100%;box-sizing:border-box;min-width:0}
-.view.active{display:block;animation:fade-in .25s ease;overflow-y:auto;overflow-x:hidden}
+.view.active{display:block;animation:fade-in .2s ease;overflow-y:auto;overflow-x:hidden;contain:layout paint style}
 /* Chat view needs grid for its two-pane layout */
-.view.chat-view.active{display:grid;overflow:hidden;padding-bottom:0 !important;}
+.view.chat-view.active{display:grid;overflow:hidden;padding-bottom:0 !important;contain:layout paint style;}
 
 /* Chat layout */
 .chat-view{grid-template-columns:280px 1fr;height:100%}
@@ -462,6 +464,7 @@ img{user-select:none;-webkit-user-drag:none}
   min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--muted-2);color:#fff;
   font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;
 }
+#segPrimaryBadge{display:none!important}
 .inbox-seg-btn .seg-badge.zero{display:none}
 .inbox-seg-btn:hover{color:var(--text)}
 .inbox-seg-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -597,6 +600,7 @@ img{user-select:none;-webkit-user-drag:none}
 .room-item, .member-item{
   display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:11px;
   cursor:pointer;color:var(--text);font-size:14px;font-weight:500;transition:all .15s;
+  contain:layout paint style;content-visibility:auto;contain-intrinsic-size:58px;
 }
 .room-item:hover, .member-item:hover{background:var(--accent-softer)}
 .room-item.active, .member-item.active{background:var(--accent-soft);color:var(--accent);font-weight:700}
@@ -1076,6 +1080,7 @@ img{user-select:none;-webkit-user-drag:none}
   box-shadow:0 10px 32px rgba(0,0,0,0.15);animation:msg-in .35s cubic-bezier(.2,.8,.2,1) both;
   overflow:hidden;border-radius:26px;padding:14px;margin-bottom:6px;
   display:flex;flex-direction:column;
+  contain:layout paint style;content-visibility:auto;contain-intrinsic-size:680px;
 }
 
 /* Exact Instagram Post Header */
