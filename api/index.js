@@ -598,6 +598,13 @@ async function fetchTursoMirror(fallbackDb = null) {
     posts: (postsRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
   });
 }
+async function fetchTursoUserById(userId) {
+  if (!isTursoConfigured() || !userId) return null;
+  await tursoEnsure();
+  const row = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1', args: [userId] }).catch(() => ({ rows: [] }));
+  if (!row.rows || row.rows.length === 0) return null;
+  return safeJson(String(row.rows[0].data_json || '{}'), null);
+}
 
 async function fetchDatabase() {
   const now = nowMs();
@@ -617,6 +624,12 @@ async function fetchDatabase() {
       heartbeat: remote.heartbeat && typeof remote.heartbeat === 'object' ? remote.heartbeat : {},
       rtcSignals: Array.isArray(remote.rtcSignals) ? remote.rtcSignals : [],
     };
+  }
+  if (isTursoConfigured()) {
+    const mirror = await fetchTursoMirror(localCache);
+    if ((mirror.users || []).length > 0) localCache.users = mirror.users;
+    if ((mirror.posts || []).length > 0) localCache.posts = mirror.posts;
+    localCache.meta = { ...(localCache.meta || {}), secondaryPersistence: 'turso-users-posts' };
   }
   cacheTimestamp = now;
   const changed = runScheduler(localCache);
@@ -737,8 +750,12 @@ async function authMiddleware(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const db = await fetchDatabase();
-    const user = (db.users || []).find(u => u.id === payload.uid);
+    let user = null;
+    if (isTursoConfigured()) user = await fetchTursoUserById(payload.uid);
+    if (!user) {
+      const db = await fetchDatabase();
+      user = (db.users || []).find(u => u.id === payload.uid);
+    }
     if (!user) return res.status(401).json({ error: 'Invalid or expired token' });
     if (Number(payload.sv || 0) !== Number(user.tokenVersion || 0)) {
       return res.status(401).json({ error: 'Session expired. Please sign in again.' });
@@ -1184,8 +1201,12 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
 });
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
-  const db = await fetchDatabase();
-  const u = db.users.find(x => x.id === req.userId);
+  let u = null;
+  if (isTursoConfigured()) u = await fetchTursoUserById(req.userId);
+  if (!u) {
+    const db = await fetchDatabase();
+    u = db.users.find(x => x.id === req.userId);
+  }
   if (!u) return res.status(404).json({ error: 'Not found' });
   res.json({ user: sanitizeUser(u) });
 });
@@ -1897,10 +1918,9 @@ app.post('/api/user/unblock', authMiddleware, async (req, res) => {
 // GET /api/user/:id/profile — public profile of any user
 app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
   const targetId = req.params.id;
-  const db = await fetchDatabase();
-  const sdb = isTursoConfigured() ? await fetchTursoMirror(db) : db;
-  const sourceUsers = (sdb.users || []).length ? sdb.users : (db.users || []);
-  const sourcePosts = (sdb.posts || []).length ? sdb.posts : (db.posts || []);
+  const sdb = isTursoConfigured() ? await fetchTursoMirror() : await fetchDatabase();
+  const sourceUsers = sdb.users || [];
+  const sourcePosts = sdb.posts || [];
   const target = sourceUsers.find(u => u.id === targetId);
   if (!target) return res.status(404).json({ error: 'Not found' });
   const me = sourceUsers.find(u => u.id === req.userId);
@@ -1940,10 +1960,9 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
 
 // ---------- Social Feed / Posts ----------
 app.get('/api/posts', authMiddleware, async (req, res) => {
-  const db = await fetchDatabase();
-  const sdb = isTursoConfigured() ? await fetchTursoMirror(db) : db;
-  const sourceUsers = (sdb.users || []).length ? sdb.users : (db.users || []);
-  const sourcePosts = (sdb.posts || []).length ? sdb.posts : (db.posts || []);
+  const sdb = isTursoConfigured() ? await fetchTursoMirror() : await fetchDatabase();
+  const sourceUsers = sdb.users || [];
+  const sourcePosts = sdb.posts || [];
   const me = sourceUsers.find(u => u.id === req.userId);
   const myBlocked = new Set((me && me.blocked) || []);
   const blockedMe = new Set();
@@ -1952,7 +1971,7 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
       blockedMe.add(u.id);
     }
   });
-  const structuredDb = normalizeDb({ ...db, users: sourceUsers, posts: sourcePosts });
+  const structuredDb = normalizeDb({ users: sourceUsers, posts: sourcePosts });
   const list = sourcePosts
     .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId) && canViewerSeeStory(p, req.userId, structuredDb))
     .slice()
