@@ -7626,26 +7626,18 @@ if (document.readyState === 'loading') {
 } else {
   boot();
 }
-// --- WEBRTC ---
+// ====== WEBRTC — Clean rewrite ======
 let rtcPeerConnection = null;
 let rtcLocalStream = null;
 let rtcRemoteStream = null;
-let rtcCurrentPeer = null; // targetId we are talking to
+let rtcCurrentPeer = null;
 let isVideoCall = false;
 
-// STUN-only ICE config frequently fails to establish real media connections on
-// mobile data / carrier-grade NAT / strict corporate networks (STUN can only
-// help peers discover each other's public address; it can't relay media when
-// a direct path isn't possible). We add a free public TURN relay (Open Relay
-// Project) as a fallback so calls still connect in those cases. This is a
-// shared/free/rate-limited community relay — for real production use with
-//24/7 traffic, replace with account-specific TURN credentials (e.g. Twilio
-// Network Traversal Service, Metered.ca, or your own coturn server) via env
-// vars, but this unblocks calling immediately at zero cost.
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
     {
       urls: [
         'turn:openrelay.metered.ca:80',
@@ -7658,23 +7650,31 @@ const ICE_SERVERS = {
   ],
 };
 
+// ====== Call state ======
+let _callMuted = false;
+let _callSpeakerOn = false;
+let _callFacingMode = 'user';
+let _callTimerInterval = null;
+let _callConnectedAt = 0;
+let _callConnected = false;   // single source of truth
+let _callConnecting = false;
 
 function initWebRTC() {
   const callBtn = $('#rtcCallBtn');
   const chooser = $('#rtcCallChooser');
-  const btnAudio = $('#rtcAudioBtn');
-  const btnVideo = $('#rtcVideoBtn');
-  const btnAccept = $('#rtcAcceptBtn');
-  const btnReject = $('#rtcRejectBtn');
   if (callBtn && chooser) {
     callBtn.addEventListener('click', (e) => { e.stopPropagation(); chooser.classList.toggle('hidden'); refreshIcons(); });
     document.addEventListener('click', (e) => { if (!chooser.contains(e.target) && e.target !== callBtn) chooser.classList.add('hidden'); });
   }
-  if(btnAudio) btnAudio.addEventListener('click', () => { if (chooser) chooser.classList.add('hidden'); startCall(false); });
-  if(btnVideo) btnVideo.addEventListener('click', () => { if (chooser) chooser.classList.add('hidden'); startCall(true); });
-  if(btnAccept) btnAccept.addEventListener('click', acceptCall);
-  if(btnReject) btnReject.addEventListener('click', endCall);
-  // Active call controls
+  const btnAudio = $('#rtcAudioBtn');
+  const btnVideo = $('#rtcVideoBtn');
+  if (btnAudio) btnAudio.addEventListener('click', () => { if ($('#rtcCallChooser')) $('#rtcCallChooser').classList.add('hidden'); startCall(false); });
+  if (btnVideo) btnVideo.addEventListener('click', () => { if ($('#rtcCallChooser')) $('#rtcCallChooser').classList.add('hidden'); startCall(true); });
+  const btnAccept = $('#rtcAcceptBtn');
+  const btnReject = $('#rtcRejectBtn');
+  if (btnAccept) btnAccept.addEventListener('click', acceptCall);
+  if (btnReject) btnReject.addEventListener('click', () => endCall(false));
+  // In-call controls
   const muteBtn = $('#callMuteBtn');
   const speakerBtn = $('#callSpeakerBtn');
   const videoToggleBtn = $('#callVideoToggleBtn');
@@ -7684,18 +7684,272 @@ function initWebRTC() {
   if (videoToggleBtn) videoToggleBtn.addEventListener('click', toggleVideoUpgrade);
   if (flipBtn) flipBtn.addEventListener('click', flipCamera);
 }
-// ====== Call state ======
-let _callMuted = false;
-let _callSpeakerOn = false;
-let _callFacingMode = 'user';
-let _callTimerInterval = null;
-let _callConnectedAt = 0;
+
+// ---- Call UI state machine ----
+// States: idle → ringing (incoming) | calling (outgoing) → connected → ended
+function showCallUI(status, user, incoming) {
+  const overlay = $('#callOverlay');
+  overlay.classList.remove('hidden', 'video-active');
+  _callConnected = false;
+  _callConnecting = false;
+
+  // Info section — always visible during ringing/calling
+  $('#callInfo').classList.remove('minimized');
+  $('#callName').textContent = (user.displayName || user.username || 'User');
+  renderAvatar($('#callAvatar'), user);
+  $('#callStatusText').textContent = status;
+  $('#callTimer').classList.add('hidden');
+  $('#callTimer').textContent = '00:00';
+
+  // Video hidden until connected
+  $('#callVideos').classList.add('hidden');
+
+  // Active controls HIDDEN until connected
+  $('#callActiveControls').classList.add('hidden');
+
+  // Reset control button states
+  resetCallControlBtns();
+
+  // Bottom bar: show accept+reject for incoming, only reject for outgoing
+  if (incoming) {
+    $('#rtcAcceptBtn').classList.remove('hidden');
+  } else {
+    $('#rtcAcceptBtn').classList.add('hidden');
+  }
+  $('#rtcRejectBtn').classList.remove('hidden');
+
+  refreshIcons();
+}
+
+function onCallConnected() {
+  if (_callConnected) return; // prevent double-fire
+  _callConnected = true;
+  _callConnecting = false;
+  _disarmCallTimeout();
+
+  $('#callStatusText').textContent = 'Connected';
+  $('#callTimer').classList.remove('hidden');
+  startCallTimer();
+
+  // NOW show the in-call controls
+  $('#callActiveControls').classList.remove('hidden');
+  $('#rtcAcceptBtn').classList.add('hidden'); // hide accept if it was visible
+
+  // Show video layer if video call
+  if (isVideoCall) {
+    $('#callVideos').classList.remove('hidden');
+    $('#callOverlay').classList.add('video-active');
+    $('#callVideoToggleBtn').classList.remove('hidden');
+    $('#callFlipBtn').classList.remove('hidden');
+  } else {
+    // Audio call — show camera button so user can upgrade to video
+    $('#callVideoToggleBtn').classList.remove('hidden');
+    $('#callFlipBtn').classList.add('hidden');
+  }
+
+  refreshIcons();
+}
+
+function resetCallControlBtns() {
+  _callMuted = false; _callSpeakerOn = false; _callFacingMode = 'user';
+  const muteBtn = $('#callMuteBtn');
+  if (muteBtn) { muteBtn.classList.remove('active'); muteBtn.querySelector('i').setAttribute('data-lucide', 'mic'); muteBtn.querySelector('span').textContent = 'Mute'; }
+  const speakerBtn = $('#callSpeakerBtn');
+  if (speakerBtn) { speakerBtn.classList.remove('active'); speakerBtn.querySelector('i').setAttribute('data-lucide', 'volume-2'); speakerBtn.querySelector('span').textContent = 'Speaker'; }
+  const videoBtn = $('#callVideoToggleBtn');
+  if (videoBtn) { videoBtn.classList.add('hidden'); videoBtn.classList.remove('active'); videoBtn.querySelector('i').setAttribute('data-lucide', 'video'); videoBtn.querySelector('span').textContent = 'Camera'; }
+  const flipBtn = $('#callFlipBtn');
+  if (flipBtn) { flipBtn.classList.add('hidden'); }
+}
+
+// ---- Signal sender ----
+function sendRTCSignal(targetId, signal) {
+  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => {
+    console.error('Signal error', e);
+    toast('Call signal failed: ' + (e.message || ''), 'error');
+  });
+}
+
+// ---- Start outgoing call ----
+async function startCall(video) {
+  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
+  if (rtcPeerConnection) { toast('Already in a call', 'error'); return; }
+
+  isVideoCall = video;
+  rtcCurrentPeer = State.currentRoom.target.id;
+  _callConnecting = true;
+
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: isVideoCall ? { facingMode: _callFacingMode } : false
+    });
+    if (isVideoCall) $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied.', 'error');
+    _callConnecting = false;
+    return;
+  }
+
+  showCallUI('Calling...', State.currentRoom.target, false);
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+
+  try {
+    const offer = await rtcPeerConnection.createOffer();
+    await rtcPeerConnection.setLocalDescription(offer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
+    _armCallTimeout();
+  } catch (err) {
+    toast('Failed to start call', 'error');
+    endCall(false);
+  }
+}
+
+// ---- Handle incoming signals ----
+async function handleRTCSignal(data) {
+  if (!data || !data.signal) return;
+  const peerId = data.fromId;
+  const signal = data.signal;
+  const author = data.author;
+
+  if (signal.type === 'offer') {
+    // Reject stale offers (>25s old)
+    const age = Date.now() - (data.createdAt || 0);
+    if (data.createdAt && age > 25000) return;
+    // Deduplicate
+    if (window._handledRtcOffers && window._handledRtcOffers.has(data.id)) return;
+    if (!window._handledRtcOffers) window._handledRtcOffers = new Set();
+    if (data.id) window._handledRtcOffers.add(data.id);
+    // Busy? Send busy signal
+    if (rtcPeerConnection || _callConnecting) {
+      sendRTCSignal(peerId, { type: 'busy' });
+      return;
+    }
+    rtcCurrentPeer = peerId;
+    isVideoCall = !!signal.video;
+    window._rtcPendingOffer = signal.offer;
+    showCallUI('Incoming ' + (isVideoCall ? 'Video' : 'Voice') + ' Call', author, true);
+    // Arm a timeout: if user doesn't accept within 30s, auto-reject
+    _armCallTimeout();
+
+  } else if (signal.type === 'answer') {
+    if (!rtcPeerConnection || rtcCurrentPeer !== peerId) return;
+    try {
+      await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      // Connection will be confirmed by oniceconnectionstatechange → 'connected'
+    } catch (e) {
+      console.warn('[RTC] setRemoteDescription(answer) failed', e.message);
+      endCall(false);
+    }
+
+  } else if (signal.type === 'candidate') {
+    if (!rtcPeerConnection || rtcCurrentPeer !== peerId) return;
+    try {
+      await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
+    } catch (e) {
+      console.warn('[RTC] addIceCandidate failed', e.message);
+    }
+
+  } else if (signal.type === 'end' || signal.type === 'busy') {
+    if (rtcCurrentPeer === peerId) {
+      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
+      endCall(true);
+    }
+  }
+}
+
+// ---- Accept incoming call ----
+async function acceptCall() {
+  if (!window._rtcPendingOffer) { toast('No pending call', 'error'); endCall(false); return; }
+  $('#rtcAcceptBtn').classList.add('hidden');
+  $('#callStatusText').textContent = 'Connecting...';
+  _callConnecting = true;
+
+  try {
+    rtcLocalStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: isVideoCall ? { facingMode: _callFacingMode } : false
+    });
+    if (isVideoCall) $('#rtcLocalVideo').srcObject = rtcLocalStream;
+  } catch (err) {
+    toast('Camera/Microphone access denied.', 'error');
+    endCall(false);
+    return;
+  }
+
+  createPeerConnection();
+  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
+
+  try {
+    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
+    const answer = await rtcPeerConnection.createAnswer();
+    await rtcPeerConnection.setLocalDescription(answer);
+    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
+    window._rtcPendingOffer = null;
+    // Connection confirmed by oniceconnectionstatechange → 'connected'
+  } catch (err) {
+    console.warn('[RTC] accept failed', err.message);
+    endCall(false);
+  }
+}
+
+// ---- Peer connection factory ----
+function createPeerConnection() {
+  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
+  rtcRemoteStream = new MediaStream();
+  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
+
+  // Send ICE candidates to peer
+  rtcPeerConnection.onicecandidate = (e) => {
+    if (e.candidate && rtcCurrentPeer) {
+      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
+    }
+  };
+
+  // Remote track arrives → show video
+  rtcPeerConnection.ontrack = (e) => {
+    if (!e.streams || !e.streams[0]) return;
+    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
+    $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
+    // If video call, show the video layer now
+    if (isVideoCall) {
+      $('#callVideos').classList.remove('hidden');
+      $('#callOverlay').classList.add('video-active');
+    }
+  };
+
+  // ICE connection state — SINGLE source of truth for connection status
+  rtcPeerConnection.oniceconnectionstatechange = () => {
+    if (!rtcPeerConnection) return;
+    const st = rtcPeerConnection.iceConnectionState;
+
+    if (st === 'connected' || st === 'completed') {
+      onCallConnected();
+    } else if (st === 'failed') {
+      toast('Call connection failed. Try switching networks.', 'error');
+      endCall(true);
+    } else if (st === 'disconnected') {
+      // Grace period — mobile networks flicker briefly
+      setTimeout(() => {
+        if (rtcPeerConnection && rtcPeerConnection.iceConnectionState === 'disconnected') {
+          toast('Call connection lost.', 'error');
+          endCall(true);
+        }
+      }, 8000);
+    } else if (st === 'checking') {
+      $('#callStatusText').textContent = 'Connecting...';
+    }
+  };
+}
+
+// ---- In-call controls ----
 function toggleMute() {
   if (!rtcLocalStream) return;
-  const audioTracks = rtcLocalStream.getAudioTracks();
-  if (!audioTracks.length) return;
+  const tracks = rtcLocalStream.getAudioTracks();
+  if (!tracks.length) return;
   _callMuted = !_callMuted;
-  audioTracks.forEach(t => { t.enabled = !_callMuted; });
+  tracks.forEach(t => { t.enabled = !_callMuted; });
   const btn = $('#callMuteBtn');
   if (btn) {
     btn.classList.toggle('active', _callMuted);
@@ -7704,18 +7958,19 @@ function toggleMute() {
     refreshIcons();
   }
 }
+
 function toggleSpeaker() {
   _callSpeakerOn = !_callSpeakerOn;
   try {
-    const remoteVideo = $('#rtcRemoteVideo');
-    if (remoteVideo && remoteVideo.setSinkId) {
+    const el = $('#rtcRemoteVideo');
+    if (el && el.setSinkId) {
       navigator.mediaDevices.enumerateDevices().then(devices => {
-        const speakers = devices.filter(d => d.kind === 'audiooutput');
-        const speaker = speakers.find(d => d.label.toLowerCase().includes('speaker') || d.label.toLowerCase().includes('loud'));
-        const earpiece = speakers.find(d => d.label.toLowerCase().includes('earpiece') || d.label.toLowerCase().includes('default'));
-        const target = _callSpeakerOn ? (speaker || speakers[0]) : (earpiece || speakers[0]);
-        if (target) remoteVideo.setSinkId(target.deviceId).catch(() => {});
-      });
+        const outs = devices.filter(d => d.kind === 'audiooutput');
+        const loud = outs.find(d => /speaker|loud/i.test(d.label));
+        const ear = outs.find(d => /earpiece|default/i.test(d.label));
+        const target = _callSpeakerOn ? (loud || outs[0]) : (ear || outs[0]);
+        if (target) el.setSinkId(target.deviceId).catch(() => {});
+      }).catch(() => {});
     }
   } catch (_) {}
   const btn = $('#callSpeakerBtn');
@@ -7726,48 +7981,56 @@ function toggleSpeaker() {
     refreshIcons();
   }
 }
+
 async function toggleVideoUpgrade() {
   if (!rtcPeerConnection || !rtcCurrentPeer) return;
   if (isVideoCall) {
-    const videoTracks = rtcLocalStream ? rtcLocalStream.getVideoTracks() : [];
-    if (videoTracks.length) {
-      const track = videoTracks[0];
-      track.enabled = !track.enabled;
+    // Toggle camera on/off
+    const tracks = rtcLocalStream ? rtcLocalStream.getVideoTracks() : [];
+    if (tracks.length) {
+      tracks[0].enabled = !tracks[0].enabled;
       const btn = $('#callVideoToggleBtn');
       if (btn) {
-        btn.classList.toggle('active', !track.enabled);
-        btn.querySelector('i').setAttribute('data-lucide', track.enabled ? 'video' : 'video-off');
-        btn.querySelector('span').textContent = track.enabled ? 'Camera' : 'Camera Off';
+        btn.classList.toggle('active', !tracks[0].enabled);
+        btn.querySelector('i').setAttribute('data-lucide', tracks[0].enabled ? 'video' : 'video-off');
+        btn.querySelector('span').textContent = tracks[0].enabled ? 'Camera' : 'Cam Off';
         refreshIcons();
       }
     }
     return;
   }
+  // Upgrade audio → video
   try {
-    const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: _callFacingMode } });
-    const videoTrack = videoStream.getVideoTracks()[0];
-    if (rtcLocalStream) rtcLocalStream.addTrack(videoTrack);
-    rtcPeerConnection.addTrack(videoTrack, rtcLocalStream || videoStream);
+    const vidStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: _callFacingMode } });
+    const vidTrack = vidStream.getVideoTracks()[0];
+    if (rtcLocalStream) rtcLocalStream.addTrack(vidTrack);
+    const sender = rtcPeerConnection.addTrack(vidTrack, rtcLocalStream);
     $('#rtcLocalVideo').srcObject = rtcLocalStream;
     isVideoCall = true;
+    // Re-negotiate
     const offer = await rtcPeerConnection.createOffer();
     await rtcPeerConnection.setLocalDescription(offer);
     sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: true });
+    // Show video UI
     $('#callVideos').classList.remove('hidden');
     $('#callOverlay').classList.add('video-active');
     $('#callFlipBtn').classList.remove('hidden');
+    const btn = $('#callVideoToggleBtn');
+    if (btn) { btn.querySelector('i').setAttribute('data-lucide', 'video'); btn.querySelector('span').textContent = 'Camera'; }
     refreshIcons();
-  } catch (err) { toast('Could not access camera', 'error'); }
+  } catch (err) {
+    toast('Could not access camera', 'error');
+  }
 }
+
 async function flipCamera() {
   if (!rtcLocalStream) return;
-  const videoTracks = rtcLocalStream.getVideoTracks();
-  if (!videoTracks.length) return;
+  const oldTrack = rtcLocalStream.getVideoTracks()[0];
+  if (!oldTrack) return;
   _callFacingMode = _callFacingMode === 'user' ? 'environment' : 'user';
   try {
     const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: _callFacingMode } });
     const newTrack = newStream.getVideoTracks()[0];
-    const oldTrack = videoTracks[0];
     const sender = rtcPeerConnection.getSenders().find(s => s.track === oldTrack);
     if (sender) await sender.replaceTrack(newTrack);
     rtcLocalStream.removeTrack(oldTrack); oldTrack.stop();
@@ -7778,249 +8041,57 @@ async function flipCamera() {
     toast('Could not flip camera', 'error');
   }
 }
+
+// ---- Call timer ----
 function startCallTimer() {
   _callConnectedAt = Date.now();
-  const timerEl = $('#callTimer');
-  if (timerEl) timerEl.classList.remove('hidden');
   clearInterval(_callTimerInterval);
+  const el = $('#callTimer');
+  if (el) el.classList.remove('hidden');
   _callTimerInterval = setInterval(() => {
-    if (!timerEl) return;
-    const elapsed = Math.floor((Date.now() - _callConnectedAt) / 1000);
-    const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
-    const secs = String(elapsed % 60).padStart(2, '0');
-    timerEl.textContent = mins + ':' + secs;
+    if (!el) return;
+    const s = Math.floor((Date.now() - _callConnectedAt) / 1000);
+    el.textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
   }, 1000);
 }
+
 function stopCallTimer() {
-  clearInterval(_callTimerInterval);
-  _callTimerInterval = null;
-  const timerEl = $('#callTimer');
-  if (timerEl) { timerEl.textContent = '00:00'; timerEl.classList.add('hidden'); }
+  clearInterval(_callTimerInterval); _callTimerInterval = null;
+  const el = $('#callTimer');
+  if (el) { el.textContent = '00:00'; el.classList.add('hidden'); }
 }
 
-function sendRTCSignal(targetId, signal) {
-  api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => { console.error('Signal error', e); toast('Call signal failed: '+(e.message||''),'error'); });
-}
-
-async function startCall(video) {
-  if (!State.currentRoom || State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
-  isVideoCall = video;
-  rtcCurrentPeer = State.currentRoom.target.id;
-  try {
-    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
-  } catch (err) {
-    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
-    return;
-  }
-  showCallUI('Calling...', State.currentRoom.target);
-  createPeerConnection();
-  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  
-  try {
-    const offer = await rtcPeerConnection.createOffer();
-    await rtcPeerConnection.setLocalDescription(offer);
-    sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: isVideoCall });
-    _armCallTimeout();
-  } catch (err) {
-    toast('Failed to start call', 'error');
-    endCall();
-  }
-}
-
-async function handleRTCSignal(data) {
-  if (!data || !data.signal) return;
-  const peerId = data.fromId;
-  const signal = data.signal;
-  const author = data.author;
-
-  if (signal.type === 'offer') {
-    const age = Date.now() - (data.createdAt || 0);
-    if (data.createdAt && age > 20000) {
-      console.warn('[RTC] Ignoring stale incoming offer (>20s old):', age);
-      return;
-    }
-    if (window._handledRtcOffers && window._handledRtcOffers.has(data.id)) return;
-    if (!window._handledRtcOffers) window._handledRtcOffers = new Set();
-    if (data.id) window._handledRtcOffers.add(data.id);
-
-    if (rtcPeerConnection) {
-      // Busy
-      sendRTCSignal(peerId, { type: 'busy' });
-      return;
-    }
-    rtcCurrentPeer = peerId;
-    isVideoCall = signal.video;
-    showCallUI('Incoming Call...', author, true);
-    // Store offer to use upon acceptance
-    window._rtcPendingOffer = signal.offer;
-  } else if (signal.type === 'answer') {
-    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
-      rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
-      $('#callStatusText').textContent = 'Connected';
-      $('#callActiveControls').classList.remove('hidden');
-      if (isVideoCall) {
-        $('#callVideoToggleBtn').classList.remove('hidden');
-        $('#callFlipBtn').classList.remove('hidden');
-      }
-      startCallTimer();
-      _disarmCallTimeout();
-      refreshIcons();
-    }
-  } else if (signal.type === 'candidate') {
-    if (rtcPeerConnection && rtcCurrentPeer === peerId) {
-      rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.log(e));
-    }
-  } else if (signal.type === 'end' || signal.type === 'busy') {
-    if (rtcCurrentPeer === peerId) {
-      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
-      endCall(true);
-    }
-  }
-}
-
-async function acceptCall() {
-  $('#rtcAcceptBtn').classList.add('hidden');
-  $('#callStatusText').textContent = 'Connecting...';
-  try {
-    rtcLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideoCall });
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
-  } catch (err) {
-    toast('Camera/Microphone access denied. Tap the lock/site settings icon in Chrome and allow Camera + Microphone, then reload.', 'error');
-    endCall();
-    return;
-  }
-  createPeerConnection();
-  rtcLocalStream.getTracks().forEach(t => rtcPeerConnection.addTrack(t, rtcLocalStream));
-  try {
-    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
-    const answer = await rtcPeerConnection.createAnswer();
-    await rtcPeerConnection.setLocalDescription(answer);
-    sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
-    window._rtcPendingOffer = null;
-  } catch(err) {
-    endCall();
-  }
-}
-
-function createPeerConnection() {
-  rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
-  rtcRemoteStream = new MediaStream();
-  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
-  
-  rtcPeerConnection.onicecandidate = (e) => {
-    if (e.candidate && rtcCurrentPeer) {
-      sendRTCSignal(rtcCurrentPeer, { type: 'candidate', candidate: e.candidate });
-    }
-  };
-  rtcPeerConnection.ontrack = (e) => {
-    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
-    $('#callVideos').classList.remove('hidden');
-    $('#callOverlay').classList.add('video-active');
-    $('#callStatusText').textContent = 'Connected';
-    $('#callActiveControls').classList.remove('hidden');
-    // Show video-specific controls if it's a video call
-    if (isVideoCall) {
-      $('#callVideoToggleBtn').classList.remove('hidden');
-      $('#callFlipBtn').classList.remove('hidden');
-    }
-    startCallTimer();
-    _disarmCallTimeout();
-    refreshIcons();
-  };
-  rtcPeerConnection.oniceconnectionstatechange = () => {
-    if (!rtcPeerConnection) return;
-    const st = rtcPeerConnection.iceConnectionState;
-    if (st === 'connected') {
-      $('#callStatusText').textContent = 'Connected';
-      $('#callActiveControls').classList.remove('hidden');
-      if (isVideoCall) {
-        $('#callVideoToggleBtn').classList.remove('hidden');
-        $('#callFlipBtn').classList.remove('hidden');
-      }
-      startCallTimer();
-      _disarmCallTimeout();
-    } else if (st === 'failed') {
-      toast('Call failed to connect (network/NAT issue). Try again or switch networks.', 'error');
-      endCall(true);
-    } else if (st === 'disconnected') {
-      setTimeout(() => {
-        if (rtcPeerConnection && rtcPeerConnection.iceConnectionState === 'disconnected') {
-          toast('Call connection lost.', 'error');
-          endCall(true);
-        }
-      }, 6000);
-    }
-  };
-}
-
-// If a call never connects (peer offline, signal never arrives via the 2.5s
-// poll cycle, restrictive network, etc.) give the caller clear feedback
-// instead of leaving the "Calling..." UI hanging indefinitely.
+// ---- Call timeout (30s no answer) ----
 let _rtcConnectTimeout = null;
 function _armCallTimeout() {
   clearTimeout(_rtcConnectTimeout);
   _rtcConnectTimeout = setTimeout(() => {
-    if (rtcPeerConnection && rtcPeerConnection.iceConnectionState !== 'connected' && rtcPeerConnection.iceConnectionState !== 'completed') {
-      toast('No answer / call could not connect. They may be offline.', 'error');
-      endCall();
+    if (!_callConnected) {
+      toast('No answer. They may be offline.', 'error');
+      endCall(false);
     }
   }, 30000);
 }
 function _disarmCallTimeout() { clearTimeout(_rtcConnectTimeout); _rtcConnectTimeout = null; }
 
-
-function showCallUI(status, user, incoming = false) {
-  const overlay = $('#callOverlay');
-  overlay.classList.remove('hidden', 'video-active');
-  $('#callStatusText').textContent = status;
-  $('#callName').textContent = (user.displayName || user.username || 'User');
-  renderAvatar($('#callAvatar'), user);
-  $('#callVideos').classList.add('hidden');
-  $('#callActiveControls').classList.add('hidden');
-  // Reset control states
-  _callMuted = false; _callSpeakerOn = false;
-  const muteBtn = $('#callMuteBtn');
-  if (muteBtn) { muteBtn.classList.remove('active'); muteBtn.querySelector('i').setAttribute('data-lucide', 'mic'); muteBtn.querySelector('span').textContent = 'Mute'; }
-  const speakerBtn = $('#callSpeakerBtn');
-  if (speakerBtn) { speakerBtn.classList.remove('active'); speakerBtn.querySelector('i').setAttribute('data-lucide', 'volume-2'); speakerBtn.querySelector('span').textContent = 'Speaker'; }
-  const videoToggleBtn = $('#callVideoToggleBtn');
-  if (videoToggleBtn) { videoToggleBtn.classList.remove('active'); videoToggleBtn.querySelector('i').setAttribute('data-lucide', 'video'); videoToggleBtn.querySelector('span').textContent = 'Camera'; }
-  if (incoming) {
-    $('#rtcAcceptBtn').classList.remove('hidden');
-    $('#callActiveControls').classList.add('hidden');
-  } else {
-    $('#rtcAcceptBtn').classList.add('hidden');
-  }
-  refreshIcons();
-}
-
-function endCall(remote = false) {
+// ---- End call (full cleanup) ----
+function endCall(remote) {
   _disarmCallTimeout();
   stopCallTimer();
-  if (rtcPeerConnection) {
-    rtcPeerConnection.close();
-    rtcPeerConnection = null;
-  }
-  if (rtcLocalStream) {
-    rtcLocalStream.getTracks().forEach(t => t.stop());
-    rtcLocalStream = null;
-  }
-  if (!remote && rtcCurrentPeer) {
-    sendRTCSignal(rtcCurrentPeer, { type: 'end' });
-  }
-  rtcCurrentPeer = null;
-  _callMuted = false;
-  _callSpeakerOn = false;
-  _callFacingMode = 'user';
+  if (rtcPeerConnection) { try { rtcPeerConnection.close(); } catch (_) {} rtcPeerConnection = null; }
+  if (rtcLocalStream) { rtcLocalStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} }); rtcLocalStream = null; }
+  if (!remote && rtcCurrentPeer) sendRTCSignal(rtcCurrentPeer, { type: 'end' });
+  rtcCurrentPeer = null; rtcRemoteStream = null;
+  _callMuted = false; _callSpeakerOn = false; _callFacingMode = 'user';
+  _callConnected = false; _callConnecting = false;
+  window._rtcPendingOffer = null;
+  isVideoCall = false;
   const overlay = $('#callOverlay');
-  overlay.classList.add('hidden');
-  overlay.classList.remove('video-active');
-  $('#callVideos').classList.add('hidden');
-  $('#callActiveControls').classList.add('hidden');
-  $('#callFlipBtn').classList.add('hidden');
-  $('#rtcLocalVideo').srcObject = null;
-  $('#rtcRemoteVideo').srcObject = null;
+  if (overlay) { overlay.classList.add('hidden'); overlay.classList.remove('video-active'); }
+  const videos = $('#callVideos'); if (videos) videos.classList.add('hidden');
+  const controls = $('#callActiveControls'); if (controls) controls.classList.add('hidden');
+  const localVid = $('#rtcLocalVideo'); if (localVid) localVid.srcObject = null;
+  const remoteVid = $('#rtcRemoteVideo'); if (remoteVid) remoteVid.srcObject = null;
 }
 
 })();
