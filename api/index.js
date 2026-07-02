@@ -66,6 +66,16 @@ setInterval(() => {
   for (const [k, v] of _rateBuckets) if (v.resetAt < now) _rateBuckets.delete(k);
 }, 60000).unref?.();
 
+// Reject unexpectedly huge API bodies before they reach route handlers.
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api')) return next();
+  const len = Number(req.headers['content-length'] || '0');
+  if (['POST','PUT','PATCH'].includes(req.method) && len > 16 * 1024 * 1024) {
+    return res.status(413).json({ error: 'Request body too large' });
+  }
+  next();
+});
+
 // Global throttle: 400 req/min per IP for all /api/* routes
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api')) return next();
@@ -116,14 +126,42 @@ function recordLoginFail(userId) {
   }
 }
 function clearLoginFails(userId) { _loginFails.delete(userId); }
+const AUTH_GENERIC_ERROR = 'Invalid username/email or password.';
+function authFailureDelay() {
+  return new Promise(r => setTimeout(r, 250 + Math.floor(Math.random() * 250)));
+}
+function authSubjectRateLimit(req, subject, limit = 10) {
+  const ip = clientIp(req);
+  const key = 'credential:' + ip + ':' + (subject || 'unknown');
+  return rateLimit({ key, limit, windowMs: 15 * 60_000 });
+}
 
 // Sanitize text inputs (strip control chars, collapse excessive whitespace)
 function sanitizeText(s, maxLen = 4000) {
   if (typeof s !== 'string') return '';
-  return s
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')  // strip control chars
-    .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '')        // strip zero-width chars (anti-impersonation)
+  return s.normalize('NFKC')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
     .slice(0, maxLen);
+}
+function normalizeAuthIdentifier(v) {
+  return sanitizeText(String(v || ''), 254).trim().toLowerCase();
+}
+function isSafeMediaUrl(url, { allowData = true } = {}) {
+  if (typeof url !== 'string') return false;
+  const u = url.trim();
+  if (!u || u.length > 4096) return false;
+  if (/^https?:\/\//i.test(u)) return true;
+  if (allowData && /^data:(image|audio|video)\/(jpeg|jpg|png|webp|gif|webm|mp3|mp4|quicktime|mov);base64,[a-z0-9+/=]+$/i.test(u)) return true;
+  return false;
+}
+function isSafeImageUrl(url, { allowData = true } = {}) {
+  if (typeof url !== 'string') return false;
+  const u = url.trim();
+  if (!u || u.length > 4096) return false;
+  if (/^https?:\/\//i.test(u)) return true;
+  if (allowData && /^data:image\/(jpeg|jpg|png|webp|gif);base64,[a-z0-9+/=]+$/i.test(u)) return true;
+  return false;
 }
 function isStoryRecord(post) {
   if (!post) return false;
@@ -151,6 +189,7 @@ const GITHUB_PAT = process.env.GITHUB_PAT || '';
 const GH_REPO    = process.env.GH_REPO    || 'ajitjaat1011-ui/PRIV-SPACA';
 const GH_BRANCH  = process.env.GH_BRANCH  || 'data';
 const GH_FILE    = process.env.GH_FILE    || 'db.json';
+const ADMIN_USERS = process.env.ADMIN_USERS || process.env.OWNER_USERNAME || process.env.OWNER_EMAIL || '';
 // Legacy gist support (still works if configured)
 const GIST_ID    = process.env.GIST_ID || '';
 const GIST_FILE  = 'db.json';
@@ -498,6 +537,15 @@ function sanitizeUser(u) {
   };
 }
 // A "note" is a short 24h status (Instagram-style). Returns null once expired.
+function adminSet() {
+  return new Set(String(ADMIN_USERS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+}
+function isAdminUser(u) {
+  if (!u) return false;
+  const set = adminSet();
+  return set.has(String(u.username || '').toLowerCase()) || set.has(String(u.email || '').toLowerCase()) || set.has(String(u.id || '').toLowerCase());
+}
+
 function activeNote(u) {
   const n = u && u.note;
   if (!n || (!n.text && !n.music)) return null;
@@ -711,14 +759,17 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Diagnostics — verifies the configured persistence layer can READ & WRITE
-app.get('/api/diag', async (req, res) => {
+app.get('/api/diag', authMiddleware, async (req, res) => {
+  const dbAuth = await fetchDatabase();
+  const diagUser = dbAuth.users.find(u => u.id === req.userId);
+  if (!isAdminUser(diagUser)) return res.status(403).json({ error: 'Admin only' });
   const out = {
     persistence: isRepoConfigured() ? 'github-repo' : (isGistConfigured() ? 'gist' : 'in-memory'),
     repoConfigured: isRepoConfigured(),
     gistConfigured: isGistConfigured(),
-    repo: GH_REPO,
-    branch: GH_BRANCH,
-    file: GH_FILE,
+    repo: GH_REPO ? '[configured]' : '',
+    branch: GH_BRANCH ? '[configured]' : '',
+    file: GH_FILE ? '[configured]' : '',
     canRead: false,
     canWrite: false,
     userCount: 0,
@@ -815,33 +866,36 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
     return res.json({ token, user: sanitizeUser(newUser) });
   } catch (e) {
     console.error('[signup] exception', e);
-    return res.status(500).json({ error: 'Signup failed: ' + (e.message || 'unknown') });
+    return res.status(500).json({ error: 'Signup failed' });
   }
 });
 
 app.post('/api/auth/login', authRateLimit, async (req, res) => {
   try {
     const { identifier, password } = req.body || {};
-    if (!identifier || !password) return res.status(400).json({ error: 'Missing credentials' });
-    if (typeof password !== 'string' || password.length > 128) return res.status(400).json({ error: 'Invalid credentials' });
-    const db = await fetchDatabase();
-    const idLower = String(identifier).toLowerCase().trim();
-    const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
-    if (!user) {
-      // constant-time-ish wait to slow user enumeration
-      await new Promise(r => setTimeout(r, 200 + Math.random() * 100));
-      return res.status(401).json({ error: 'Invalid credentials' });
+    const idLower = normalizeAuthIdentifier(identifier);
+    if (!idLower || typeof password !== 'string' || password.length < 1 || password.length > 128) {
+      await authFailureDelay();
+      return res.status(401).json({ error: AUTH_GENERIC_ERROR });
     }
-    // Brute-force lock check
+    const subjLimit = authSubjectRateLimit(req, idLower, 20);
+    if (!subjLimit.allowed) {
+      res.setHeader('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
+      return res.status(429).json({ error: 'Too many login attempts. Please wait and try again.' });
+    }
+    const db = await fetchDatabase();
+    const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
+    if (!user) { await authFailureDelay(); return res.status(401).json({ error: AUTH_GENERIC_ERROR }); }
     const lock = checkAccountLock(user.id);
     if (lock.locked) {
-      const mins = Math.ceil(lock.remaining / 60_000);
-      return res.status(423).json({ error: `Account temporarily locked due to failed attempts. Try again in ${mins} minute(s).` });
+      res.setHeader('Retry-After', String(Math.ceil(lock.remaining / 1000)));
+      return res.status(429).json({ error: 'Too many login attempts. Please wait and try again.' });
     }
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
       recordLoginFail(user.id);
-      return res.status(401).json({ error: 'Invalid credentials' });
+      await authFailureDelay();
+      return res.status(401).json({ error: AUTH_GENERIC_ERROR });
     }
     clearLoginFails(user.id);
     const token = signToken(user);
@@ -855,17 +909,23 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
 app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
   try {
     const { identifier, pin, newPassword } = req.body || {};
-    if (!identifier || !isValidPin(pin) || !newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: 'Invalid reset payload' });
+    const idLower = normalizeAuthIdentifier(identifier);
+    if (!idLower || !isValidPin(pin) || typeof newPassword !== 'string' || newPassword.length < 6 || newPassword.length > 128) {
+      await authFailureDelay();
+      return res.status(400).json({ error: 'Invalid reset details.' });
+    }
+    const subjLimit = authSubjectRateLimit(req, 'reset:' + idLower, 8);
+    if (!subjLimit.allowed) {
+      res.setHeader('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
+      return res.status(429).json({ error: 'Too many reset attempts. Please wait and try again.' });
     }
     const db = await fetchDatabase();
-    const idLower = String(identifier).toLowerCase();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
-    if (!user) return res.status(404).json({ error: 'Account not found' });
+    if (!user) { await authFailureDelay(); return res.status(401).json({ error: 'Invalid reset details.' }); }
     const pinOk = await bcrypt.compare(pin, user.pinHash);
-    if (!pinOk) return res.status(401).json({ error: 'Incorrect PIN' });
+    if (!pinOk) { await authFailureDelay(); return res.status(401).json({ error: 'Invalid reset details.' }); }
     const oldHash = user.passwordHash;
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordHash = await bcrypt.hash(newPassword, 12);
     const persisted = await saveDatabase(db, false);
     if (isPersistConfigured() && !persisted) {
       user.passwordHash = oldHash; // roll back
@@ -875,7 +935,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
     return res.json({ ok: true });
   } catch (e) {
     console.error('[reset] exception', e);
-    return res.status(500).json({ error: 'Reset failed: ' + (e.message || 'unknown') });
+    return res.status(500).json({ error: 'Reset failed' });
   }
 });
 
@@ -967,7 +1027,7 @@ app.post('/api/upload-photo', authMiddleware, async (req, res) => {
     res.json({ url: cdnUrl, persisted: true });
   } catch (e) {
     console.error('[upload-photo] exception', e.message);
-    res.status(500).json({ error: 'Upload failed: ' + (e.message || 'unknown') });
+    res.status(500).json({ error: 'Upload failed' });
   }
 });
 app.post('/api/user/update', authMiddleware, async (req, res) => {
@@ -990,11 +1050,9 @@ app.post('/api/user/update', authMiddleware, async (req, res) => {
     if (typeof bio === 'string') {
       user.bio = sanitizeText(bio, 280);
     }
-    if (typeof photoUrl === 'string' && photoUrl.length <= 4096) {
-      // Allow https URLs + data URLs only
-      if (photoUrl === '' || /^(https?:|data:image\/)/i.test(photoUrl)) {
-        user.photoUrl = photoUrl;
-      }
+    if (typeof photoUrl === 'string') {
+      const cleanPhoto = photoUrl.trim();
+      if (cleanPhoto === '' || isSafeImageUrl(cleanPhoto)) user.photoUrl = cleanPhoto;
     }
     await saveDatabase(db, false);
     res.json({ user: sanitizeUser(user) });
@@ -1133,16 +1191,17 @@ app.post('/api/user/note', authMiddleware, async (req, res) => {
 function cleanNoteMusic(m) {
   if (!m || typeof m !== 'object' || !m.title) return null;
   return {
-    title: String(m.title).slice(0, 80),
-    artist: String(m.artist || '').slice(0, 80),
-    audio: (typeof m.audio === 'string' && /^https?:/i.test(m.audio)) ? m.audio.slice(0, 1024) : '',
-    art: (typeof m.art === 'string' && /^https?:/i.test(m.art)) ? m.art.slice(0, 1024) : '',
+    title: sanitizeText(m.title, 80),
+    artist: sanitizeText(m.artist || '', 80),
+    audio: isSafeMediaUrl(m.audio, { allowData: false }) ? String(m.audio).trim().slice(0, 1024) : '',
+    art: isSafeImageUrl(m.art, { allowData: false }) ? String(m.art).trim().slice(0, 1024) : '',
   };
 }
 
 app.post('/api/user/typing', authMiddleware, async (req, res) => {
-  const { roomId } = req.body || {};
-  if (!roomId) return res.status(400).json({ error: 'roomId required' });
+  const { roomId: rawRoomId } = req.body || {};
+  if (!rawRoomId) return res.status(400).json({ error: 'roomId required' });
+  const roomId = normalizeRoomId(rawRoomId, req.userId);
   const db = await fetchDatabase();
   if (!db.typing[roomId]) db.typing[roomId] = {};
   db.typing[roomId][req.userId] = nowMs();
@@ -1151,7 +1210,7 @@ app.post('/api/user/typing', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/user/typing', authMiddleware, async (req, res) => {
-  const { roomId } = req.query;
+  const roomId = normalizeRoomId(req.query.roomId, req.userId);
   if (!roomId) return res.status(400).json({ error: 'roomId required' });
   const db = await fetchDatabase();
   const map = db.typing[roomId] || {};
@@ -1166,17 +1225,14 @@ app.get('/api/user/typing', authMiddleware, async (req, res) => {
 
 // ---------- Messages ----------
 function normalizeRoomId(roomId, currentUserId) {
-  if (!roomId) return 'general-group';
-  if (roomId === 'general-group' || roomId.startsWith('group:')) return roomId;
-  if (roomId.startsWith('dm:')) {
-    // dm:userA:userB -> sort
-    const parts = roomId.slice(3).split(':');
-    if (parts.length === 2) {
-      const sorted = [...parts].sort();
-      return 'dm:' + sorted.join(':');
-    }
+  const raw = sanitizeText(String(roomId || 'general-group'), 160).trim();
+  if (!raw || raw === 'general-group') return 'general-group';
+  if (/^group:[a-zA-Z0-9_-]{1,64}$/.test(raw)) return raw;
+  if (raw.startsWith('dm:')) {
+    const parts = raw.slice(3).split(':').filter(Boolean);
+    if (parts.length === 2 && parts.every(x => /^[a-zA-Z0-9_-]{1,96}$/.test(x))) return 'dm:' + [...parts].sort().join(':');
   }
-  return roomId;
+  return 'general-group';
 }
 
 function dmRoomFor(a, b) {
@@ -1227,7 +1283,7 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
     if (isEncrypted && (cipher.length > 12000 || iv.length > 64)) return res.status(413).json({ error: 'Payload too large' });
 
     const cleanText = isEncrypted ? '' : sanitizeText(text, 4000);
-    const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
+    const cleanImage = isSafeMediaUrl(imageUrl) ? String(imageUrl).trim() : null;
     if (!cleanText && !cleanImage && !isEncrypted) return res.status(400).json({ error: 'Empty message' });
 
     let disappearAt = null;
@@ -1242,7 +1298,7 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
         id: replyTo.id,
         text: typeof replyTo.text === 'string' ? replyTo.text.slice(0, 200) : '',
         username: typeof replyTo.username === 'string' ? replyTo.username.slice(0, 60) : '',
-        imageUrl: typeof replyTo.imageUrl === 'string' ? replyTo.imageUrl.slice(0, 2048) : null,
+        imageUrl: isSafeMediaUrl(replyTo.imageUrl) ? String(replyTo.imageUrl).trim().slice(0, 2048) : null,
       };
     }
     const author = db.users.find(u => u.id === req.userId);
@@ -1329,7 +1385,7 @@ app.post('/api/messages/schedule', authMiddleware, async (req, res) => {
     const ts = Number(deliverAt);
     if (!ts || isNaN(ts) || ts < nowMs() + 5000) return res.status(400).json({ error: 'deliverAt must be at least 5 seconds in the future' });
     const cleanText = sanitizeText(text, 4000);
-    const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
+    const cleanImage = isSafeMediaUrl(imageUrl) ? String(imageUrl).trim() : null;
     if (!cleanText && !cleanImage) return res.status(400).json({ error: 'Empty message' });
     if (roomId.startsWith('dm:')) {
       const parts = roomId.slice(3).split(':');
@@ -1342,7 +1398,7 @@ app.post('/api/messages/schedule', authMiddleware, async (req, res) => {
         id: replyTo.id,
         text: typeof replyTo.text === 'string' ? replyTo.text.slice(0, 200) : '',
         username: typeof replyTo.username === 'string' ? replyTo.username.slice(0, 60) : '',
-        imageUrl: typeof replyTo.imageUrl === 'string' ? replyTo.imageUrl.slice(0, 2048) : null,
+        imageUrl: isSafeMediaUrl(replyTo.imageUrl) ? String(replyTo.imageUrl).trim().slice(0, 2048) : null,
       };
     }
     const author = db.users.find(u => u.id === req.userId);
@@ -1654,12 +1710,12 @@ app.post('/api/posts/create', authMiddleware, async (req, res) => {
   try {
     const { text, imageUrl, images, videoUrl, isScratch, music, style, story, storyExpiresAt, audience } = req.body || {};
     const cleanText = sanitizeText(text, 2000);
-    const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
+    const cleanImage = isSafeImageUrl(imageUrl) ? String(imageUrl).trim() : null;
     const cleanImages = Array.isArray(images)
-      ? images.filter(u => typeof u === 'string' && u.length <= 4096).slice(0, 3)
+      ? images.filter(u => isSafeImageUrl(u)).map(u => String(u).trim()).slice(0, 3)
       : (cleanImage ? [cleanImage] : []);
     const mainImage = cleanImages[0] || cleanImage || null;
-    const cleanVideo = typeof videoUrl === 'string' && videoUrl.length <= 4096 && /^(https?:|data:video\/)/i.test(videoUrl) ? videoUrl : null;
+    const cleanVideo = isSafeMediaUrl(videoUrl) && (/^https?:\/\//i.test(String(videoUrl)) || /^data:video\//i.test(String(videoUrl))) ? String(videoUrl).trim() : null;
     if (!cleanText && !mainImage && cleanImages.length === 0 && !cleanVideo) return res.status(400).json({ error: 'Empty post' });
     const db = await fetchDatabase();
     const author = db.users.find(u => u.id === req.userId);
@@ -1668,10 +1724,10 @@ app.post('/api/posts/create', authMiddleware, async (req, res) => {
     } : null;
     const cleanMusic = music && typeof music === 'object' && music.title ? {
       id: music.id,
-      title: String(music.title).slice(0, 60),
-      artist: String(music.artist).slice(0, 60),
-      audio: String(music.audio).slice(0, 1024),
-      art: String(music.art).slice(0, 1024),
+      title: sanitizeText(music.title, 60),
+      artist: sanitizeText(music.artist || '', 60),
+      audio: isSafeMediaUrl(music.audio, { allowData: false }) ? String(music.audio).trim().slice(0, 1024) : '',
+      art: isSafeImageUrl(music.art, { allowData: false }) ? String(music.art).trim().slice(0, 1024) : '',
       posX: Math.max(0, Math.min(100, Number(music.posX) || 50)),
       posY: Math.max(0, Math.min(100, Number(music.posY) || 32)),
       startTime: Math.max(0, Math.min(180, Number(music.startTime) || 0)),
@@ -1745,22 +1801,27 @@ app.post('/api/posts/like', authMiddleware, async (req, res) => {
 
 app.post('/api/rtc/signal', authMiddleware, async (req, res) => {
   const { targetId, signal } = req.body || {};
-  if (!targetId || !signal) return res.status(400).json({ error: 'Missing data' });
+  if (typeof targetId !== 'string' || !/^[a-zA-Z0-9_-]{1,96}$/.test(targetId) || !signal || typeof signal !== 'object') return res.status(400).json({ error: 'Missing data' });
+  const signalType = sanitizeText(signal.type || '', 24);
+  if (!['offer','answer','candidate','end','reject','busy'].includes(signalType)) return res.status(400).json({ error: 'Invalid signal' });
+  if (JSON.stringify(signal).length > 20000) return res.status(413).json({ error: 'Signal too large' });
+  if (targetId === req.userId) return res.status(400).json({ error: 'Invalid target' });
   const db = await fetchDatabase();
+  if (!db.users.some(u => u.id === targetId)) return res.status(404).json({ error: 'Target not found' });
   const me = db.users.find(u => u.id === req.userId);
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: req.userId, displayName: 'Member', username: 'member' };
   const payload = { fromId: req.userId, author, signal };
   // Persist the signal so a client relying on the /api/rtc/signals poll
   // fallback (when SSE is unavailable) still receives it. Mirrors cf-worker.js.
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals : [];
-  if (signal.type === 'end' || signal.type === 'reject' || signal.type === 'busy') {
+  if (signalType === 'end' || signalType === 'reject' || signalType === 'busy') {
     // Terminal signals also clear any pending offer/answer between the pair.
     db.rtcSignals = db.rtcSignals.filter(x => !(
       (x.targetId === targetId && x.payload && x.payload.fromId === req.userId) ||
       (x.targetId === req.userId && x.payload && x.payload.fromId === targetId)
     ));
   }
-  const expiresAt = nowMs() + (signal.type === 'offer' ? 20000 : 60000);
+  const expiresAt = nowMs() + (signalType === 'offer' ? 20000 : 60000);
   db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt });
   if (db.rtcSignals.length > 200) db.rtcSignals = db.rtcSignals.slice(-200);
   // Fan out instantly to any live SSE subscriber too.
