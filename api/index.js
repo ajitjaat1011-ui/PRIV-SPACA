@@ -1628,7 +1628,7 @@ app.post('/api/user/follow', authMiddleware, async (req, res) => {
   if (!target.followers.includes(req.userId)) target.followers.push(req.userId);
   pushNotification(db, targetId, 'follow', req.userId);
   await saveDatabase(db, false);
-  res.json({ ok: true, following: me.following.length, followers: target.followers.length });
+  res.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
 
 app.post('/api/user/unfollow', authMiddleware, async (req, res) => {
@@ -1641,7 +1641,7 @@ app.post('/api/user/unfollow', authMiddleware, async (req, res) => {
   me.following = (me.following || []).filter(id => id !== targetId);
   target.followers = (target.followers || []).filter(id => id !== req.userId);
   await saveDatabase(db, false);
-  res.json({ ok: true });
+  res.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
 
 app.post('/api/user/block', authMiddleware, async (req, res) => {
