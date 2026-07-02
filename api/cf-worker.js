@@ -27,7 +27,7 @@ let VAPID_SUBJECT = 'mailto:admin@priv-spaca.app';
 let ADMIN_USERS = 'Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com';
 let OWNER_EMAIL = 'ajitjaat1011@gmail.com';
 let OWNER_USERNAME = 'Arvindjaat1011';
-let VIP_UNLOCK_KEY = 'arvshub1718';
+let VIP_UNLOCK_KEY = '';
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true; // curl/server/API agents send no Origin
   try {
@@ -127,6 +127,28 @@ function isSafeImageUrl(url, { allowData = true } = {}) {
   if (allowData && /^data:image\/(jpeg|jpg|png|webp|gif);base64,[a-z0-9+/=]+$/i.test(u)) return true;
   return false;
 }
+function isSafeHttpsUrl(url, maxLen = 2048) {
+  if (typeof url !== 'string') return false;
+  const u = url.trim();
+  if (!u || u.length > maxLen) return false;
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+function isValidPushSubscription(sub) {
+  if (!sub || typeof sub !== 'object') return false;
+  if (!isSafeHttpsUrl(sub.endpoint, 2048)) return false;
+  const keys = sub.keys;
+  if (!keys || typeof keys !== 'object') return false;
+  const p256dh = String(keys.p256dh || '');
+  const auth = String(keys.auth || '');
+  if (!/^[A-Za-z0-9_-]{16,512}$/.test(p256dh)) return false;
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(auth)) return false;
+  return true;
+}
 function isStoryRecord(post) {
   if (!post) return false;
   return !!(post.story === true || post.kind === 'story' || post.storyExpiresAt);
@@ -204,6 +226,13 @@ async function neonEnsure() {
   )`.catch(() => {});
   await sql`CREATE INDEX IF NOT EXISTS idx_events_user_ts ON priv_spaca_events (user_id, created_at)`.catch(() => {});
   await sql`CREATE INDEX IF NOT EXISTS idx_events_ts ON priv_spaca_events (created_at)`.catch(() => {});
+  await sql`CREATE TABLE IF NOT EXISTS priv_spaca_rate_limits (
+    key TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    reset_at BIGINT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`.catch(() => {});
+  await sql`CREATE INDEX IF NOT EXISTS idx_rate_limits_reset_at ON priv_spaca_rate_limits (reset_at)`.catch(() => {});
   const rows = await sql`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
   if (rows.length === 0) {
     const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', createdAt: Date.now() } });
@@ -570,6 +599,31 @@ function rateLimit({ key, limit, windowMs }) {
   b.count++;
   return { allowed: b.count <= limit, remaining: Math.max(0, limit - b.count), resetAt: b.resetAt };
 }
+async function sharedRateLimit({ key, limit, windowMs }) {
+  if (!isNeonConfigured()) return rateLimit({ key, limit, windowMs });
+  const now = Date.now();
+  const nextResetAt = now + windowMs;
+  try {
+    await neonEnsure();
+    const rows = await neonClient()`INSERT INTO priv_spaca_rate_limits AS rl (key, count, reset_at, updated_at)
+      VALUES (${key}, 1, ${nextResetAt}, NOW())
+      ON CONFLICT (key) DO UPDATE SET
+        count = CASE WHEN rl.reset_at <= ${now} THEN 1 ELSE rl.count + 1 END,
+        reset_at = CASE WHEN rl.reset_at <= ${now} THEN ${nextResetAt} ELSE rl.reset_at END,
+        updated_at = NOW()
+      RETURNING count, reset_at`;
+    if (Math.random() < 0.01) {
+      neonClient()`DELETE FROM priv_spaca_rate_limits WHERE reset_at < ${now - (24 * 60 * 60 * 1000)}`.catch(() => {});
+    }
+    const row = rows && rows[0] ? rows[0] : { count: 1, reset_at: nextResetAt };
+    const count = Number(row.count || 0);
+    const resetAt = Number(row.reset_at || nextResetAt);
+    return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetAt };
+  } catch (e) {
+    console.warn('[sharedRateLimit] falling back to in-memory limiter:', e && e.message);
+    return rateLimit({ key, limit, windowMs });
+  }
+}
 function clientIp(c) {
   return c.req.header('cf-connecting-ip')
       || (c.req.header('x-forwarded-for') || '').split(',')[0].trim()
@@ -577,7 +631,7 @@ function clientIp(c) {
 }
 async function authRateLimit(c, next) {
   const ip = clientIp(c);
-  const r = rateLimit({ key: 'auth:' + ip + ':' + c.req.path, limit: 40, windowMs: 15 * 60_000 });
+  const r = await sharedRateLimit({ key: 'auth:' + ip + ':' + c.req.path, limit: 40, windowMs: 15 * 60_000 });
   if (!r.allowed) {
     c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
     return c.json({ error: 'Too many auth attempts. Try again in 15 minutes.' }, 429);
@@ -586,7 +640,7 @@ async function authRateLimit(c, next) {
 }
 async function globalRateLimit(c, next) {
   const ip = clientIp(c);
-  const r = rateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
+  const r = await sharedRateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
   c.header('X-RateLimit-Limit', '400');
   c.header('X-RateLimit-Remaining', String(r.remaining));
   if (!r.allowed) {
@@ -617,10 +671,10 @@ const AUTH_GENERIC_ERROR = 'Invalid username/email or password.';
 async function authFailureDelay() {
   await sleepMs(250 + Math.floor(Math.random() * 250));
 }
-function authSubjectRateLimit(c, subject, limit = 10) {
+async function authSubjectRateLimit(c, subject, limit = 10) {
   const ip = clientIp(c);
   const key = 'credential:' + ip + ':' + (subject || 'unknown');
-  return rateLimit({ key, limit, windowMs: 15 * 60_000 });
+  return sharedRateLimit({ key, limit, windowMs: 15 * 60_000 });
 }
 
 // ---------- Real-time events (in-memory; SSE per-request) ----------
@@ -1038,7 +1092,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       await authFailureDelay();
       return c.json({ error: AUTH_GENERIC_ERROR }, 401);
     }
-    const subjLimit = authSubjectRateLimit(c, idLower, 20);
+    const subjLimit = await authSubjectRateLimit(c, idLower, 20);
     if (!subjLimit.allowed) {
       c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
@@ -1079,7 +1133,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       await authFailureDelay();
       return c.json({ error: 'Invalid reset details.' }, 400);
     }
-    const subjLimit = authSubjectRateLimit(c, 'reset:' + idLower, 8);
+    const subjLimit = await authSubjectRateLimit(c, 'reset:' + idLower, 8);
     if (!subjLimit.allowed) {
       c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return c.json({ error: 'Too many reset attempts. Please wait and try again.' }, 429);
@@ -1197,6 +1251,7 @@ app.post('/api/user/vip/redeem', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const key = sanitizeText(String(body.key || ''), 80).trim();
+    if (!VIP_UNLOCK_KEY) return c.json({ error: 'VIP unlock is not configured' }, 503);
     if (!key || key !== VIP_UNLOCK_KEY) return c.json({ error: 'Invalid VIP key' }, 403);
     const db = await fetchDatabase({ fresh: true });
     const user = db.users.find(u => u.id === c.get('userId'));
@@ -1522,7 +1577,7 @@ app.post('/api/messages/schedule', requireAuth, async (c) => {
     const ts = Number(deliverAt);
     if (!ts || isNaN(ts) || ts < nowMs() + 5000) return c.json({ error: 'deliverAt must be at least 5s in future' }, 400);
     const ct = sanitizeText(text, 4000);
-    const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
+    const ci = isSafeMediaUrl(imageUrl) ? String(imageUrl).trim() : null;
     if (!ct && !ci) return c.json({ error: 'Empty message' }, 400);
     if (roomId.startsWith('dm:')) {
       const parts = roomId.slice(3).split(':');
@@ -1531,7 +1586,12 @@ app.post('/api/messages/schedule', requireAuth, async (c) => {
     const db = await fetchDatabase();
     let replyRef = null;
     if (replyTo && typeof replyTo === 'object' && replyTo.id) {
-      replyRef = { id: replyTo.id, text: (replyTo.text || '').slice(0, 200), username: (replyTo.username || '').slice(0, 60), imageUrl: (replyTo.imageUrl || '').slice(0, 2048) || null };
+      replyRef = {
+        id: replyTo.id,
+        text: typeof replyTo.text === 'string' ? replyTo.text.slice(0, 200) : '',
+        username: typeof replyTo.username === 'string' ? replyTo.username.slice(0, 60) : '',
+        imageUrl: isSafeMediaUrl(replyTo.imageUrl) ? String(replyTo.imageUrl).trim().slice(0, 2048) : null,
+      };
     }
     const author = db.users.find(u => u.id === myId);
     const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
@@ -1973,7 +2033,7 @@ app.get('/api/push/vapid-public', (c) => c.json({ key: VAPID_PUBLIC || '' }));
 app.post('/api/push/subscribe', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { subscription } = body;
-  if (!subscription || !subscription.endpoint) return c.json({ error: 'Invalid subscription' }, 400);
+  if (!isValidPushSubscription(subscription)) return c.json({ error: 'Invalid subscription' }, 400);
   const db = await fetchDatabase();
   const u = db.users.find(x => x.id === c.get('userId'));
   if (!u) return c.json({ error: 'Not found' }, 404);
@@ -1986,6 +2046,7 @@ app.post('/api/push/subscribe', requireAuth, async (c) => {
 });
 app.post('/api/push/unsubscribe', requireAuth, async (c) => {
   const { endpoint } = await c.req.json().catch(() => ({}));
+  if (!isSafeHttpsUrl(endpoint, 2048)) return c.json({ error: 'Invalid endpoint' }, 400);
   const db = await fetchDatabase();
   const u = db.users.find(x => x.id === c.get('userId'));
   if (!u) return c.json({ error: 'Not found' }, 404);

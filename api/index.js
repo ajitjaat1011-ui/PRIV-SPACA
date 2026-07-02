@@ -6,6 +6,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { neon } = require('@neondatabase/serverless');
 
 // node-fetch v2 (CommonJS). If unavailable, fall back to globalThis.fetch (Node 18+).
 let fetchFn;
@@ -85,6 +86,53 @@ function rateLimit({ key, limit, windowMs }) {
   b.count++;
   return { allowed: b.count <= limit, remaining: Math.max(0, limit - b.count), resetAt: b.resetAt };
 }
+let _rateLimitSql = null;
+let _rateLimitNeonReady = false;
+function isRateLimitNeonConfigured() {
+  return !!DATABASE_URL;
+}
+function rateLimitSql() {
+  if (!_rateLimitSql) _rateLimitSql = neon(DATABASE_URL);
+  return _rateLimitSql;
+}
+async function ensureRateLimitStore() {
+  if (!isRateLimitNeonConfigured()) return false;
+  if (_rateLimitNeonReady) return true;
+  await rateLimitSql()`CREATE TABLE IF NOT EXISTS priv_spaca_rate_limits (
+    key TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    reset_at BIGINT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+  await rateLimitSql()`CREATE INDEX IF NOT EXISTS idx_rate_limits_reset_at ON priv_spaca_rate_limits (reset_at)`;
+  _rateLimitNeonReady = true;
+  return true;
+}
+async function sharedRateLimit({ key, limit, windowMs }) {
+  if (!isRateLimitNeonConfigured()) return rateLimit({ key, limit, windowMs });
+  const now = Date.now();
+  const nextResetAt = now + windowMs;
+  try {
+    await ensureRateLimitStore();
+    const rows = await rateLimitSql()`INSERT INTO priv_spaca_rate_limits AS rl (key, count, reset_at, updated_at)
+      VALUES (${key}, 1, ${nextResetAt}, NOW())
+      ON CONFLICT (key) DO UPDATE SET
+        count = CASE WHEN rl.reset_at <= ${now} THEN 1 ELSE rl.count + 1 END,
+        reset_at = CASE WHEN rl.reset_at <= ${now} THEN ${nextResetAt} ELSE rl.reset_at END,
+        updated_at = NOW()
+      RETURNING count, reset_at`;
+    if (Math.random() < 0.01) {
+      rateLimitSql()`DELETE FROM priv_spaca_rate_limits WHERE reset_at < ${now - (24 * 60 * 60 * 1000)}`.catch(() => {});
+    }
+    const row = rows && rows[0] ? rows[0] : { count: 1, reset_at: nextResetAt };
+    const count = Number(row.count || 0);
+    const resetAt = Number(row.reset_at || nextResetAt);
+    return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetAt };
+  } catch (e) {
+    console.warn('[sharedRateLimit] falling back to in-memory limiter:', e && e.message);
+    return rateLimit({ key, limit, windowMs });
+  }
+}
 function clientIp(req) {
   return (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim()
       || req.headers['x-real-ip']
@@ -108,10 +156,10 @@ app.use((req, res, next) => {
 });
 
 // Global throttle: 400 req/min per IP for all /api/* routes
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   if (!req.path.startsWith('/api')) return next();
   const ip = clientIp(req);
-  const r = rateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
+  const r = await sharedRateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
   res.setHeader('X-RateLimit-Limit', '400');
   res.setHeader('X-RateLimit-Remaining', String(r.remaining));
   if (!r.allowed) {
@@ -122,10 +170,10 @@ app.use((req, res, next) => {
 });
 
 // Auth-specific rate limit: 40 attempts / 15 min per IP for signup, login, reset
-function authRateLimit(req, res, next) {
+async function authRateLimit(req, res, next) {
   const ip = clientIp(req);
   const key = 'auth:' + ip + ':' + req.path;
-  const r = rateLimit({ key, limit: 40, windowMs: 15 * 60_000 });
+  const r = await sharedRateLimit({ key, limit: 40, windowMs: 15 * 60_000 });
   if (!r.allowed) {
     res.setHeader('Retry-After', String(Math.ceil((r.resetAt - Date.now())/1000)));
     return res.status(429).json({ error: 'Too many auth attempts. Try again in 15 minutes.' });
@@ -161,10 +209,10 @@ const AUTH_GENERIC_ERROR = 'Invalid username/email or password.';
 function authFailureDelay() {
   return new Promise(r => setTimeout(r, 250 + Math.floor(Math.random() * 250)));
 }
-function authSubjectRateLimit(req, subject, limit = 10) {
+async function authSubjectRateLimit(req, subject, limit = 10) {
   const ip = clientIp(req);
   const key = 'credential:' + ip + ':' + (subject || 'unknown');
-  return rateLimit({ key, limit, windowMs: 15 * 60_000 });
+  return sharedRateLimit({ key, limit, windowMs: 15 * 60_000 });
 }
 
 // Sanitize text inputs (strip control chars, collapse excessive whitespace)
@@ -194,6 +242,28 @@ function isSafeImageUrl(url, { allowData = true } = {}) {
   if (allowData && /^data:image\/(jpeg|jpg|png|webp|gif);base64,[a-z0-9+/=]+$/i.test(u)) return true;
   return false;
 }
+function isSafeHttpsUrl(url, maxLen = 2048) {
+  if (typeof url !== 'string') return false;
+  const u = url.trim();
+  if (!u || u.length > maxLen) return false;
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+function isValidPushSubscription(sub) {
+  if (!sub || typeof sub !== 'object') return false;
+  if (!isSafeHttpsUrl(sub.endpoint, 2048)) return false;
+  const keys = sub.keys;
+  if (!keys || typeof keys !== 'object') return false;
+  const p256dh = String(keys.p256dh || '');
+  const auth = String(keys.auth || '');
+  if (!/^[A-Za-z0-9_-]{16,512}$/.test(p256dh)) return false;
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(auth)) return false;
+  return true;
+}
 function isStoryRecord(post) {
   if (!post) return false;
   return !!(post.story === true || post.kind === 'story' || post.storyExpiresAt);
@@ -217,11 +287,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'priv-spaca-dev-secret-change-me-in
 const JWT_EXPIRES = '7d';
 // GitHub repo-file persistence (Contents API). Requires `repo` scope.
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
+const DATABASE_URL = process.env.DATABASE_URL || '';
 const GH_REPO    = process.env.GH_REPO    || 'ajitjaat1011-ui/PRIV-SPACA';
 const GH_BRANCH  = process.env.GH_BRANCH  || 'data';
 const GH_FILE    = process.env.GH_FILE    || 'db.json';
 const ADMIN_USERS = process.env.ADMIN_USERS || process.env.OWNER_USERNAME || process.env.OWNER_EMAIL || '';
-const VIP_UNLOCK_KEY = process.env.VIP_UNLOCK_KEY || 'arvshub1718';
+const VIP_UNLOCK_KEY = process.env.VIP_UNLOCK_KEY || '';
 // Legacy gist support (still works if configured)
 const GIST_ID    = process.env.GIST_ID || '';
 const GIST_FILE  = 'db.json';
@@ -623,7 +694,7 @@ app.get('/api/push/vapid-public', (req, res) => {
 // POST /api/push/subscribe — save subscription on the user record
 app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
   const { subscription } = req.body || {};
-  if (!subscription || !subscription.endpoint) {
+  if (!isValidPushSubscription(subscription)) {
     return res.status(400).json({ error: 'Invalid subscription' });
   }
   const db = await fetchDatabase();
@@ -643,6 +714,9 @@ app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
 // POST /api/push/unsubscribe — remove subscription
 app.post('/api/push/unsubscribe', authMiddleware, async (req, res) => {
   const { endpoint } = req.body || {};
+  if (!isSafeHttpsUrl(endpoint, 2048)) {
+    return res.status(400).json({ error: 'Invalid endpoint' });
+  }
   const db = await fetchDatabase();
   const u = db.users.find(x => x.id === req.userId);
   if (!u) return res.status(404).json({ error: 'Not found' });
@@ -922,7 +996,7 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
       await authFailureDelay();
       return res.status(401).json({ error: AUTH_GENERIC_ERROR });
     }
-    const subjLimit = authSubjectRateLimit(req, idLower, 20);
+    const subjLimit = await authSubjectRateLimit(req, idLower, 20);
     if (!subjLimit.allowed) {
       res.setHeader('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return res.status(429).json({ error: 'Too many login attempts. Please wait and try again.' });
@@ -958,7 +1032,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
       await authFailureDelay();
       return res.status(400).json({ error: 'Invalid reset details.' });
     }
-    const subjLimit = authSubjectRateLimit(req, 'reset:' + idLower, 8);
+    const subjLimit = await authSubjectRateLimit(req, 'reset:' + idLower, 8);
     if (!subjLimit.allowed) {
       res.setHeader('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return res.status(429).json({ error: 'Too many reset attempts. Please wait and try again.' });
@@ -1115,6 +1189,7 @@ app.post('/api/user/update', authMiddleware, async (req, res) => {
 app.post('/api/user/vip/redeem', authMiddleware, async (req, res) => {
   try {
     const key = sanitizeText(String((req.body || {}).key || ''), 80).trim();
+    if (!VIP_UNLOCK_KEY) return res.status(503).json({ error: 'VIP unlock is not configured' });
     if (!key || key !== VIP_UNLOCK_KEY) return res.status(403).json({ error: 'Invalid VIP key' });
     const db = await fetchDatabase();
     const user = db.users.find(u => u.id === req.userId);
