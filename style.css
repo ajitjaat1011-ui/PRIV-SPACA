@@ -379,6 +379,56 @@ img{user-select:none;-webkit-user-drag:none}
   background:var(--bg-2);border-right:1px solid var(--line);
   padding:16px 12px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;
 }
+/* ===== Redesigned inbox: segmented tabs (Groups | Primary) ===== */
+.inbox-segment{display:flex;gap:6px;padding:10px 10px 8px}
+.inbox-seg-btn{
+  flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+  padding:9px 6px;border-radius:999px;border:1px solid var(--line-2);background:transparent;
+  color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;transition:all .18s;
+}
+.inbox-seg-btn i{width:15px;height:15px}
+.inbox-seg-btn .seg-badge{
+  min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--muted-2);color:#fff;
+  font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;
+}
+.inbox-seg-btn .seg-badge.zero{display:none}
+.inbox-seg-btn:hover{color:var(--text)}
+.inbox-seg-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.inbox-seg-btn.active .seg-badge{background:rgba(255,255,255,.28)}
+
+/* Message Requests banner (top of Primary) */
+.req-banner{
+  width:calc(100% - 16px);margin:6px 8px;display:flex;align-items:center;gap:12px;
+  padding:11px 12px;border-radius:14px;background:var(--bg-soft);border:0;cursor:pointer;text-align:left;
+  transition:background .12s;
+}
+.req-banner:hover{background:var(--accent-softer)}
+.req-banner .req-ic{
+  width:44px;height:44px;border-radius:12px;flex-shrink:0;background:var(--accent-soft);color:var(--accent);
+  display:flex;align-items:center;justify-content:center;
+}
+.req-banner .req-ic i{width:20px;height:20px}
+.req-banner .req-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.req-banner .req-nm{font-weight:700;font-size:14px;color:var(--text)}
+.req-banner .req-sub{font-size:12.5px;color:var(--muted)}
+.req-banner .req-chev{width:18px;height:18px;color:var(--muted);flex-shrink:0}
+
+/* Requests sub-view header */
+.requests-head{display:flex;align-items:center;gap:8px;padding:6px 8px 8px}
+.requests-head-title{font-weight:800;font-size:15px;color:var(--text)}
+.inbox-empty{padding:22px 16px;text-align:center;color:var(--muted);font-size:13px;line-height:1.5}
+
+/* Unread badge + preview on conversation rows */
+.member-item .row-right{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0}
+.member-item .row-time{font-size:11px;color:var(--muted)}
+.member-item .row-time.unread{color:var(--accent);font-weight:700}
+.member-item .unread-count{
+  min-width:19px;height:19px;padding:0 6px;border-radius:999px;background:var(--accent);color:#fff;
+  font-size:10.5px;font-weight:800;display:flex;align-items:center;justify-content:center;
+}
+.member-item .last-msg{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.member-item .last-msg.unread{color:var(--text-2);font-weight:600}
+
 .pane-title{
   display:flex;align-items:center;gap:6px;
   text-transform:uppercase;font-size:11px;font-weight:800;color:var(--muted);

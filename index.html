@@ -150,8 +150,18 @@
   <!-- ====== CHAT TAB ====== -->
   <main id="chatView" class="view chat-view">
     <aside class="rooms-pane">
+      <!-- Segmented inbox tabs: Groups first, then Primary (Requests folded into Primary) -->
+      <div class="inbox-segment" id="inboxSegment">
+        <button type="button" class="inbox-seg-btn active" data-seg="groups">
+          <i data-lucide="hash"></i> <span>Groups</span> <span class="seg-badge" id="segGroupsBadge">0</span>
+        </button>
+        <button type="button" class="inbox-seg-btn" data-seg="primary">
+          <i data-lucide="send"></i> <span>Primary</span> <span class="seg-badge" id="segPrimaryBadge">0</span>
+        </button>
+      </div>
+
+      <!-- GROUPS: community channels -->
       <div id="groupsPaneSection">
-        <div class="pane-title"><i data-lucide="hash"></i> Community Channels</div>
         <ul id="roomsList" class="rooms-list">
           <li class="room-item active" data-room="general-group">
             <span class="room-icon">#</span>
@@ -159,10 +169,32 @@
           </li>
         </ul>
       </div>
+
+      <!-- PRIMARY: 1-to-1 DMs, with Requests folded in as a banner -->
       <div id="dmsPaneSection">
-        <div class="pane-title"><i data-lucide="message-circle"></i> Direct Messages <span id="memberCount" class="muted-pill">0</span></div>
+        <!-- Requests banner (people you're not connected with yet) -->
+        <button type="button" id="requestsBanner" class="req-banner hidden">
+          <span class="req-ic"><i data-lucide="user-plus"></i></span>
+          <span class="req-meta">
+            <span class="req-nm">Message Requests</span>
+            <span class="req-sub" id="requestsSub">0 people want to chat</span>
+          </span>
+          <i data-lucide="chevron-right" class="req-chev"></i>
+        </button>
         <ul id="membersList" class="members-list"></ul>
+        <div id="membersEmpty" class="inbox-empty hidden">No conversations yet. Start one from Requests or Search.</div>
+
+        <!-- Requests sub-view (hidden until banner tapped) -->
+        <div id="requestsView" class="hidden">
+          <div class="requests-head">
+            <button type="button" id="requestsBackBtn" class="ghost-btn"><i data-lucide="arrow-left"></i></button>
+            <span class="requests-head-title">Message Requests</span>
+          </div>
+          <ul id="requestsList" class="members-list"></ul>
+          <div id="requestsEmpty" class="inbox-empty hidden">No requests right now.</div>
+        </div>
       </div>
+      <span id="memberCount" class="hidden">0</span>
     </aside>
 
     <section class="chat-pane">

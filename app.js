@@ -693,18 +693,22 @@ function switchTab(tab) {
     activeView = $('#chatView');
     activeView.classList.add('active');
     markTabSeen('groups');
-    const gs = $('#groupsPaneSection'); if (gs) gs.style.display = 'block';
-    const ds = $('#dmsPaneSection'); if (ds) ds.style.display = 'none';
-    const r = $('#roomsList .room-item[data-room="general-group"]');
-    if (r) r.click();
+    setInboxSegment('groups');
+    if (window.innerWidth <= 820) {
+      // Mobile: show the channel list; let the user pick (Instagram-style).
+      $('#chatView').classList.add('show-rooms');
+    } else {
+      // Desktop: both panes visible, so open the default channel.
+      const r = $('#roomsList .room-item[data-room="general-group"]');
+      if (r) r.click();
+    }
   }
   if (tab === 'chat') {
     activeView = $('#chatView');
     activeView.classList.add('active');
     markTabSeen('chat');
     refreshSecretChatUI();
-    const gs = $('#groupsPaneSection'); if (gs) gs.style.display = 'none';
-    const ds = $('#dmsPaneSection'); if (ds) ds.style.display = 'block';
+    setInboxSegment('primary');
     if (window.innerWidth <= 820) {
       $('#chatView').classList.add('show-rooms');
     } else if (State.currentRoom.kind !== 'dm') {
@@ -733,6 +737,16 @@ async function loadMembers() {
   } catch (_) {}
 }
 
+// Inbox segment state: 'groups' or 'primary'. Requests is a sub-view of primary.
+let _inboxSeg = 'groups';
+let _inboxShowRequests = false;
+
+// A member counts as a "request" (not yet connected) when neither of us
+// follows the other. Mutual/one-way follows land in Primary.
+function _isRequestUser(u) {
+  return !u.iFollow && !u.followsMe;
+}
+
 let _lastMembersSig = '';
 function renderMembers() {
   const list = $('#membersList');
@@ -740,37 +754,66 @@ function renderMembers() {
   const meId = State.user && State.user.id;
   const others = State.members.filter(u => u.id !== meId);
   const me = State.members.find(u => u.id === meId);
-  $('#memberCount').textContent = String(State.members.length);
-  const ordered = me ? [me, ...others] : others;
-  // Skip rebuild if nothing visible changed (members list is shown in the chat side panel)
+  if ($('#memberCount')) $('#memberCount').textContent = String(State.members.length);
+
+  // Split into Primary (connected) vs Requests (not connected yet).
+  const primary = others.filter(u => !_isRequestUser(u));
+  const requests = others.filter(u => _isRequestUser(u));
+
+  // Update segment badges.
+  const gBadge = $('#segGroupsBadge');
+  if (gBadge) { const n = $$('#roomsList .room-item').length; gBadge.textContent = String(n); gBadge.classList.toggle('zero', n === 0); }
+  const pBadge = $('#segPrimaryBadge');
+  if (pBadge) { pBadge.textContent = String(primary.length); pBadge.classList.toggle('zero', primary.length === 0); }
+
+  // Requests banner.
+  const banner = $('#requestsBanner');
+  const reqSub = $('#requestsSub');
+  if (banner) banner.classList.toggle('hidden', requests.length === 0 || _inboxShowRequests);
+  if (reqSub) reqSub.textContent = requests.length === 1 ? '1 person wants to chat' : requests.length + ' people want to chat';
+
   const typingIds = (State.typingUsers || []).map(t => t.id).sort().join(',');
   const activeDM = (State.currentRoom.kind === 'dm' && State.currentRoom.target) ? State.currentRoom.target.id : '';
-  const sig = ordered.map(u => u.id + ':' + (u.online?1:0) + ':' + (u.photoUrl?1:0)).join('|') + '||' + typingIds + '||' + activeDM;
+  const sig = _inboxSeg + '|' + _inboxShowRequests + '||' +
+    others.map(u => u.id + ':' + (u.online?1:0) + ':' + (u.photoUrl?1:0) + ':' + (u.iFollow?1:0) + ':' + (u.followsMe?1:0)).join(',') +
+    '||' + typingIds + '||' + activeDM;
   if (sig === _lastMembersSig && list.children.length > 0) return;
   _lastMembersSig = sig;
-  list.innerHTML = '';
-  ordered.forEach(u => {
+
+  const buildRow = (u) => {
     const li = document.createElement('li');
     li.className = 'member-item';
     if (State.currentRoom.kind === 'dm' && State.currentRoom.target && State.currentRoom.target.id === u.id) li.classList.add('active');
-    const isMe = u.id === meId;
     const avatar = document.createElement('span');
     avatar.className = 'avatar sm';
-    renderAvatar(avatar, u, { showStatus: true, online: !!u.online || isMe });
+    renderAvatar(avatar, u, { showStatus: true, online: !!u.online });
     const meta = document.createElement('div');
     meta.className = 'meta';
-    const isTyping = !isMe && State.typingUsers.some(t => t.id === u.id);
-    meta.innerHTML = `
-      <span class="nm">${escapeHtml(u.displayName || u.username)}${isMe ? ' <span class="muted small">(you)</span>' : ''}</span>
-      <span class="${isTyping ? 'member-typing' : 'un'}">${isTyping ? 'typing…' : '@' + escapeHtml(u.username)}</span>
-    `;
+    const isTyping = State.typingUsers.some(t => t.id === u.id);
+    const subCls = isTyping ? 'member-typing' : 'un';
+    const subTxt = isTyping ? 'typing…' : '@' + escapeHtml(u.username);
+    meta.innerHTML = '<span class="nm">' + escapeHtml(u.displayName || u.username) + '</span>' +
+      '<span class="' + subCls + '">' + subTxt + '</span>';
     li.appendChild(avatar); li.appendChild(meta);
-    if (!isMe) li.addEventListener('click', () => openDM(u));
-    else li.style.cursor = 'default';
-    list.appendChild(li);
-  });
-}
+    li.addEventListener('click', () => openDM(u));
+    return li;
+  };
 
+  // Render Primary list.
+  list.innerHTML = '';
+  primary.forEach(u => list.appendChild(buildRow(u)));
+  const emptyEl = $('#membersEmpty');
+  if (emptyEl) emptyEl.classList.toggle('hidden', primary.length > 0 || requests.length > 0);
+
+  // Render Requests sub-list.
+  const reqList = $('#requestsList');
+  if (reqList) {
+    reqList.innerHTML = '';
+    requests.forEach(u => reqList.appendChild(buildRow(u)));
+    const reqEmpty = $('#requestsEmpty');
+    if (reqEmpty) reqEmpty.classList.toggle('hidden', requests.length > 0);
+  }
+}
 function openDM(user) {
   State.currentRoom = {
     id: dmRoomId(State.user.id, user.id),
@@ -786,6 +829,13 @@ function openDM(user) {
   $$('#roomsList .room-item').forEach(r => r.classList.remove('active'));
   $('#chatView').classList.remove('show-rooms');
   if ($('#rtcCallActions')) $('#rtcCallActions').style.display = 'flex';
+  // Opening a DM belongs to the Primary segment — make sure it's shown.
+  if (typeof _inboxSeg !== 'undefined' && _inboxSeg !== 'primary') {
+    _inboxSeg = 'primary';
+    $$('#inboxSegment .inbox-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.seg === 'primary'));
+    const gs = $('#groupsPaneSection'); if (gs) gs.style.display = 'none';
+    const ds = $('#dmsPaneSection'); if (ds) ds.style.display = 'block';
+  }
   // Reset message-id memo so all messages in the new room animate-in once
   _previousMessageIds = new Set();
   renderMembers();
@@ -893,6 +943,60 @@ function bindRooms() {
   });
   const back = $('#backToRoomsBtn');
   if (back) back.addEventListener('click', () => $('#chatView').classList.toggle('show-rooms'));
+}
+
+// Switch the inbox side-pane between the Groups and Primary segments.
+function setInboxSegment(seg) {
+  _inboxSeg = (seg === 'primary') ? 'primary' : 'groups';
+  _inboxShowRequests = false; // always reset to the main list on segment switch
+  $$('#inboxSegment .inbox-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.seg === _inboxSeg));
+  const gs = $('#groupsPaneSection'); if (gs) gs.style.display = (_inboxSeg === 'groups') ? 'block' : 'none';
+  const ds = $('#dmsPaneSection'); if (ds) ds.style.display = (_inboxSeg === 'primary') ? 'block' : 'none';
+  // Within Primary, show the main DM list (not the requests sub-view).
+  const rv = $('#requestsView'); if (rv) rv.classList.add('hidden');
+  const ml = $('#membersList'); if (ml) ml.classList.remove('hidden');
+  const banner = $('#requestsBanner');
+  const me = $('#membersEmpty');
+  if (_inboxSeg === 'primary') {
+    renderMembers();
+    // Refresh from the server so newly-joined people appear in Primary/Requests.
+    if (typeof loadMembers === 'function') loadMembers();
+  } else {
+    if (banner) banner.classList.add('hidden'); if (me) me.classList.add('hidden');
+  }
+  refreshIcons();
+}
+
+function bindInboxSegment() {
+  $$('#inboxSegment .inbox-seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const seg = btn.dataset.seg;
+      setInboxSegment(seg);
+      // Keep the bottom-nav tab visually in sync (Groups btn ↔ groups seg).
+      const navTab = seg === 'groups' ? 'groups' : 'chat';
+      $$('.bn-btn[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === navTab));
+      State.currentTab = navTab;
+    });
+  });
+  // Requests banner opens the requests sub-view.
+  const banner = $('#requestsBanner');
+  if (banner) banner.addEventListener('click', () => {
+    _inboxShowRequests = true;
+    const ml = $('#membersList'); if (ml) ml.classList.add('hidden');
+    banner.classList.add('hidden');
+    const me = $('#membersEmpty'); if (me) me.classList.add('hidden');
+    const rv = $('#requestsView'); if (rv) rv.classList.remove('hidden');
+    renderMembers();
+    refreshIcons();
+  });
+  const backBtn = $('#requestsBackBtn');
+  if (backBtn) backBtn.addEventListener('click', () => {
+    _inboxShowRequests = false;
+    const rv = $('#requestsView'); if (rv) rv.classList.add('hidden');
+    const ml = $('#membersList'); if (ml) ml.classList.remove('hidden');
+    renderMembers();
+    refreshIcons();
+  });
 }
 
 // ============================================================
@@ -5964,7 +6068,7 @@ function boot() {
   // handler function) can't crash the whole boot sequence and silently skip
   // session restore below — that was causing "logged out on every refresh".
   const bindSteps = [
-    bindTabs, bindRooms, bindComposer, bindFeedComposer, bindProfile,
+    bindTabs, bindRooms, bindInboxSegment, bindComposer, bindFeedComposer, bindProfile,
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
     bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
