@@ -424,6 +424,10 @@ function hydrateMeChips() {
   if ($('#feedMeName')) $('#feedMeName').textContent = (State.user.displayName || State.user.username).toUpperCase();
   if ($('#feedMeAvatar')) renderAvatar($('#feedMeAvatar'), State.user);
   if ($('#profileAvatarPreview')) renderAvatar($('#profileAvatarPreview'), State.user);
+  const profileTitle = $('#profileTitleUsername');
+  if (profileTitle) profileTitle.textContent = State.user.username || State.user.displayName || 'me';
+  const profileUserLine = $('#profileUsername');
+  if (profileUserLine) profileUserLine.textContent = '@' + (State.user.username || State.user.displayName || 'me');
   // Bottom-nav avatar (uses the same broken-URL detection as renderAvatar)
   const bn = $('#bnMeAvatar');
   if (bn) {
@@ -6216,14 +6220,24 @@ let _profileTab = 'posts';
 
 async function renderOwnProfile() {
   if (!State.user) return;
+  const cachedUsername = State.user.username || State.user.displayName || 'me';
+  const titleU = $('#profileTitleUsername');
+  // Never leave the design placeholder visible while fresh profile data loads.
+  if (titleU) titleU.textContent = cachedUsername;
+  if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
+  if ($('#profileUsername')) $('#profileUsername').textContent = '@' + (State.user.username || cachedUsername);
   // Fetch fresh data (own profile uses same endpoint)
   try {
     const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
-    const u = data.user;
-    $('#profileDisplayName').textContent = u.displayName || '';
-    $('#profileUsername').textContent = '@' + u.username + (u.bio ? '' : '');
-    const titleU = $('#profileTitleUsername');
-    if (titleU) titleU.textContent = u.username || 'me';
+    const u = data.user || State.user;
+    if (u && u.id === State.user.id) {
+      State.user = { ...State.user, ...u };
+      try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+    }
+    const realUsername = u.username || State.user.username || cachedUsername;
+    $('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
+    $('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
+    if (titleU) titleU.textContent = realUsername;
     const mb = $('#profileMoodBubble');
     if (mb) {
       const note = activeNote(u);
