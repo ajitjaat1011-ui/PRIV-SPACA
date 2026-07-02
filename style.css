@@ -2495,3 +2495,172 @@ body{
 .notif-list li{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:16px!important;margin-bottom:8px}
 .primary-btn,.send-btn,.improved-send,.composer-add-btn,.floating-add-btn{box-shadow:var(--shadow-sm)}
 /* Bottom navigation visual rules remain unchanged by this rebuild. */
+
+/* ===== Soft Chat Inbox Redesign v1 ===== */
+.view.chat-view.active.show-rooms,
+.chat-view.show-rooms{
+  background:
+    radial-gradient(circle at 18% -8%, rgba(var(--accent-rgb),.16), transparent 32%),
+    radial-gradient(circle at 88% 10%, rgba(124,92,255,.12), transparent 28%),
+    linear-gradient(180deg,#fbfdff 0%,#f7fbff 52%,#ffffff 100%)!important;
+}
+.chat-view.show-rooms .rooms-pane{
+  background:transparent!important;
+  border-right:0!important;
+  padding:18px 18px 132px!important;
+  gap:14px!important;
+  animation:softInboxIn .34s cubic-bezier(.2,.85,.2,1) both;
+}
+@keyframes softInboxIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.inbox-segment{
+  gap:10px!important;
+  padding:12px 4px 10px!important;
+}
+.inbox-seg-btn{
+  min-height:58px!important;
+  border-radius:999px!important;
+  border:1.5px solid rgba(15,23,42,.08)!important;
+  background:rgba(255,255,255,.86)!important;
+  color:#7c8794!important;
+  box-shadow:0 8px 24px rgba(15,23,42,.06)!important;
+  font-size:16px!important;
+  font-weight:950!important;
+  gap:10px!important;
+  transition:transform .18s ease, box-shadow .18s ease, background .18s ease, color .18s ease!important;
+}
+.inbox-seg-btn i,.inbox-seg-btn svg{
+  width:30px!important;height:30px!important;stroke-width:2.2!important;
+}
+.inbox-seg-btn.active{
+  background:linear-gradient(135deg,#6d5dfc,#8b5cf6 56%,#a855f7)!important;
+  color:#fff!important;
+  border-color:transparent!important;
+  box-shadow:0 14px 34px rgba(124,92,255,.30)!important;
+  transform:translateY(-1px);
+}
+.inbox-seg-btn:active{transform:scale(.97)!important}
+.inbox-seg-btn .seg-badge{
+  min-width:25px!important;height:25px!important;
+  background:rgba(15,23,42,.12)!important;
+  color:inherit!important;
+  font-size:13px!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22);
+}
+.inbox-seg-btn.active .seg-badge{background:rgba(255,255,255,.22)!important;color:#fff!important}
+.notes-rail{
+  padding:18px 2px 14px!important;
+  gap:22px!important;
+  min-height:126px;
+  scroll-padding:18px;
+}
+.note-cell{
+  width:76px!important;
+  gap:8px!important;
+  animation:softPop .34s cubic-bezier(.2,.85,.2,1) both;
+}
+.note-cell:nth-child(2){animation-delay:.04s}.note-cell:nth-child(3){animation-delay:.08s}.note-cell:nth-child(4){animation-delay:.12s}.note-cell:nth-child(5){animation-delay:.16s}
+@keyframes softPop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+.note-bubble{
+  max-width:92px!important;
+  min-width:58px!important;
+  padding:8px 10px!important;
+  border:0!important;
+  border-radius:18px!important;
+  background:linear-gradient(180deg,#fff,#f1f7ff)!important;
+  box-shadow:0 8px 22px rgba(15,23,42,.08)!important;
+  color:#667085!important;
+  font-size:12px!important;
+  font-weight:900!important;
+}
+.note-bubble::after{background:#f1f7ff!important;border:0!important;bottom:-4px!important}
+.note-cell .note-avatar{
+  width:62px!important;height:62px!important;
+  border:4px solid #fff!important;
+  box-shadow:0 10px 24px rgba(15,23,42,.12)!important;
+}
+.note-cell .note-avatar.has-music{
+  box-shadow:0 0 0 3px #ff7a18,0 0 0 6px #ec4899,0 12px 28px rgba(236,72,153,.18)!important;
+}
+.note-cell .note-name{
+  max-width:82px!important;
+  font-size:13px!important;
+  color:#667085!important;
+  font-weight:850!important;
+}
+.req-banner{
+  width:100%!important;
+  min-height:82px!important;
+  margin:8px 0 16px!important;
+  padding:14px 16px!important;
+  border-radius:22px!important;
+  background:rgba(255,255,255,.94)!important;
+  border:1px solid rgba(15,23,42,.07)!important;
+  box-shadow:0 12px 34px rgba(15,23,42,.08)!important;
+  gap:14px!important;
+  transition:transform .18s ease, box-shadow .18s ease!important;
+  animation:softCardIn .36s cubic-bezier(.2,.85,.2,1) both;
+}
+.req-banner:active{transform:scale(.985)!important}
+.req-banner .req-ic{
+  width:54px!important;height:54px!important;
+  border-radius:16px!important;
+  color:#7c3aed!important;
+  background:linear-gradient(135deg,#f3e8ff,#eef2ff)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.8);
+}
+.req-banner .req-ic i,.req-banner .req-ic svg{width:28px!important;height:28px!important;stroke-width:2.35!important}
+.req-banner .req-nm{font-size:16px!important;font-weight:950!important;color:#111827!important}
+.req-banner .req-sub{font-size:14px!important;font-weight:800!important;color:#7b8794!important;margin-top:1px}
+.req-banner .req-chev{width:24px!important;height:24px!important;color:#8c98a5!important}
+@keyframes softCardIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.members-list{
+  gap:8px!important;
+  padding:0 0 132px!important;
+}
+.member-item{
+  min-height:72px!important;
+  padding:10px 4px!important;
+  border-radius:20px!important;
+  background:transparent!important;
+  gap:14px!important;
+  animation:softRowIn .32s cubic-bezier(.2,.85,.2,1) both;
+  transition:background .16s ease, transform .16s ease!important;
+}
+.member-item:nth-child(1){animation-delay:.03s}.member-item:nth-child(2){animation-delay:.06s}.member-item:nth-child(3){animation-delay:.09s}.member-item:nth-child(4){animation-delay:.12s}.member-item:nth-child(5){animation-delay:.15s}
+.member-item:active{transform:scale(.985)!important;background:rgba(255,255,255,.72)!important}
+@keyframes softRowIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
+.member-item .avatar.sm{
+  width:56px!important;height:56px!important;
+  font-size:19px!important;
+  border:3px solid #fff!important;
+  box-shadow:0 8px 22px rgba(15,23,42,.12)!important;
+}
+.member-item .avatar.with-status::after{
+  width:15px!important;height:15px!important;right:1px!important;bottom:1px!important;border-width:3px!important;
+}
+.member-item .meta{gap:4px!important;line-height:1.12!important}
+.member-item .meta .nm{
+  font-size:17px!important;
+  font-weight:950!important;
+  color:#111827!important;
+  letter-spacing:-.2px;
+}
+.member-item .meta .un,
+.member-item .last-msg{
+  font-size:14px!important;
+  font-weight:750!important;
+  color:#7b8794!important;
+}
+.member-typing{font-size:13px!important;font-weight:850!important;color:#8b5cf6!important}
+.member-item .row-right{gap:7px!important;padding-right:2px}
+.member-item .row-time{font-size:13px!important;font-weight:800!important;color:#7b8794!important}
+.member-item .unread-count{min-width:23px!important;height:23px!important;background:linear-gradient(135deg,#7c5cff,#00a2ff)!important;box-shadow:0 6px 14px rgba(0,162,255,.24)!important}
+.requests-head{padding:8px 2px 12px!important}.requests-head-title{font-size:18px!important;font-weight:950!important}
+.pane-title{padding-left:4px!important;font-size:12px!important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .chat-view.show-rooms{background:linear-gradient(180deg,#0f172a,#0b111c)!important}
+  :root:not([data-theme="light"]) .inbox-seg-btn,
+  :root:not([data-theme="light"]) .req-banner,
+  :root:not([data-theme="light"]) .note-bubble{background:#111827!important;border-color:#263245!important;color:#dbe4ee!important}
+  :root:not([data-theme="light"]) .member-item .meta .nm{color:#f8fafc!important}
+}
