@@ -4,5 +4,20 @@
 
 # (api/* is handled by the function automatically — no rewrite needed)
 
+# Block maintenance / source files from public asset access
+/backups/*                 /404  404
+/scripts/*                 /404  404
+/SECURITY_AUDIT*           /404  404
+/README.md                 /404  404
+/THIRD_PARTY_API_AUDIT.md  /404  404
+/package.json              /404  404
+/package-lock.json         /404  404
+/wrangler.toml             /404  404
+/dev-server.js             /404  404
+/.cloudflareignore         /404  404
+/.vercelignore             /404  404
+/.git*                     /404  404
+/.github/*                 /404  404
+
 # SPA fallback
 /*  /index.html  200
