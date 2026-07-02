@@ -26,7 +26,7 @@
 <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 <!-- Motion One v10 - lightweight (~3 KB gz) Framer-Motion-style animations for vanilla JS -->
 <script defer src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.min.js"></script>
-<link rel="stylesheet" href="style.css?v=52-chat-search-fix" />
+<link rel="stylesheet" href="style.css?v=53-search-glass-fix" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300c6ff'/%3E%3Cstop offset='1' stop-color='%230072ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Cpath fill='%23fff' d='M14 32 50 14 42 50 32 36 14 32z'/%3E%3C/svg%3E" />
 </head>
 <body>
@@ -502,7 +502,7 @@
     <div class="search-wrap">
       <div class="search-bar">
         <i data-lucide="search"></i>
-        <input id="searchInput" name="memberSearch" type="search" placeholder="Search members…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" inputmode="search" />
+        <input id="searchInput" name="search_q" type="text" placeholder="Search members…" autocomplete="new-password" autocorrect="off" autocapitalize="none" spellcheck="false" inputmode="search" enterkeyhint="search" />
         <button id="searchClearBtn" class="ghost-btn hidden"><i data-lucide="x"></i></button>
       </div>
       <ul id="searchResults" class="search-results"></ul>
@@ -1127,6 +1127,6 @@ window.__privSpacaLoaderFallback = setTimeout(function () {
   } catch (_) {}
 }, 6500);
 </script>
-<script src="app.js?v=52-chat-search-fix"></script>
+<script src="app.js?v=53-search-glass-fix"></script>
 </body>
 </html>

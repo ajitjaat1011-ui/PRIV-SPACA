@@ -826,12 +826,25 @@ function bindTabs() {
   if (pm) pm.addEventListener('click', (e) => { if (e.target === pm) closePostComposer(); });
 }
 
+let _searchFocusReleaseTimer = null;
 function shouldAutoFocusSearch() {
   try {
     return window.innerWidth > 820 && window.matchMedia && window.matchMedia('(pointer:fine)').matches;
   } catch (_) {
     return window.innerWidth > 820;
   }
+}
+function suppressSearchAutofillPrompt() {
+  const inp = $('#searchInput');
+  if (!inp) return;
+  inp.readOnly = true;
+  inp.setAttribute('aria-readonly', 'true');
+  try { inp.blur(); } catch (_) {}
+  clearTimeout(_searchFocusReleaseTimer);
+  _searchFocusReleaseTimer = setTimeout(() => {
+    inp.readOnly = false;
+    inp.removeAttribute('aria-readonly');
+  }, 650);
 }
 
 function switchTab(tab) {
@@ -851,6 +864,7 @@ function switchTab(tab) {
     loadMembers();
     renderSearch('');
     if (shouldAutoFocusSearch()) setTimeout(() => $('#searchInput').focus(), 100);
+    else suppressSearchAutofillPrompt();
   }
   if (tab === 'groups') {
     activeView = $('#chatView');
@@ -7055,6 +7069,20 @@ function bindSearch() {
   const inp = $('#searchInput');
   const clear = $('#searchClearBtn');
   if (!inp) return;
+  const unlock = () => {
+    if (!inp.readOnly) return;
+    inp.readOnly = false;
+    inp.removeAttribute('aria-readonly');
+    clearTimeout(_searchFocusReleaseTimer);
+  };
+  inp.addEventListener('pointerdown', unlock, { passive: true });
+  inp.addEventListener('touchstart', unlock, { passive: true });
+  inp.addEventListener('focus', () => {
+    if (inp.readOnly) {
+      inp.blur();
+      return;
+    }
+  });
   inp.addEventListener('input', () => {
     const q = inp.value.trim();
     clear.classList.toggle('hidden', !q);
@@ -7062,7 +7090,8 @@ function bindSearch() {
   });
   clear.addEventListener('click', () => {
     inp.value = ''; clear.classList.add('hidden');
-    renderSearch(''); inp.focus();
+    renderSearch('');
+    if (shouldAutoFocusSearch()) inp.focus();
   });
 }
 
@@ -7294,7 +7323,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=52-chat-search-fix').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=53-search-glass-fix').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
