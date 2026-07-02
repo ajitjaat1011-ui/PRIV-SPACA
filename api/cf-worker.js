@@ -991,19 +991,22 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const { dataUrl, kind } = body;
-    if (typeof dataUrl !== 'string' || (!dataUrl.startsWith('data:image/') && !dataUrl.startsWith('data:audio/'))) {
-      return c.json({ error: 'Send a data URL: data:image/... or data:audio/...' }, 400);
+    if (typeof dataUrl !== 'string' || (!dataUrl.startsWith('data:image/') && !dataUrl.startsWith('data:audio/') && !dataUrl.startsWith('data:video/'))) {
+      return c.json({ error: 'Send a data URL: data:image/... , data:audio/... or data:video/...' }, 400);
     }
-    const m = dataUrl.match(/^data:(image|audio)\/(jpeg|jpg|png|webp|gif|webm|mp3);base64,(.+)$/);
+    const m = dataUrl.match(/^data:(image|audio|video)\/(jpeg|jpg|png|webp|gif|webm|mp3|mp4|quicktime|mov);base64,(.+)$/);
     if (!m) return c.json({ error: 'Unsupported media type' }, 400);
-    const ext = m[2] === 'jpeg' ? 'jpg' : m[2];
+    const isVideo = m[1] === 'video';
+    let ext = m[2] === 'jpeg' ? 'jpg' : (m[2] === 'quicktime' ? 'mov' : m[2]);
     const b64 = m[3];
     const size = Math.floor(b64.length * 3 / 4);
-    if (size > 5 * 1024 * 1024) return c.json({ error: 'Image too large (max 5 MB)' }, 413);
+    // Videos get a larger cap (short story clips); images/audio stay at 5 MB.
+    const maxBytes = isVideo ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (size > maxBytes) return c.json({ error: (isVideo ? 'Video too large (max 10 MB)' : 'Image too large (max 5 MB)') }, 413);
     const userId = c.get('userId');
     const safeKind = (kind === 'post' || kind === 'avatar') ? kind : 'media';
     const folder = safeKind === 'avatar' ? 'avatars' : (safeKind === 'post' ? 'posts' : 'media');
-    const id = safeKind === 'avatar' ? userId : uid('img');
+    const id = safeKind === 'avatar' ? userId : uid(isVideo ? 'vid' : 'img');
     const path = `media/${folder}/${id}.${ext}`;
     if (!isRepo()) return c.json({ url: dataUrl, persisted: false });
     let priorSha = null;
@@ -1507,12 +1510,13 @@ app.get('/api/posts', requireAuth, async (c) => {
 app.post('/api/posts/create', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { text, imageUrl, images, isScratch, music, style, story, storyExpiresAt, audience } = body;
+    const { text, imageUrl, images, videoUrl, isScratch, music, style, story, storyExpiresAt, audience } = body;
     const ct = sanitizeText(text, 2000);
     const ci = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
     const cimgs = Array.isArray(images) ? images.filter(u => typeof u === 'string' && u.length <= 4096).slice(0, 3) : (ci ? [ci] : []);
     const mainImg = cimgs[0] || ci || null;
-    if (!ct && !mainImg && cimgs.length === 0) return c.json({ error: 'Empty post' }, 400);
+    const cvid = typeof videoUrl === 'string' && videoUrl.length <= 4096 && /^(https?:|data:video\/)/i.test(videoUrl) ? videoUrl : null;
+    if (!ct && !mainImg && cimgs.length === 0 && !cvid) return c.json({ error: 'Empty post' }, 400);
     const myId = c.get('userId');
     const db = await fetchDatabase();
     const author = db.users.find(u => u.id === myId);
@@ -1548,6 +1552,7 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     const post = {
       id: uid('post'), userId: myId, text: ct, imageUrl: mainImg,
       images: cimgs.length > 0 ? cimgs : (mainImg ? [mainImg] : []),
+      videoUrl: cvid,
       music: cleanMusic, style: cleanStyle, story: isStory, storyExpiresAt: expiresAt,
       audience: isStory ? (audience === 'close_friends' ? 'close_friends' : 'all') : null,
       isScratch: !!isScratch, likes: [], comments: [], authorSnapshot: snap, createdAt: nowMs()

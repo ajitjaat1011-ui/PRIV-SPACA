@@ -891,20 +891,22 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 app.post('/api/upload-photo', authMiddleware, async (req, res) => {
   try {
     const { dataUrl, kind } = req.body || {};
-    if (typeof dataUrl !== 'string' || (!dataUrl.startsWith('data:image/') && !dataUrl.startsWith('data:audio/'))) {
-      return res.status(400).json({ error: 'Send a data URL: data:image/... or data:audio/...' });
+    if (typeof dataUrl !== 'string' || (!dataUrl.startsWith('data:image/') && !dataUrl.startsWith('data:audio/') && !dataUrl.startsWith('data:video/'))) {
+      return res.status(400).json({ error: 'Send a data URL: data:image/... , data:audio/... or data:video/...' });
     }
-    const match = dataUrl.match(/^data:(image|audio)\/(jpeg|jpg|png|webp|gif|webm|mp3);base64,(.+)$/);
+    const match = dataUrl.match(/^data:(image|audio|video)\/(jpeg|jpg|png|webp|gif|webm|mp3|mp4|quicktime|mov);base64,(.+)$/);
     if (!match) return res.status(400).json({ error: 'Unsupported media type' });
-    const ext = match[2] === 'jpeg' ? 'jpg' : match[2];
+    const isVideo = match[1] === 'video';
+    const ext = match[2] === 'jpeg' ? 'jpg' : (match[2] === 'quicktime' ? 'mov' : match[2]);
     const b64 = match[3];
     const sizeBytes = Math.floor(b64.length * 3 / 4);
-    if (sizeBytes > 5 * 1024 * 1024) {
-      return res.status(413).json({ error: 'Image too large (max 5 MB after compression)' });
+    const maxBytes = isVideo ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (sizeBytes > maxBytes) {
+      return res.status(413).json({ error: (isVideo ? 'Video too large (max 10 MB)' : 'Image too large (max 5 MB after compression)') });
     }
     const safeKind = (kind === 'post' || kind === 'avatar') ? kind : 'media';
     const folder = safeKind === 'avatar' ? 'avatars' : (safeKind === 'post' ? 'posts' : 'media');
-    const id = (safeKind === 'avatar' ? req.userId : uid('img'));
+    const id = (safeKind === 'avatar' ? req.userId : uid(isVideo ? 'vid' : 'img'));
     const path = `media/${folder}/${id}.${ext}`;
 
     if (!isRepoConfigured()) {
@@ -1598,14 +1600,15 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
 
 app.post('/api/posts/create', authMiddleware, async (req, res) => {
   try {
-    const { text, imageUrl, images, isScratch, music, style, story, storyExpiresAt, audience } = req.body || {};
+    const { text, imageUrl, images, videoUrl, isScratch, music, style, story, storyExpiresAt, audience } = req.body || {};
     const cleanText = sanitizeText(text, 2000);
     const cleanImage = typeof imageUrl === 'string' && imageUrl.length <= 4096 ? imageUrl : null;
     const cleanImages = Array.isArray(images)
       ? images.filter(u => typeof u === 'string' && u.length <= 4096).slice(0, 3)
       : (cleanImage ? [cleanImage] : []);
     const mainImage = cleanImages[0] || cleanImage || null;
-    if (!cleanText && !mainImage && cleanImages.length === 0) return res.status(400).json({ error: 'Empty post' });
+    const cleanVideo = typeof videoUrl === 'string' && videoUrl.length <= 4096 && /^(https?:|data:video\/)/i.test(videoUrl) ? videoUrl : null;
+    if (!cleanText && !mainImage && cleanImages.length === 0 && !cleanVideo) return res.status(400).json({ error: 'Empty post' });
     const db = await fetchDatabase();
     const author = db.users.find(u => u.id === req.userId);
     const snapshot = author ? {
@@ -1645,6 +1648,7 @@ app.post('/api/posts/create', authMiddleware, async (req, res) => {
       text: cleanText,
       imageUrl: mainImage,
       images: cleanImages.length > 0 ? cleanImages : (mainImage ? [mainImage] : []),
+      videoUrl: cleanVideo,
       music: cleanMusic,
       style: cleanStyle,
       story: isStory,

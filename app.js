@@ -3024,6 +3024,7 @@ const storyPlayback = {
   startedAt: 0,
   progressFill: null,
   _pausedAt: 0,
+  videoEl: null,
 };
 
 // Single source of truth for story text typography — used identically by the
@@ -3078,6 +3079,11 @@ function stopStoryPlayback() {
   storyPlayback.startedAt = 0;
   storyPlayback.progressFill = null;
   storyPlayback._pausedAt = 0;
+  // Tear down any active story video element so audio doesn't keep playing.
+  if (storyPlayback.videoEl) {
+    try { storyPlayback.videoEl.pause(); storyPlayback.videoEl.src = ''; } catch (_) {}
+    storyPlayback.videoEl = null;
+  }
   _isHoldingStory = false;
 }
 function renderStoryProgressBars(total, activeIndex) {
@@ -3149,10 +3155,49 @@ function renderStoryItem() {
 
   // Only show a loading spinner + pause progress for image stories, and only
   // if the image genuinely isn't cached yet (avoids a flash on repeat views).
-  const needsImageLoad = !!firstImg && !_storyImagePreloadCache.has(firstImg);
+  const needsImageLoad = !!firstImg && !recent.videoUrl && !_storyImagePreloadCache.has(firstImg);
   v.classList.toggle('is-loading', needsImageLoad);
 
-  if (firstImg) {
+  if (recent.videoUrl) {
+    // ---- Video story: <video> drives the progress bar via its own duration ----
+    const vidWrap = document.createElement('div');
+    vidWrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;';
+    const vid = document.createElement('video');
+    vid.src = recent.videoUrl;
+    vid.autoplay = true; vid.playsInline = true; vid.setAttribute('playsinline', '');
+    vid.controls = false; vid.loop = false; vid.muted = false;
+    vid.style.cssText = 'width:100%; height:100%; max-height:82vh; object-fit:contain; border-radius:6px; background:#000;';
+    v.classList.add('is-loading');
+    // Drive the progress bar from actual playback time.
+    stopStoryPlayback();
+    const syncProgress = () => {
+      if (_isHoldingStory) return;
+      const dur = vid.duration && isFinite(vid.duration) ? vid.duration : (getStoryDurationMs(recent) / 1000);
+      const pct = dur > 0 ? Math.max(0, Math.min(1, vid.currentTime / dur)) : 0;
+      if (storyPlayback.progressFill) storyPlayback.progressFill.style.width = (pct * 100).toFixed(2) + '%';
+    };
+    vid.addEventListener('loadeddata', () => { v.classList.remove('is-loading'); });
+    vid.addEventListener('timeupdate', syncProgress);
+    vid.addEventListener('ended', () => nextStoryItem());
+    vid.addEventListener('error', () => { v.classList.remove('is-loading'); nextStoryItem(); });
+    // Hold-to-pause should also pause/resume the video element.
+    storyPlayback.videoEl = vid;
+    vid.play().catch(() => {});
+    vidWrap.appendChild(vid);
+    if (recent.text) {
+      const cap = document.createElement('div');
+      cap.className = 'story-img-caption';
+      const sz = st.size ? Math.min(52, Math.max(16, st.size)) : 22;
+      const px = st.posX || 50; const py = st.posY || 68;
+      const scale = st.scale ? Math.max(0.5, Math.min(2.5, st.scale)) : 1;
+      cap.style.cssText = `position:absolute; top:${py}%; left:${px}%; transform:translate(-50%,-50%) scale(${scale}); transform-origin:center center; width:85%; font-size:${sz}px; z-index:15; word-break:break-word;`;
+      cap.textContent = recent.text;
+      applyStoryTextBoxStyle(cap, { color: st.color || '#ffffff', bgMode: st.bgMode || (st.bg ? 'solid' : 'none'), align: st.align || 'center' });
+      applyStoryFontPreset(cap, st.font || 'modern');
+      vidWrap.appendChild(cap);
+    }
+    content.appendChild(vidWrap);
+  } else if (firstImg) {
     const imgWrap = document.createElement('div');
     imgWrap.style.cssText = 'position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;';
     const img = document.createElement('img');
@@ -3273,9 +3318,11 @@ function renderStoryItem() {
     { duration: 0.28, easing: [0.2, 0.85, 0.2, 1] }
   );
   storyPlayback.durationMs = getStoryDurationMs(recent);
-  // Don't start the progress countdown yet if we're still waiting on an image
+  // Video stories drive their own progress bar from playback time (handled in
+  // the video branch above), so skip the RAF countdown timer for them.
+  // Otherwise: don't start the countdown yet if we're still waiting on an image
   // decode — img.onload above will kick it off once the pixels are visible.
-  if (!needsImageLoad) startStoryProgress();
+  if (!recent.videoUrl && !needsImageLoad) startStoryProgress();
 
   // Preload the very next item (within this user, or the first item of the
   // next user with an active story) so tapping forward feels instant.
@@ -3536,6 +3583,10 @@ function pauseStoryForHold() {
   storyPlayback._pausedAt = performance.now();
   const player = $('#storyBgAudioPlayer');
   if (player && !player.paused) { player.pause(); player._resumeAfterHold = true; }
+  // Pause a playing story video too.
+  if (storyPlayback.videoEl && !storyPlayback.videoEl.paused) {
+    try { storyPlayback.videoEl.pause(); storyPlayback.videoEl._resumeAfterHold = true; } catch (_) {}
+  }
 }
 function resumeStoryFromHold() {
   if (!_isHoldingStory) return;
@@ -3551,6 +3602,12 @@ function resumeStoryFromHold() {
   storyPlayback._pausedAt = 0;
   const player = $('#storyBgAudioPlayer');
   if (player && player._resumeAfterHold) { player.play().catch(() => {}); player._resumeAfterHold = false; }
+  // Resume a paused story video, and let it keep driving its own progress bar
+  // (don't start the RAF countdown loop for video items).
+  if (storyPlayback.videoEl) {
+    if (storyPlayback.videoEl._resumeAfterHold) { storyPlayback.videoEl.play().catch(() => {}); storyPlayback.videoEl._resumeAfterHold = false; }
+    return;
+  }
   resumeStoryProgressLoop();
 }
 function resumeStoryProgressLoop() {
@@ -3992,6 +4049,12 @@ window.openStoryCreator = () => {
       const files = Array.from(e.target.files || []);
       e.target.value = ''; // allow re-picking the same file later
       if (!files.length) return;
+      // ---- Video story path (single clip, ~15s, ≤10MB) ----
+      const vidFile = files.find(f => f.type && f.type.startsWith('video/'));
+      if (vidFile) {
+        await handleStoryVideoPick(vidFile, ph, prev, loadingEl);
+        return;
+      }
       // Multi-photo carousel: up to 3 images per story item. New picks are
       // appended to any existing selection (respecting the 3-photo cap).
       State.storyCreatorImages = Array.isArray(State.storyCreatorImages) ? State.storyCreatorImages : [];
@@ -4036,6 +4099,59 @@ window.openStoryCreator = () => {
   const guide = $('#storySafeAreaGuide');
   if (guide) guide.classList.add('hidden');
 };
+
+// Handle a video pick in the story editor: validate size/duration, preview it,
+// and upload as a base64 data URL (durable GitHub media path, ≤10MB).
+async function handleStoryVideoPick(file, ph, prev, loadingEl) {
+  const MAX_BYTES = 10 * 1024 * 1024;      // 10 MB
+  const MAX_SECONDS = 20;                    // short story clip
+  if (file.size > MAX_BYTES) { toast('Video too large — keep it under 10MB', 'error'); return; }
+  // Probe duration before committing.
+  let durationOk = true;
+  try {
+    const localUrl = URL.createObjectURL(file);
+    const probe = document.createElement('video');
+    probe.preload = 'metadata'; probe.src = localUrl;
+    await new Promise((resolve) => {
+      probe.onloadedmetadata = () => resolve();
+      probe.onerror = () => resolve();
+      setTimeout(resolve, 4000);
+    });
+    if (probe.duration && isFinite(probe.duration) && probe.duration > MAX_SECONDS + 0.5) durationOk = false;
+    URL.revokeObjectURL(localUrl);
+  } catch (_) {}
+  if (!durationOk) { toast('Video is too long — max ' + MAX_SECONDS + 's for a story', 'error'); return; }
+
+  // Clear any photo selection (a story item is video OR photos, not both).
+  State.storyCreatorImages = [];
+  renderStoryEditorPhotoStrip();
+  if (ph) ph.classList.add('hidden');
+  if (loadingEl) loadingEl.classList.remove('hidden');
+  // Show a local preview immediately.
+  const vidPrev = $('#storyEditorPreviewVideo');
+  const localUrl = URL.createObjectURL(file);
+  if (prev) { prev.src = ''; prev.classList.add('hidden'); }
+  if (vidPrev) { vidPrev.src = localUrl; vidPrev.classList.remove('hidden'); vidPrev.play().catch(() => {}); }
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(new Error('read failed'));
+      r.readAsDataURL(file);
+    });
+    const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind: 'post' } });
+    State.storyCreatorVideoUrl = res.url || dataUrl;
+    State.storyCreatorImgUrl = null;
+    if (res.persisted === false) toast('Video will post but may not persist (no durable media host configured)');
+  } catch (err) {
+    toast('Video upload failed: ' + (err.message || ''), 'error');
+    State.storyCreatorVideoUrl = null;
+    if (vidPrev) { vidPrev.src = ''; vidPrev.classList.add('hidden'); }
+    if (ph) ph.classList.remove('hidden');
+  } finally {
+    if (loadingEl) loadingEl.classList.add('hidden');
+  }
+}
 
 // Render the multi-photo thumbnail strip + counter in the story editor.
 // Tapping a thumb makes it the primary preview; the ✕ removes it; a trailing
@@ -4092,8 +4208,10 @@ window.closeStoryCreator = () => {
   const mod = $('#storyEditorModal');
   if (mod) mod.classList.add('hidden');
   State.storyCreatorImages = [];
+  State.storyCreatorVideoUrl = null;
   const strip = $('#storyEditorPhotoStrip'); if (strip) { strip.classList.add('hidden'); strip.innerHTML = ''; }
   const countBadge = $('#storyEditorPhotoCount'); if (countBadge) countBadge.classList.add('hidden');
+  const vidPrev = $('#storyEditorPreviewVideo'); if (vidPrev) { try { vidPrev.pause(); } catch (_) {} vidPrev.src = ''; vidPrev.classList.add('hidden'); }
   const player = $('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
   selectedStoryMusicId = null;
@@ -4330,9 +4448,10 @@ window.removeStoryMusic = (e) => {
 window.publishStoryWithMusic = async (isCf = false) => {
   const capVal = ($('#storyEditorCaptionInput')?.value || '').trim();
   const text = activeStoryText || capVal;
-  const storyImages = Array.isArray(State.storyCreatorImages) && State.storyCreatorImages.length > 0
+  const videoUrl = State.storyCreatorVideoUrl || null;
+  const storyImages = videoUrl ? [] : (Array.isArray(State.storyCreatorImages) && State.storyCreatorImages.length > 0
     ? State.storyCreatorImages.slice(0, 3)
-    : (State.storyCreatorImgUrl ? [State.storyCreatorImgUrl] : []);
+    : (State.storyCreatorImgUrl ? [State.storyCreatorImgUrl] : []));
   const imageUrl = storyImages[0] || State.storyCreatorImgUrl || null;
   let song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   if (!song) song = liveSearchResults.find(s => s.id === selectedStoryMusicId);
@@ -4347,8 +4466,8 @@ window.publishStoryWithMusic = async (isCf = false) => {
     scale: State.textScale || 1.0,
   };
 
-  if (!text && !imageUrl) {
-    toast('Pick a photo or type a text caption first!', 'error');
+  if (!text && !imageUrl && !videoUrl) {
+    toast('Pick a photo/video or type a text caption first!', 'error');
     return;
   }
   if (isCf && (!Array.isArray(State.closeFriends) || State.closeFriends.length === 0)) {
@@ -4370,6 +4489,7 @@ window.publishStoryWithMusic = async (isCf = false) => {
         text,
         imageUrl,
         images: storyImages,
+        videoUrl,
         music,
         style,
         story: true,
@@ -5113,7 +5233,16 @@ function renderStoryManageSheet() {
     li.className = 'story-manage-item';
     const thumb = document.createElement('div');
     thumb.className = 'story-manage-thumb';
-    if (story.imageUrl) {
+    if (story.videoUrl) {
+      const vid = document.createElement('video');
+      vid.src = story.videoUrl;
+      vid.muted = true; vid.playsInline = true; vid.preload = 'metadata';
+      thumb.appendChild(vid);
+      const vb = document.createElement('span');
+      vb.className = 'thumb-video-badge';
+      vb.textContent = '▶';
+      thumb.appendChild(vb);
+    } else if (story.imageUrl) {
       const img = document.createElement('img');
       img.src = story.imageUrl;
       img.alt = 'story';

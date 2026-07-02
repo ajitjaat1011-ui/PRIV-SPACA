@@ -758,10 +758,11 @@
     <div class="story-editor-stage" id="storyEditorStage">
       <div id="storyEditorPlaceholder" class="story-placeholder">
         <i data-lucide="image" style="width:48px;height:48px;color:#94a3b8;"></i>
-        <span>Tap to pick a story photo</span>
+        <span>Tap to pick a photo or video</span>
       </div>
       <img id="storyEditorPreviewImg" class="story-editor-img hidden" alt="Story preview" />
-      <input type="file" id="storyEditorFileInput" accept="image/*" multiple hidden />
+      <input type="file" id="storyEditorFileInput" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden />
+      <video id="storyEditorPreviewVideo" class="story-editor-img hidden" playsinline muted loop></video>
       <!-- Multi-photo carousel: counter badge + thumbnail strip (up to 3) -->
       <div id="storyEditorPhotoCount" class="story-editor-photo-count hidden">1/1</div>
       <div id="storyEditorPhotoStrip" class="story-editor-photo-strip hidden"></div>
