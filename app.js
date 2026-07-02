@@ -682,6 +682,8 @@ function closePostComposer() {
   if (card) card.classList.add('hidden');
   const inp = $('#postInput');
   if (inp) inp.value = '';
+  _postDraftMusic = null; updatePostMusicUI();
+  const picker = $('#postSongPicker'); if (picker) picker.classList.add('hidden');
   const chk = $('#postScratchCheckbox');
   if (chk) chk.checked = false;
   if (typeof clearPostAttach === 'function') clearPostAttach();
@@ -3192,6 +3194,17 @@ function renderPost(p) {
       card.appendChild(wrap);
     }
     if (imgs.length === 1 && p.isScratch) attachScratchOverlay(card.querySelector('.post-img-wrap'));
+  } else if (p.videoUrl) {
+    const wrap = document.createElement('div');
+    wrap.className = 'post-img-wrap';
+    const vid = document.createElement('video');
+    vid.className = 'post-img';
+    vid.src = p.videoUrl;
+    vid.controls = true;
+    vid.playsInline = true;
+    vid.preload = 'metadata';
+    wrap.appendChild(vid);
+    card.appendChild(wrap);
   }
 
   // Action toolbar
@@ -3505,6 +3518,60 @@ function patchCommentUI(card, p) {
   } else if (pv) {
     pv.remove();
   }
+}
+
+
+function openPostDetail(post) {
+  const p = normalizeProfilePost(post);
+  if (!p) return;
+  const existing = $('#postDetailViewer');
+  if (existing) existing.remove();
+  const wrap = document.createElement('div');
+  wrap.id = 'postDetailViewer';
+  wrap.className = 'post-detail-viewer';
+  wrap.innerHTML = `
+    <div class="post-detail-top">
+      <button type="button" id="postDetailBack" class="ghost-btn" aria-label="Back"><i data-lucide="arrow-left"></i></button>
+      <strong>Posts</strong>
+    </div>
+    <div class="post-detail-body" id="postDetailBody"></div>`;
+  document.body.appendChild(wrap);
+  const body = $('#postDetailBody');
+  const fullPost = (State.posts || []).find(x => x.id === p.id) || p;
+  body.appendChild(renderPost({ ...fullPost, ...p }));
+  $('#postDetailBack').addEventListener('click', () => wrap.remove());
+  refreshIcons();
+}
+
+async function openSavedPostsSheet() {
+  closeSettings();
+  try { await loadPosts(); } catch (_) {}
+  const saved = getSaved();
+  const rows = (State.posts || []).filter(p => saved[p.id] && !isStoryRecord(p)).map(normalizeProfilePost).filter(Boolean);
+  const existing = $('#savedPostsSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'savedPostsSheet';
+  sheet.className = 'sheet saved-posts-sheet';
+  sheet.innerHTML = `
+    <div class="sheet-card saved-posts-card">
+      <div class="sheet-handle"></div>
+      <div class="profile-relation-head">
+        <strong>Saved posts</strong>
+        <button type="button" class="ghost-btn" id="savedPostsClose" aria-label="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="saved-posts-grid" id="savedPostsGrid"></div>
+    </div>`;
+  document.body.appendChild(sheet);
+  const grid = $('#savedPostsGrid');
+  if (!rows.length) {
+    grid.innerHTML = '<div class="profile-relation-empty">No saved posts yet</div>';
+  } else {
+    rows.forEach(p => grid.appendChild(buildGridCell(p)));
+  }
+  $('#savedPostsClose').addEventListener('click', () => sheet.remove());
+  sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
+  refreshIcons();
 }
 
 function getSaved() {
@@ -5232,6 +5299,71 @@ window.publishStoryWithMusic = async (isCf = false) => {
   }
 };
 
+
+let _postDraftMusic = null;
+let _postSearchTimer = null;
+
+function updatePostMusicUI() {
+  const prev = $('#postMusicPreview');
+  const title = $('#postMusicTitle');
+  const artist = $('#postMusicArtist');
+  if (!prev) return;
+  if (_postDraftMusic && _postDraftMusic.title) {
+    prev.classList.remove('hidden');
+    if (title) title.textContent = _postDraftMusic.title;
+    if (artist) artist.textContent = _postDraftMusic.artist || 'Song attached';
+  } else {
+    prev.classList.add('hidden');
+    if (title) title.textContent = 'Music attached';
+    if (artist) artist.textContent = '';
+  }
+}
+
+function renderPostSongResults(list) {
+  const box = $('#postSongList');
+  if (!box) return;
+  if (!list || !list.length) { box.innerHTML = '<div class="note-song-empty">Type to search songs…</div>'; return; }
+  box.innerHTML = '';
+  list.forEach(s => {
+    const item = document.createElement('div');
+    item.className = 'note-song-item';
+    item.innerHTML = `
+      <img src="${escapeHtml(s.art || '')}" class="nsi-art" alt="" />
+      <div class="nsi-m"><div class="nsi-t">${escapeHtml(s.title)}</div><div class="nsi-a">${escapeHtml(s.artist || '')}</div></div>
+      <span class="nsi-play">▶</span>`;
+    item.querySelector('.nsi-play').addEventListener('click', (e) => { e.stopPropagation(); if (s.audio) playNotePreview(s.audio); });
+    item.addEventListener('click', () => {
+      stopNotePreviewAudio();
+      _postDraftMusic = { title: s.title, artist: s.artist || '', audio: s.audio || '', art: s.art || '' };
+      updatePostMusicUI();
+      const picker = $('#postSongPicker'); if (picker) picker.classList.add('hidden');
+    });
+    box.appendChild(item);
+  });
+}
+
+async function searchPostSongs(q) {
+  if (!q || !q.trim()) { renderPostSongResults([]); return; }
+  try {
+    const res = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(q) + '&media=music&limit=15');
+    const data = await res.json();
+    let list = (data.results || []).filter(r => r.previewUrl).map(r => ({
+      title: r.trackName || 'Song', artist: r.artistName || 'Artist', art: r.artworkUrl100 || '', audio: r.previewUrl,
+    }));
+    if (list.length === 0 && typeof storyMusicCatalog !== 'undefined') {
+      const ql = q.toLowerCase();
+      list = storyMusicCatalog.filter(s => s.title.toLowerCase().includes(ql) || s.artist.toLowerCase().includes(ql));
+    }
+    renderPostSongResults(list);
+  } catch (_) {
+    if (typeof storyMusicCatalog !== 'undefined') {
+      const ql = q.toLowerCase();
+      const list = storyMusicCatalog.filter(s => s.title.toLowerCase().includes(ql) || s.artist.toLowerCase().includes(ql));
+      renderPostSongResults(list);
+    } else renderPostSongResults([]);
+  }
+}
+
 function renderPostAttachGrid() {
   const grid = $('#postAttachGrid');
   const prev = $('#postAttachPreview');
@@ -5263,6 +5395,21 @@ window._removePostAttach = (idx) => {
 
 function bindFeedComposer() {
   $('#postAttachBtn').addEventListener('click', () => $('#postFileInput').click());
+  const pmBtn = $('#postMusicBtn');
+  if (pmBtn) pmBtn.addEventListener('click', () => {
+    const picker = $('#postSongPicker'); if (!picker) return;
+    const show = picker.classList.contains('hidden');
+    picker.classList.toggle('hidden', !show);
+    if (show) { renderPostSongResults([]); setTimeout(() => $('#postSongSearch')?.focus(), 80); }
+    else stopNotePreviewAudio();
+  });
+  const pmRemove = $('#postMusicRemove');
+  if (pmRemove) pmRemove.addEventListener('click', () => { _postDraftMusic = null; updatePostMusicUI(); stopNotePreviewAudio(); });
+  const pmSearch = $('#postSongSearch');
+  if (pmSearch) pmSearch.addEventListener('input', () => {
+    clearTimeout(_postSearchTimer);
+    _postSearchTimer = setTimeout(() => searchPostSongs(pmSearch.value), 350);
+  });
   $('#postFileInput').addEventListener('change', async (e) => {
     const files = Array.from(e.target.files || []); e.target.value = '';
     if (files.length === 0) return;
@@ -5312,9 +5459,11 @@ function bindFeedComposer() {
       const imageUrl = images[0] || null;
       const chk = $('#postScratchCheckbox');
       const isScratch = !!(chk && chk.checked);
-      await api('/posts/create', { method: 'POST', body: { text, imageUrl, images, isScratch } });
+      await api('/posts/create', { method: 'POST', body: { text, imageUrl, images, isScratch, music: _postDraftMusic } });
       $('#postInput').value = '';
       if (chk) chk.checked = false;
+      _postDraftMusic = null; updatePostMusicUI();
+      const picker = $('#postSongPicker'); if (picker) picker.classList.add('hidden');
       clearPostAttach();
       lastPostsSignature = null; // force next loadPosts() to re-render even if list becomes empty
       loadPosts();
@@ -5791,6 +5940,8 @@ function bindSettingsSheet() {
     switchTab('profile');
     setTimeout(() => { const btn = $('#editProfileBtn'); if (btn) btn.click(); }, 200);
   });
+  const savedPosts = $('#settingsSavedPosts');
+  if (savedPosts) savedPosts.addEventListener('click', openSavedPostsSheet);
   const vt = $('#settingsViewTerms');
   if (vt) vt.addEventListener('click', () => {
     closeSettings();
@@ -6239,11 +6390,7 @@ function buildGridCell(p) {
     badge.innerHTML = `<i data-lucide="heart"></i>${p.likeCount || 0}`;
     cell.appendChild(badge);
   }
-  cell.addEventListener('click', () => {
-    if (p.videoUrl) openLightbox(p.videoUrl, 'Video');
-    else if (p.imageUrl) openLightbox(p.imageUrl, '');
-    else toast(p.text || '');
-  });
+  cell.addEventListener('click', () => openPostDetail(p));
   return cell;
 }
 

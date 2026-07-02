@@ -2249,3 +2249,23 @@ img{user-select:none;-webkit-user-drag:none}
 /* Profile grid immediate placeholder while media loads */
 .ig-grid-cell .profile-grid-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:8px;text-align:center;font-size:11px;font-weight:800;line-height:1.25;color:#fff;background:linear-gradient(135deg,#7c3aed,#0ea5e9);word-break:break-word;z-index:0}
 .ig-grid-cell img{position:relative;z-index:1;background:var(--bg-soft)}
+
+/* Post detail viewer opened from profile grid */
+.post-detail-viewer{position:fixed;inset:0;background:var(--bg);z-index:120;display:flex;flex-direction:column;animation:fade-in .18s ease;overflow:hidden}
+.post-detail-top{height:56px;display:flex;align-items:center;gap:18px;padding:0 14px;background:var(--bg-2);border-bottom:1px solid var(--line);flex-shrink:0}
+.post-detail-top strong{font-size:24px;font-weight:900;color:var(--text)}
+.post-detail-body{flex:1;min-height:0;overflow-y:auto;background:var(--bg)}
+.post-detail-body .post-card{border-radius:0;margin:0;box-shadow:none;border:0;max-width:100%}
+.post-detail-body .post-img-wrap{border-radius:0}
+
+/* Add music to normal post composer */
+.post-music-preview{margin-top:10px;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid rgba(236,72,153,.22);background:rgba(236,72,153,.08);border-radius:14px;color:var(--text)}
+.post-music-preview.hidden{display:none!important}
+.post-music-preview .pm-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#ec4899,#38bdf8);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.post-music-preview .pm-icon i,.post-music-preview .pm-icon svg{width:18px;height:18px}
+.post-music-preview .pm-meta{display:flex;flex-direction:column;min-width:0;flex:1}
+.post-music-preview .pm-meta strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.post-music-preview .pm-meta small{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.saved-posts-card{max-width:480px;margin:0 auto;padding:0 0 calc(16px + env(safe-area-inset-bottom,0px));overflow:hidden}
+.saved-posts-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:12px;max-height:min(62vh,520px);overflow-y:auto}
+.saved-posts-grid .profile-relation-empty{grid-column:1/-1}
