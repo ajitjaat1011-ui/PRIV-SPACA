@@ -7,6 +7,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { neon } = require('@neondatabase/serverless');
+const { createClient: createTursoClient } = require('@libsql/client');
 
 // node-fetch v2 (CommonJS). If unavailable, fall back to globalThis.fetch (Node 18+).
 let fetchFn;
@@ -288,6 +289,8 @@ const JWT_EXPIRES = '7d';
 // GitHub repo-file persistence (Contents API). Requires `repo` scope.
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
+const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || '';
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN || '';
 const GH_REPO    = process.env.GH_REPO    || 'ajitjaat1011-ui/PRIV-SPACA';
 const GH_BRANCH  = process.env.GH_BRANCH  || 'data';
 const GH_FILE    = process.env.GH_FILE    || 'db.json';
@@ -327,6 +330,20 @@ function nowMs() {
 
 function safeJson(str, fallback) {
   try { return JSON.parse(str); } catch (_) { return fallback; }
+}
+function normalizeDb(remote) {
+  const r = remote && typeof remote === 'object' ? remote : {};
+  return {
+    users: Array.isArray(r.users) ? r.users : [],
+    messages: Array.isArray(r.messages) ? r.messages : [],
+    scheduledMessages: Array.isArray(r.scheduledMessages) ? r.scheduledMessages : [],
+    posts: Array.isArray(r.posts) ? r.posts : [],
+    notifications: Array.isArray(r.notifications) ? r.notifications : [],
+    typing: r.typing && typeof r.typing === 'object' ? r.typing : {},
+    heartbeat: r.heartbeat && typeof r.heartbeat === 'object' ? r.heartbeat : {},
+    rtcSignals: Array.isArray(r.rtcSignals) ? r.rtcSignals : [],
+    meta: r.meta && typeof r.meta === 'object' ? r.meta : {},
+  };
 }
 
 function isRepoConfigured() {
@@ -480,6 +497,108 @@ async function persistWrite(dbObj) {
  * Fetch the database with cache TTL. Also auto-flushes scheduled messages
  * whose deliverAt timestamp has elapsed into the messages collection.
  */
+let _turso = null;
+let _tursoReady = false;
+let _tursoBootstrapped = false;
+function isTursoConfigured() {
+  return !!(TURSO_DATABASE_URL && TURSO_AUTH_TOKEN);
+}
+function tursoClient() {
+  if (!_turso) _turso = createTursoClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
+  return _turso;
+}
+async function tursoEnsure() {
+  if (!isTursoConfigured()) return false;
+  if (_tursoReady) return true;
+  const c = tursoClient();
+  await c.execute(`CREATE TABLE IF NOT EXISTS ps_users (
+    id TEXT PRIMARY KEY,
+    username_lower TEXT,
+    email_lower TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    data_json TEXT NOT NULL
+  )`);
+  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_users_username_lower ON ps_users (username_lower)`);
+  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_users_email_lower ON ps_users (email_lower)`);
+  await c.execute(`CREATE TABLE IF NOT EXISTS ps_posts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    deleted_at INTEGER,
+    story INTEGER NOT NULL DEFAULT 0,
+    story_expires_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    data_json TEXT NOT NULL
+  )`);
+  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_user_id ON ps_posts (user_id)`);
+  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_created_at ON ps_posts (created_at DESC)`);
+  await c.execute(`CREATE INDEX IF NOT EXISTS idx_ps_posts_story ON ps_posts (story, story_expires_at)`);
+  await c.execute(`CREATE TABLE IF NOT EXISTS ps_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at INTEGER NOT NULL
+  )`);
+  _tursoReady = true;
+  return true;
+}
+async function syncTursoMirror(db) {
+  if (!isTursoConfigured()) return false;
+  await tursoEnsure();
+  const c = tursoClient();
+  const src = normalizeDb(db);
+  const ts = nowMs();
+  try {
+    await c.execute('DELETE FROM ps_users');
+    for (const u of src.users || []) {
+      await c.execute({
+        sql: 'INSERT INTO ps_users (id, username_lower, email_lower, created_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?)',
+        args: [u.id, String(u.username || '').toLowerCase(), String(u.email || '').toLowerCase(), Number(u.createdAt || 0), ts, JSON.stringify(u)],
+      });
+    }
+    await c.execute('DELETE FROM ps_posts');
+    for (const p of src.posts || []) {
+      await c.execute({
+        sql: 'INSERT INTO ps_posts (id, user_id, created_at, deleted_at, story, story_expires_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        args: [p.id, p.userId, Number(p.createdAt || 0), p.deletedAt ? Number(p.deletedAt) : null, p.story ? 1 : 0, p.storyExpiresAt ? Number(p.storyExpiresAt) : null, ts, JSON.stringify(p)],
+      });
+    }
+    await c.execute({
+      sql: 'INSERT INTO ps_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+      args: ['bootstrap_v1', String(ts), ts],
+    });
+    _tursoBootstrapped = true;
+    return true;
+  } catch (e) {
+    console.warn('[turso] sync failed', e && e.message);
+    return false;
+  }
+}
+async function fetchTursoMirror(fallbackDb = null) {
+  if (!isTursoConfigured()) return fallbackDb ? normalizeDb(fallbackDb) : normalizeDb({});
+  await tursoEnsure();
+  const c = tursoClient();
+  if (!_tursoBootstrapped) {
+    const meta = await c.execute({ sql: 'SELECT value FROM ps_meta WHERE key = ?', args: ['bootstrap_v1'] }).catch(() => ({ rows: [] }));
+    if (!meta.rows || meta.rows.length === 0) {
+      if (fallbackDb) await syncTursoMirror(fallbackDb);
+    } else {
+      _tursoBootstrapped = true;
+    }
+  }
+  let usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
+  let postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC');
+  if ((!usersRows.rows?.length && !postsRows.rows?.length) && fallbackDb) {
+    await syncTursoMirror(fallbackDb);
+    usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
+    postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC');
+  }
+  return normalizeDb({
+    users: (usersRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
+    posts: (postsRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
+  });
+}
+
 async function fetchDatabase() {
   const now = nowMs();
   if (now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
@@ -599,6 +718,7 @@ async function saveDatabase(data, isEphemeral = false) {
   }
   // Durable write
   const ok = await persistWrite(data);
+  if (ok && isTursoConfigured()) await syncTursoMirror(localCache);
   return ok;
 }
 
@@ -871,6 +991,7 @@ app.get('/api/health', async (req, res) => {
     ok: true,
     name: 'PRIV SPACA',
     persistence: isRepoConfigured() ? 'github-repo' : (isGistConfigured() ? 'gist' : 'in-memory'),
+    secondaryPersistence: isTursoConfigured() ? 'turso-mirror-users-posts' : null,
     time: nowMs(),
   });
 });
@@ -1236,12 +1357,14 @@ app.post('/api/user/close-friends', authMiddleware, async (req, res) => {
 
 app.get('/api/users', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
+  const sdb = isTursoConfigured() ? await fetchTursoMirror(db) : db;
+  const sourceUsers = (sdb.users || []).length ? sdb.users : (db.users || []);
   const now = nowMs();
-  const me = db.users.find(u => u.id === req.userId);
+  const me = sourceUsers.find(u => u.id === req.userId);
   const myBlocked = new Set((me && me.blocked) || []);
   // Also hide users who blocked ME
   const blockedMe = new Set();
-  db.users.forEach(u => {
+  sourceUsers.forEach(u => {
     if (u.id !== req.userId && Array.isArray(u.blocked) && u.blocked.includes(req.userId)) {
       blockedMe.add(u.id);
     }
@@ -1264,10 +1387,10 @@ app.get('/api/users', authMiddleware, async (req, res) => {
       lastByPeer[peer] = { text: preview, createdAt: m.createdAt || 0, fromMe: m.userId === req.userId };
     }
   }
-  const list = db.users
+  const list = sourceUsers
     .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
     .map(u => {
-      const hb = db.heartbeat[u.id] || 0;
+      const hb = (db.heartbeat && db.heartbeat[u.id]) || 0;
       return {
         ...sanitizeUser(u),
         online: now - hb < 45000,
@@ -1775,13 +1898,16 @@ app.post('/api/user/unblock', authMiddleware, async (req, res) => {
 app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
   const targetId = req.params.id;
   const db = await fetchDatabase();
-  const target = db.users.find(u => u.id === targetId);
+  const sdb = isTursoConfigured() ? await fetchTursoMirror(db) : db;
+  const sourceUsers = (sdb.users || []).length ? sdb.users : (db.users || []);
+  const sourcePosts = (sdb.posts || []).length ? sdb.posts : (db.posts || []);
+  const target = sourceUsers.find(u => u.id === targetId);
   if (!target) return res.status(404).json({ error: 'Not found' });
-  const me = db.users.find(u => u.id === req.userId);
+  const me = sourceUsers.find(u => u.id === req.userId);
   const blockedMe = Array.isArray(target.blocked) && target.blocked.includes(req.userId);
   const iBlocked = me && Array.isArray(me.blocked) && me.blocked.includes(targetId);
   if (blockedMe) return res.status(403).json({ error: 'Profile unavailable' });
-  const posts = (db.posts || [])
+  const posts = (sourcePosts || [])
     .filter(p => p.userId === targetId && !p.deletedAt && !isStoryRecord(p))
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => ({
@@ -1790,7 +1916,7 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
     }));
   const followerIds = Array.from(new Set([
     ...(Array.isArray(target.followers) ? target.followers : []),
-    ...(db.users || []).filter(u => Array.isArray(u.following) && u.following.includes(targetId)).map(u => u.id),
+    ...sourceUsers.filter(u => Array.isArray(u.following) && u.following.includes(targetId)).map(u => u.id),
   ])).filter(id => id && id !== targetId);
   const followingIds = Array.from(new Set(Array.isArray(target.following) ? target.following : [])).filter(id => id && id !== targetId);
   res.json({
@@ -1815,22 +1941,26 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
 // ---------- Social Feed / Posts ----------
 app.get('/api/posts', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
-  const me = db.users.find(u => u.id === req.userId);
+  const sdb = isTursoConfigured() ? await fetchTursoMirror(db) : db;
+  const sourceUsers = (sdb.users || []).length ? sdb.users : (db.users || []);
+  const sourcePosts = (sdb.posts || []).length ? sdb.posts : (db.posts || []);
+  const me = sourceUsers.find(u => u.id === req.userId);
   const myBlocked = new Set((me && me.blocked) || []);
   const blockedMe = new Set();
-  db.users.forEach(u => {
+  sourceUsers.forEach(u => {
     if (u.id !== req.userId && Array.isArray(u.blocked) && u.blocked.includes(req.userId)) {
       blockedMe.add(u.id);
     }
   });
-  const list = db.posts
-    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId) && canViewerSeeStory(p, req.userId, db))
+  const structuredDb = normalizeDb({ ...db, users: sourceUsers, posts: sourcePosts });
+  const list = sourcePosts
+    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId) && canViewerSeeStory(p, req.userId, structuredDb))
     .slice()
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => {
-      const author = db.users.find(u => u.id === p.userId);
+      const author = sourceUsers.find(u => u.id === p.userId);
       const comments = (p.comments || []).map(c => {
-        const cu = db.users.find(u => u.id === c.userId);
+        const cu = sourceUsers.find(u => u.id === c.userId);
         const cAuth = cu ? sanitizeUser(cu) : (c.authorSnapshot || { id: c.userId, displayName: 'Member', username: (c.userId || 'm').slice(-6) });
         return { ...c, author: cAuth };
       });
