@@ -3704,6 +3704,7 @@ function renderPost(p) {
   addRow.appendChild(emoji); addRow.appendChild(inp); addRow.appendChild(sb);
   card.appendChild(addRow);
 
+  // Music autoplay observer
   postMusicObserver.observe(card);
   return card;
 }
