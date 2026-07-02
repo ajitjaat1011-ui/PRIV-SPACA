@@ -900,13 +900,47 @@ function renderNotesRail() {
     nm.textContent = isMe ? 'Your note' : (u.displayName || u.username);
     cell.appendChild(bubble); cell.appendChild(avWrap); cell.appendChild(nm);
     if (isMe) cell.addEventListener('click', openNoteModal);
-    else cell.addEventListener('click', () => { if (music && music.audio) playNotePreview(music.audio); openDM(u); });
+    else cell.addEventListener('click', () => {
+      if (music && music.audio) playNotePreview(music.audio);
+      openNoteViewer(u);
+      openDM(u, false);
+    });
     return cell;
   };
 
   rail.appendChild(buildNoteCell(me, true));
   withNotes.forEach(u => rail.appendChild(buildNoteCell(u, false)));
   refreshIcons();
+}
+
+let _currentNoteUser = null;
+function openNoteViewer(u) {
+  if (!u) return;
+  _currentNoteUser = u;
+  const modal = $('#noteViewerModal');
+  if (!modal) return;
+  const h = $('#noteViewerHandle');
+  if (h) h.textContent = (u.username || u.displayName) + ' • ' + timeAgo(u.note?.createdAt || Date.now());
+  renderAvatar($('#noteViewerAvatar'), u);
+  const songEl = $('#noteViewerSong');
+  const textEl = $('#noteViewerText');
+  if (songEl) {
+    if (u.note?.music?.title) {
+      songEl.innerHTML = `♪ ${escapeHtml(u.note.music.title)}${u.note.music.artist ? ' • ' + escapeHtml(u.note.music.artist) : ''}`;
+      songEl.classList.remove('hidden');
+    } else {
+      songEl.classList.add('hidden');
+    }
+  }
+  if (textEl) textEl.textContent = u.note?.text || '';
+  const inp = $('#noteViewerInput');
+  if (inp) { inp.placeholder = 'Message ' + (u.username || u.displayName) + '...'; inp.value = ''; }
+  modal.classList.remove('hidden');
+  springIn(modal);
+}
+function closeNoteViewer() {
+  const modal = $('#noteViewerModal');
+  if (modal) modal.classList.add('hidden');
 }
 
 // Play a short preview of a note's song (tap-to-play, Instagram-style).
@@ -1076,6 +1110,38 @@ function bindNotes() {
     clearTimeout(_noteSearchTimer);
     const q = searchInp.value;
     _noteSearchTimer = setTimeout(() => searchNoteSongs(q), 350);
+  });
+  const nvc = $('#noteViewerClose');
+  if (nvc) nvc.addEventListener('click', closeNoteViewer);
+  const nvm = $('#noteViewerModal');
+  if (nvm) nvm.addEventListener('click', (e) => { if (e.target === nvm) closeNoteViewer(); });
+  const nvf = $('#noteViewerForm');
+  if (nvf) nvf.addEventListener('submit', async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const inp = $('#noteViewerInput');
+    const txt = (inp && inp.value || '').trim();
+    if (!txt || !_currentNoteUser) return;
+    if (inp) inp.value = '';
+    const target = _currentNoteUser;
+    closeNoteViewer();
+    const roomId = dmRoomId(State.user.id, target.id);
+    try {
+      await api('/messages/send', { method: 'POST', body: { roomId, targetUserId: target.id, text: `Replying to note: "${target.note?.text || '♪'}"\n${txt}` } });
+      toast('Sent reply to @' + target.username, 'success');
+    } catch (_) {}
+  });
+  $$('#noteViewerModal .note-quick-emoji').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!_currentNoteUser) return;
+      const emoji = btn.dataset.emoji || '❤️';
+      const target = _currentNoteUser;
+      closeNoteViewer();
+      const roomId = dmRoomId(State.user.id, target.id);
+      try {
+        await api('/messages/send', { method: 'POST', body: { roomId, targetUserId: target.id, text: `Reacted to note: "${target.note?.text || '♪'}"\n${emoji}` } });
+        toast(`Reacted ${emoji} to @${target.username}`, 'success');
+      } catch (_) {}
+    });
   });
 }
 
