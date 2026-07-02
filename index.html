@@ -148,9 +148,6 @@
       <span class="ig-username-dot"></span>
     </div>
     <div style="display: flex; align-items: center; gap: 2px;">
-      <button id="topSearchBtn" class="ghost-btn" title="Search members" aria-label="Search members">
-        <i data-lucide="search"></i>
-      </button>
       <button id="topNotifBtn" class="ghost-btn icon-with-dot" title="Notifications" aria-label="Notifications">
         <i data-lucide="heart"></i>
         <span class="dot hidden" data-dot="feed-top"></span>
@@ -469,11 +466,10 @@
         <span class="bn-label">Home</span>
         <span class="dot hidden" data-dot="feed"></span>
       </button>
-      <button data-tab="groups" class="bn-btn" aria-label="Community Groups">
-        <i data-lucide="users" class="i-outline"></i>
-        <i data-lucide="users" class="i-filled"></i>
-        <span class="bn-label">Groups</span>
-        <span class="dot hidden" data-dot="groups"></span>
+      <button data-tab="search" class="bn-btn" aria-label="Search">
+        <i data-lucide="search" class="i-outline"></i>
+        <i data-lucide="search" class="i-filled"></i>
+        <span class="bn-label">Search</span>
       </button>
       <button data-tab="chat" class="bn-btn" aria-label="Direct Messages">
         <i data-lucide="send" class="i-outline"></i>
@@ -485,7 +481,7 @@
         <span id="bnMeAvatar" class="bn-avatar"></span>
         <span class="bn-label">Profile</span>
       </button>
-      <button data-tab="search" class="bn-btn hidden" aria-hidden="true" style="display:none"></button>
+      <button data-tab="groups" class="bn-btn hidden" aria-hidden="true" style="display:none"></button>
     </div>
     <button type="button" id="floatingAddBtn" class="floating-add-btn" title="New post" aria-label="New post">
       <i data-lucide="plus"></i>
