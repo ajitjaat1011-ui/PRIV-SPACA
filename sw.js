@@ -5,7 +5,7 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v45-profile-grid-immediate';
+const SW_VERSION = 'priv-spaca-v46-post-detail-music-save';
 const STATIC_CACHE = 'priv-spaca-static-' + SW_VERSION;
 const RUNTIME_CACHE = 'priv-spaca-runtime-' + SW_VERSION;
 
@@ -13,7 +13,7 @@ const APP_SHELL = [
   '/',
   '/index.html',
   '/style.css',
-  '/app.js?v=45-profile-grid-immediate',
+  '/app.js?v=46-post-detail-music-save',
   '/manifest.json',
 ];
 

@@ -331,6 +331,15 @@
           <button id="inlineComposerCloseBtn" type="button" class="ghost-btn sm" title="Close" style="margin-left:auto; font-size:1.1rem; padding:4px 8px; border-radius:50%;"><i data-lucide="x"></i></button>
         </div>
         <textarea id="postInput" placeholder="What's on your mind?" maxlength="2000" rows="3"></textarea>
+        <div id="postMusicPreview" class="post-music-preview hidden">
+          <span class="pm-icon"><i data-lucide="music"></i></span>
+          <span class="pm-meta"><strong id="postMusicTitle">Music attached</strong><small id="postMusicArtist"></small></span>
+          <button type="button" id="postMusicRemove" class="ghost-btn sm" aria-label="Remove music"><i data-lucide="x"></i></button>
+        </div>
+        <div id="postSongPicker" class="note-song-picker hidden">
+          <input type="text" id="postSongSearch" class="note-song-search" placeholder="Search music for this post…" maxlength="60" />
+          <div id="postSongList" class="note-song-list"></div>
+        </div>
         <div id="postAttachPreview" class="hidden" style="margin-top:10px;">
           <div id="postAttachGrid" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:4px;"></div>
           <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:12px; color:var(--muted);">
@@ -342,6 +351,7 @@
         <div class="composer-card-actions">
           <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
             <button id="postAttachBtn" type="button" class="ghost-btn"><i data-lucide="image"></i> Photo</button>
+            <button id="postMusicBtn" type="button" class="ghost-btn"><i data-lucide="music"></i> Music</button>
             <label class="ghost-btn sm" style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px; user-select:none;">
               <input type="checkbox" id="postScratchCheckbox" style="accent-color:var(--accent); width:15px; height:15px;" />
               <span>✨ Scratch-Off Secret</span>
@@ -643,6 +653,9 @@
         </button>
         <button id="settingsManageStories" class="settings-row">
           <i data-lucide="film"></i><span>Manage stories</span><i data-lucide="chevron-right" class="chev"></i>
+        </button>
+        <button id="settingsSavedPosts" class="settings-row">
+          <i data-lucide="bookmark"></i><span>Saved posts</span><i data-lucide="chevron-right" class="chev"></i>
         </button>
         <button id="settingsViewTerms" class="settings-row">
           <i data-lucide="shield-check"></i><span>Terms &amp; Guidelines</span><i data-lucide="chevron-right" class="chev"></i>
@@ -1101,6 +1114,6 @@ window.__privSpacaLoaderFallback = setTimeout(function () {
   } catch (_) {}
 }, 6500);
 </script>
-<script src="app.js?v=45-profile-grid-immediate"></script>
+<script src="app.js?v=46-post-detail-music-save"></script>
 </body>
 </html>
