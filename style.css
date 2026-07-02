@@ -433,7 +433,7 @@ img{user-select:none;-webkit-user-drag:none}
 .view{display:none;overflow:hidden;height:100%;box-sizing:border-box;min-width:0}
 .view.active{display:block;animation:fade-in .25s ease;overflow-y:auto;overflow-x:hidden}
 /* Chat view needs grid for its two-pane layout */
-.view.chat-view.active{display:grid;overflow:hidden}
+.view.chat-view.active{display:grid;overflow:hidden;padding-bottom:0 !important;}
 
 /* Chat layout */
 .chat-view{grid-template-columns:280px 1fr;height:100%}
@@ -602,7 +602,7 @@ img{user-select:none;-webkit-user-drag:none}
     radial-gradient(900px 500px at 0% 100%, rgba(150,47,191,.04), transparent 55%),
     var(--bg-soft);
   min-width:0;height:100%;overflow:hidden;min-height:0;
-  padding-bottom:74px;box-sizing:border-box;
+  padding-bottom:72px;box-sizing:border-box;
 }
 .messages-scroll{min-height:0}
 .chat-header{
@@ -2055,7 +2055,7 @@ img{user-select:none;-webkit-user-drag:none}
 /* Responsive */
 @media (max-width:780px){
   .chat-view{grid-template-columns:1fr}
-  .rooms-pane{display:none;position:absolute;inset:54px 0 58px 0;z-index:10;background:var(--bg-2)}
+  .rooms-pane{display:none;position:absolute;inset:54px 0 72px 0;z-index:10;background:var(--bg-2)}
   .chat-view.show-rooms .rooms-pane{display:flex}
   .row-2{grid-template-columns:1fr}
   .message .bubble-wrap{max-width:78%}
