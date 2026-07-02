@@ -2831,3 +2831,149 @@ body{
     -webkit-backdrop-filter:blur(14px) saturate(1.25)!important;
   }
 }
+
+/* ===== Liquid Glass Polish v2: no overlap, tap-only motion, app-wide icons ===== */
+@media (max-width:820px){
+  .view.chat-view.active.show-rooms{
+    display:block!important;
+    position:relative!important;
+    height:100%!important;
+    overflow:hidden!important;
+    padding-bottom:0!important;
+  }
+  .chat-view.show-rooms .chat-pane{
+    display:none!important;
+    visibility:hidden!important;
+    pointer-events:none!important;
+  }
+  .chat-view.show-rooms .rooms-pane{
+    position:relative!important;
+    inset:auto!important;
+    top:auto!important;right:auto!important;bottom:auto!important;left:auto!important;
+    z-index:1!important;
+    display:flex!important;
+    height:100%!important;
+    width:100%!important;
+    min-height:0!important;
+    overflow-y:auto!important;
+    padding:14px 18px 132px!important;
+  }
+  .chat-view.show-rooms .inbox-segment{margin-top:0!important;position:relative!important;z-index:2!important}
+}
+
+/* Stop always-running inbox animations; keep movement only on interaction/tap. */
+.chat-view.show-rooms .inbox-seg-btn,
+.chat-view.show-rooms .note-cell,
+.chat-view.show-rooms .req-banner,
+.chat-view.show-rooms .member-item,
+.chat-view.show-rooms .inbox-seg-btn i,
+.chat-view.show-rooms .inbox-seg-btn svg{
+  animation:none!important;
+}
+.chat-view.show-rooms .inbox-seg-btn::before,
+.chat-view.show-rooms .req-banner::after{display:none!important}
+.chat-view.show-rooms .inbox-seg-btn,
+.chat-view.show-rooms .req-banner,
+.chat-view.show-rooms .member-item,
+.chat-view.show-rooms .note-cell .note-avatar{
+  transition:transform .16s cubic-bezier(.2,.85,.2,1), box-shadow .16s ease, background .16s ease, border-color .16s ease!important;
+}
+.chat-view.show-rooms .inbox-seg-btn:active,
+.chat-view.show-rooms .req-banner:active,
+.chat-view.show-rooms .member-item:active{transform:scale(.975)!important}
+.chat-view.show-rooms .note-cell:active .note-avatar{transform:scale(.92)!important}
+
+/* Softer, non-overlapping segment placement. */
+@media (max-width:820px){
+  .chat-view.show-rooms .inbox-segment{gap:12px!important;padding:8px 0 14px!important}
+  .chat-view.show-rooms .inbox-seg-btn{
+    min-height:62px!important;
+    padding:8px 42px 8px 64px!important;
+    border-radius:26px!important;
+  }
+  .chat-view.show-rooms .inbox-seg-btn i,
+  .chat-view.show-rooms .inbox-seg-btn svg{
+    left:12px!important;
+    width:38px!important;height:38px!important;
+    padding:8px!important;
+  }
+  .chat-view.show-rooms .inbox-seg-btn .seg-badge{right:12px!important;width:auto!important;min-width:28px!important;height:28px!important}
+  .chat-view.show-rooms .notes-rail{padding-top:14px!important;position:relative;z-index:1}
+  .chat-view.show-rooms .req-banner{margin-top:10px!important}
+}
+
+/* App-wide liquid glass icon surfaces, including bottom nav. */
+:root, [data-theme="light"]{
+  --liquid-icon-bg:rgba(255,255,255,.68);
+  --liquid-icon-border:rgba(255,255,255,.82);
+  --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.9),0 8px 20px rgba(15,35,60,.10);
+}
+[data-theme="dark"]{
+  --liquid-icon-bg:rgba(255,255,255,.075);
+  --liquid-icon-border:rgba(255,255,255,.12);
+  --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.08),0 8px 20px rgba(0,0,0,.24);
+}
+.topbar .ghost-btn,
+.action-circle-btn,
+.composer-add-btn,
+.voice-record-btn,
+.story-action-icon,
+.lightbox-close,
+#profileSettingsBtn,
+#profileAddPostBtn,
+#upBackBtn,
+#upMoreBtn,
+.sheet .ghost-btn,
+.modal .ghost-btn{
+  background:var(--liquid-icon-bg)!important;
+  border:1px solid var(--liquid-icon-border)!important;
+  box-shadow:var(--liquid-icon-shadow)!important;
+  backdrop-filter:blur(16px) saturate(1.35)!important;
+  -webkit-backdrop-filter:blur(16px) saturate(1.35)!important;
+  border-radius:999px!important;
+  transition:transform .15s cubic-bezier(.2,.85,.2,1), box-shadow .15s ease, background .15s ease!important;
+}
+.topbar .ghost-btn:active,
+.action-circle-btn:active,
+.composer-add-btn:active,
+.voice-record-btn:active,
+.story-action-icon:active,
+.lightbox-close:active,
+#profileSettingsBtn:active,
+#profileAddPostBtn:active,
+#upBackBtn:active,
+#upMoreBtn:active,
+.sheet .ghost-btn:active,
+.modal .ghost-btn:active{transform:scale(.92)!important}
+
+/* Bottom navigation liquid glass update requested. */
+.bottom-nav-pill{
+  background:rgba(255,255,255,.72)!important;
+  border:1px solid rgba(255,255,255,.86)!important;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.95),0 14px 36px rgba(15,35,60,.16)!important;
+  backdrop-filter:blur(22px) saturate(1.45)!important;
+  -webkit-backdrop-filter:blur(22px) saturate(1.45)!important;
+}
+.bottom-nav-pill .bn-btn i,
+.bottom-nav-pill .bn-btn svg,
+.bottom-nav-pill .bn-avatar{
+  background:rgba(255,255,255,.62);
+  border:1px solid rgba(255,255,255,.72);
+  border-radius:18px;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.82),0 6px 14px rgba(15,35,60,.08);
+  backdrop-filter:blur(12px) saturate(1.25);
+  -webkit-backdrop-filter:blur(12px) saturate(1.25);
+}
+.bottom-nav-pill .bn-btn i,
+.bottom-nav-pill .bn-btn svg{width:42px!important;height:42px!important;padding:9px!important}
+.bottom-nav-pill .bn-btn.active{
+  background:rgba(255,255,255,.58)!important;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.8),0 8px 20px rgba(15,35,60,.08)!important;
+}
+.bottom-nav-pill .bn-btn:active{transform:scale(.94)!important}
+.floating-add-btn{
+  background:linear-gradient(135deg,rgba(0,162,255,.96),rgba(0,105,255,.92))!important;
+  border:1px solid rgba(255,255,255,.55)!important;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.45),0 14px 34px rgba(0,132,255,.36)!important;
+}
+.floating-add-btn:active{transform:scale(.9)!important}
