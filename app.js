@@ -936,10 +936,12 @@ function renderNotesRail() {
     nm.textContent = isMe ? 'Your note' : (u.displayName || u.username);
     cell.appendChild(bubble); cell.appendChild(avWrap); cell.appendChild(nm);
     if (isMe) cell.addEventListener('click', openNoteModal);
-    else cell.addEventListener('click', () => {
+    else cell.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       if (music && music.audio) playNotePreview(music.audio);
+      else stopNotePreviewAudio();
       openNoteViewer(u);
-      openDM(u, false);
     });
     return cell;
   };
@@ -977,6 +979,7 @@ function openNoteViewer(u) {
 function closeNoteViewer() {
   const modal = $('#noteViewerModal');
   if (modal) modal.classList.add('hidden');
+  stopNotePreviewAudio();
 }
 
 // Play a short preview of a note's song (tap-to-play, Instagram-style).
@@ -985,10 +988,19 @@ function playNotePreview(url) {
   if (!url) return;
   try {
     if (!_notePreviewAudio) _notePreviewAudio = $('#notePreviewAudio') || new Audio();
-    if (_notePreviewAudio.src === url && !_notePreviewAudio.paused) { _notePreviewAudio.pause(); return; }
+    if (_notePreviewAudio.src === url && !_notePreviewAudio.paused) { stopNotePreviewAudio(); return; }
     _notePreviewAudio.src = url;
     _notePreviewAudio.currentTime = 0;
     _notePreviewAudio.play().catch(() => {});
+  } catch (_) {}
+}
+
+function stopNotePreviewAudio() {
+  try {
+    if (_notePreviewAudio) {
+      _notePreviewAudio.pause();
+      _notePreviewAudio.currentTime = 0;
+    }
   } catch (_) {}
 }
 
@@ -1016,7 +1028,9 @@ function openNoteModal() {
 }
 function closeNoteModal() {
   const m = $('#noteModal'); if (m) m.classList.add('hidden');
-  try { if (_notePreviewAudio && !_notePreviewAudio.paused) _notePreviewAudio.pause(); } catch (_) {}
+  const picker = $('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+  const chev = $('#noteMusicChev'); if (chev) chev.style.transform = '';
+  stopNotePreviewAudio();
 }
 
 async function saveNote(text, music) {
@@ -1083,7 +1097,7 @@ function renderNoteSongResults(list) {
     item.addEventListener('click', () => {
       _noteDraftMusic = { title: s.title, artist: s.artist, audio: s.audio || '', art: s.art || '' };
       updateNoteMusicRow(); updateNotePreview();
-      if (s.audio) playNotePreview(s.audio);
+      stopNotePreviewAudio();
       const picker = $('#noteSongPicker'); if (picker) picker.classList.add('hidden');
       const clearBtn = $('#noteClearBtn'); if (clearBtn) clearBtn.style.display = '';
     });
@@ -1135,10 +1149,11 @@ function bindNotes() {
     picker.classList.toggle('hidden', !show);
     const chev = $('#noteMusicChev'); if (chev) chev.style.transform = show ? 'rotate(180deg)' : '';
     if (show) { renderNoteSongResults([]); const s = $('#noteSongSearch'); if (s) setTimeout(() => s.focus(), 80); }
+    else stopNotePreviewAudio();
   });
   const removeBtn = $('#noteMusicRemove');
   if (removeBtn) removeBtn.addEventListener('click', (e) => {
-    e.stopPropagation(); _noteDraftMusic = null; updateNoteMusicRow(); updateNotePreview();
+    e.stopPropagation(); stopNotePreviewAudio(); _noteDraftMusic = null; updateNoteMusicRow(); updateNotePreview();
     const clearBtn = $('#noteClearBtn'); if (clearBtn && !(input && input.value.trim())) clearBtn.style.display = 'none';
   });
   const searchInp = $('#noteSongSearch');
