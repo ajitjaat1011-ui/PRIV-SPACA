@@ -502,20 +502,27 @@ async function saveDatabase(data, isEphemeral = false) {
 // ---------- Auth helpers ----------
 function signToken(user) {
   return jwt.sign(
-    { uid: user.id, username: user.username },
+    { uid: user.id, username: user.username, sv: Number(user.tokenVersion || 0) },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES }
   );
 }
 
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
+    const db = await fetchDatabase();
+    const user = (db.users || []).find(u => u.id === payload.uid);
+    if (!user) return res.status(401).json({ error: 'Invalid or expired token' });
+    if (Number(payload.sv || 0) !== Number(user.tokenVersion || 0)) {
+      return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+    }
     req.userId = payload.uid;
-    req.username = payload.username;
+    req.username = user.username || payload.username;
+    req.authUser = user;
     next();
   } catch (e) {
     return res.status(401).json({ error: 'Invalid or expired token' });
@@ -698,6 +705,9 @@ app.get('/api/stream', async (req, res) => {
   let payload;
   try { payload = jwt.verify(token, JWT_SECRET); }
   catch (_) { return res.status(401).end(); }
+  const authDb = await fetchDatabase();
+  const authUser = (authDb.users || []).find(u => u.id === payload.uid);
+  if (!authUser || Number(payload.sv || 0) !== Number(authUser.tokenVersion || 0)) return res.status(401).end();
   const userId = payload.uid;
   const lastEventId = req.headers['last-event-id'] || req.query.lastEventId || null;
 
@@ -925,14 +935,19 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
     const pinOk = await bcrypt.compare(pin, user.pinHash);
     if (!pinOk) { await authFailureDelay(); return res.status(401).json({ error: 'Invalid reset details.' }); }
     const oldHash = user.passwordHash;
+    const oldTokenVersion = Number(user.tokenVersion || 0);
     user.passwordHash = await bcrypt.hash(newPassword, 12);
+    user.tokenVersion = oldTokenVersion + 1;
+    user.passwordChangedAt = nowMs();
     const persisted = await saveDatabase(db, false);
     if (isPersistConfigured() && !persisted) {
       user.passwordHash = oldHash; // roll back
+      user.tokenVersion = oldTokenVersion;
       console.error('[reset] persistence failed for', user.username);
       return res.status(503).json({ error: 'Storage temporarily unavailable. Please try again in a moment.' });
     }
-    return res.json({ ok: true });
+    const token = signToken(user);
+    return res.json({ ok: true, token, user: sanitizeUser(user) });
   } catch (e) {
     console.error('[reset] exception', e);
     return res.status(500).json({ error: 'Reset failed' });
