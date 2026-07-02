@@ -5,7 +5,7 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v49-vip-blue-tick';
+const SW_VERSION = 'priv-spaca-v50-vip-blue-tick-fix';
 const STATIC_CACHE = 'priv-spaca-static-' + SW_VERSION;
 const RUNTIME_CACHE = 'priv-spaca-runtime-' + SW_VERSION;
 
@@ -13,7 +13,7 @@ const APP_SHELL = [
   '/',
   '/index.html',
   '/style.css',
-  '/app.js?v=49-vip-blue-tick',
+  '/app.js?v=50-vip-blue-tick-fix',
   '/manifest.json',
 ];
 

@@ -152,6 +152,7 @@ function isPrivOwner(user) {
     || email === 'arvindjaat1011@gmail.com';
 }
 
+// Blue tick: owner OR users who redeem VIP key
 function isVerifiedUser(user) {
   return !!(user && (user.verified || isPrivOwner(user)));
 }
@@ -469,7 +470,7 @@ function hydrateMeChips() {
   if ($('#feedMeAvatar')) renderAvatar($('#feedMeAvatar'), State.user);
   if ($('#profileAvatarPreview')) renderAvatar($('#profileAvatarPreview'), State.user);
   const profileTitle = $('#profileTitleUsername');
-  if (profileTitle) profileTitle.innerHTML = `${escapeHtml(State.user.username || State.user.displayName || 'me')}${isPrivOwner(State.user) ? ownerVerifiedBadgeSvg('title') : ''}`;
+  if (profileTitle) profileTitle.innerHTML = `${escapeHtml(State.user.username || State.user.displayName || 'me')}${ownerBadgeHtml(State.user, 'title')}`;
   const profileUserLine = $('#profileUsername');
   if (profileUserLine) profileUserLine.innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || State.user.displayName || 'me'), 'inline');
   // Bottom-nav avatar (uses the same broken-URL detection as renderAvatar)
@@ -3131,7 +3132,7 @@ function renderPost(p) {
     meta.className = 'post-header-info';
     meta.innerHTML = `
       <span class="post-header-username">${escapeHtml(author.username || author.displayName)}</span>
-      ${isPrivOwner(author) ? `<span class="post-verified-badge">${ownerVerifiedBadgeSvg('mini')}</span>` : ''}
+      ${isVerifiedUser(author) ? `<span class="post-verified-badge">${ownerVerifiedBadgeSvg('mini')}</span>` : ''}
     `;
     const moreBtn = document.createElement('button');
     moreBtn.className = 'post-header-more';
@@ -5991,8 +5992,12 @@ function bindSettingsSheet() {
       if (data.user) {
         State.user = { ...State.user, ...data.user };
         try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+        const selfMember = (State.members || []).find(u => u.id === State.user.id);
+        if (selfMember) Object.assign(selfMember, data.user);
         hydrateMeChips();
         renderOwnProfile();
+        renderMembers();
+        renderPosts();
       }
       if (inp) inp.value = '';
       toast('Blue tick activated', 'success');
@@ -6573,7 +6578,7 @@ async function renderOwnProfile() {
   const cachedUsername = State.user.username || State.user.displayName || 'me';
   const titleU = $('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
-  if (titleU) titleU.innerHTML = `${escapeHtml(cachedUsername)}${isPrivOwner(State.user) ? ownerVerifiedBadgeSvg('title') : ''}`;
+  if (titleU) titleU.innerHTML = `${escapeHtml(cachedUsername)}${ownerBadgeHtml(State.user, 'title')}`;
   if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
   if ($('#profileUsername')) $('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
@@ -6595,7 +6600,7 @@ async function renderOwnProfile() {
     const realUsername = u.username || State.user.username || cachedUsername;
     $('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
     $('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
-    if (titleU) titleU.innerHTML = `${escapeHtml(realUsername)}${isPrivOwner(u) ? ownerVerifiedBadgeSvg('title') : ''}`;
+    if (titleU) titleU.innerHTML = `${escapeHtml(realUsername)}${ownerBadgeHtml(u, 'title')}`;
     const mb = $('#profileMoodBubble');
     if (mb) {
       const note = activeNote(u);
