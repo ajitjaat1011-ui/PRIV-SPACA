@@ -3,6 +3,8 @@ node_modules
 .netlify
 .vercel
 backups
+scripts
+SECURITY_AUDIT*.md
 *.log
 README.md
 THIRD_PARTY_API_AUDIT.md
