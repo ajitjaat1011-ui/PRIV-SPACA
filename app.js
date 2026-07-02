@@ -5975,12 +5975,18 @@ async function renderOwnProfile() {
     $('#profileDisplayName').textContent = u.displayName || '';
     $('#profileUsername').textContent = '@' + u.username + (u.bio ? '' : '');
     const titleU = $('#profileTitleUsername');
-    if (titleU) titleU.textContent = '@' + (u.username || 'me');
+    if (titleU) titleU.textContent = u.username || 'me';
+    const mb = $('#profileMoodBubble');
+    if (mb) {
+      const note = activeNote(u);
+      mb.innerHTML = note ? escapeHtml(note.text).slice(0, 30) : 'Current<br/>mood...';
+    }
     $('#profileBio').textContent = u.bio || '';
     $('#statPosts').textContent = String(u.postsCount || 0);
     $('#statFollowers').textContent = String(u.followers || 0);
     $('#statFollowing').textContent = String(u.following || 0);
     renderAvatar($('#profileAvatarPreview'), u);
+    renderDiscoverPeople();
     // Grid
     const grid = $('#profilePostsGrid');
     grid.innerHTML = '';
@@ -6009,7 +6015,64 @@ async function renderOwnProfile() {
   }
 }
 
+function renderDiscoverPeople() {
+  const box = $('#profileDiscoverList');
+  if (!box || !State.user) return;
+  box.innerHTML = '';
+  const meId = State.user.id;
+  const myFollowing = new Set(State.user.following || []);
+  const suggested = (State.members || []).filter(m => m.id !== meId && !myFollowing.has(m.id)).slice(0, 10);
+  if (suggested.length === 0) {
+    const sec = $('#profileDiscoverSection'); if (sec) sec.style.display = 'none';
+    return;
+  }
+  const sec = $('#profileDiscoverSection'); if (sec) sec.style.display = '';
+  suggested.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'discover-card';
+    card.innerHTML = `
+      <button type="button" class="discover-close" title="Dismiss"><i data-lucide="x"></i></button>
+      <span class="avatar lg"></span>
+      <div class="discover-name">${escapeHtml(m.displayName || m.username)}</div>
+      <div class="discover-sub">Suggested for you</div>
+      <button type="button" class="discover-follow-btn">Follow</button>
+    `;
+    renderAvatar(card.querySelector('.avatar'), m);
+    card.querySelector('.discover-close').addEventListener('click', () => {
+      card.remove(); if (box.children.length === 0) sec.style.display = 'none';
+    });
+    const fb = card.querySelector('.discover-follow-btn');
+    fb.addEventListener('click', async () => {
+      fb.disabled = true; fb.textContent = 'Following...';
+      try {
+        await api('/user/follow', { method: 'POST', body: { targetId: m.id } });
+        if (!State.user.following) State.user.following = [];
+        State.user.following.push(m.id);
+        card.remove(); if (box.children.length === 0) sec.style.display = 'none';
+        toast('Followed ' + (m.displayName || m.username));
+      } catch (_) { fb.disabled = false; fb.textContent = 'Follow'; }
+    });
+    box.appendChild(card);
+  });
+  refreshIcons();
+}
+
 function bindProfileView() {
+  const pap = $('#profileAddPostBtn');
+  if (pap) pap.addEventListener('click', openPostComposer);
+  const pas = $('#profileAddStoryBtn');
+  if (pas) pas.addEventListener('click', openPostComposer);
+  const pan = $('#profileAddNoteBtn');
+  if (pan) pan.addEventListener('click', openNoteModal);
+  const pmb = $('#profileMoodBubble');
+  if (pmb) pmb.addEventListener('click', openNoteModal);
+  const dtb = $('#discoverToggleBtn');
+  if (dtb) dtb.addEventListener('click', () => {
+    const sec = $('#profileDiscoverSection');
+    if (sec) sec.style.display = sec.style.display === 'none' ? '' : 'none';
+  });
+  const dsa = $('#discoverSeeAllBtn');
+  if (dsa) dsa.addEventListener('click', () => switchTab('search'));
   // Edit toggle
   const edit = $('#editProfileBtn');
   if (edit) edit.addEventListener('click', () => {

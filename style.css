@@ -1706,7 +1706,7 @@ img{user-select:none;-webkit-user-drag:none}
 .color-swatch:hover{transform:scale(1.15)}
 .color-swatch.active{border-color:var(--text);transform:scale(1.1)}
 
-/* ===== Profile view (Instagram-style) ===== */
+/* ===== Profile view (Exact Instagram Layout) ===== */
 .profile-view{background:var(--bg)}
 .profile-wrap{
   max-width:600px;margin:0 auto;padding:0 0 84px;
@@ -1715,9 +1715,36 @@ img{user-select:none;-webkit-user-drag:none}
 .profile-mode{animation:fade-in .25s ease}
 .section-title{font-size:24px;font-weight:800;margin:0 0 18px;letter-spacing:-.3px}
 
+.profile-titlebar{
+  display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:0;
+}
+.profile-titlebar-center{
+  display:flex;align-items:center;gap:6px;font-size:18px;font-weight:800;color:var(--text);
+}
+.profile-avatar-wrap{position:relative;flex-shrink:0}
+.profile-mood-bubble{
+  position:absolute;top:-14px;left:-4px;background:var(--bg-2);border:1.5px solid var(--line);
+  padding:5px 10px;border-radius:16px;font-size:11.5px;font-weight:600;color:var(--text);
+  box-shadow:0 4px 12px rgba(0,0,0,0.25);white-space:nowrap;line-height:1.25;z-index:2;
+  cursor:pointer;transition:transform 0.15s;
+}
+.profile-mood-bubble:hover{transform:scale(1.06)}
+.profile-avatar-add{
+  position:absolute;bottom:0;right:0;width:26px;height:26px;border-radius:50%;
+  background:var(--accent);color:#fff;border:2.5px solid var(--bg);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;z-index:2;transition:transform 0.15s;
+}
+.profile-avatar-add:hover{transform:scale(1.15)}
+.profile-avatar-add i,.profile-avatar-add svg{width:14px;height:14px;stroke-width:3}
+
+.profile-banner-pill{
+  background:var(--bg-soft);border:0;color:var(--text);font-weight:600;font-size:12.5px;
+  padding:6px 14px;border-radius:9999px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+}
+
 /* IG-style profile header */
 .ig-profile-head{display:flex;align-items:center;gap:24px;padding:18px 18px 12px}
-.avatar.xxl{width:96px;height:96px;font-size:34px;flex-shrink:0}
+.avatar.xxl{width:88px;height:88px;font-size:32px;flex-shrink:0}
 .ig-profile-stats{display:flex;flex:1;justify-content:space-around;align-items:center;gap:4px}
 .stat-btn{
   background:transparent;border:0;cursor:pointer;color:var(--text);
@@ -1725,7 +1752,7 @@ img{user-select:none;-webkit-user-drag:none}
   padding:6px 10px;border-radius:10px;font-family:inherit;
 }
 .stat-btn:active{background:var(--bg-soft)}
-.stat-btn strong{font-size:18px;font-weight:700}
+.stat-btn strong{font-size:18px;font-weight:800}
 .stat-btn span{font-size:13px;color:var(--text-2)}
 
 .ig-profile-meta{padding:0 18px 12px;display:flex;flex-direction:column;gap:2px;line-height:1.4}
@@ -1741,15 +1768,51 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .ig-action-btn:hover{background:#e3eaf0}
 .ig-action-btn:active{transform:scale(.97)}
+.ig-action-btn.dark-pill{
+  background:var(--bg-soft);color:var(--text);font-weight:700;font-size:14px;padding:9px 16px;
+  border-radius:10px;border:0;cursor:pointer;transition:background .15s,transform .1s;
+}
+.ig-action-btn.dark-pill:hover{filter:brightness(1.1)}
+.ig-action-btn.dark-pill:active{transform:scale(.97)}
+.ig-action-btn.icon-only{flex:0 0 42px;padding:9px 0;display:flex;align-items:center;justify-content:center}
 .ig-action-btn.primary{background:var(--accent-grad);color:#fff;box-shadow:0 4px 12px rgba(0,162,255,.28)}
 .ig-action-btn.primary:hover{filter:brightness(1.05)}
 .ig-action-btn.following{background:var(--bg-soft);color:var(--text)}
 .ig-action-btn.danger{background:transparent;color:var(--red);border:1px solid var(--red)}
 
+/* Discover people carousel */
+.ig-discover-section{
+  padding:8px 18px 16px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid var(--line);
+}
+.ig-discover-head{
+  display:flex;align-items:center;justify-content:space-between;font-size:15px;font-weight:700;color:var(--text);
+}
+.ig-discover-see-all{
+  background:transparent;border:0;color:#0084ff;font-size:14px;font-weight:600;cursor:pointer;
+}
+.ig-discover-carousel{
+  display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;scrollbar-width:none;
+}
+.ig-discover-carousel::-webkit-scrollbar{display:none}
+.discover-card{
+  flex:0 0 155px;background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;
+  padding:16px 12px 14px;display:flex;flex-direction:column;align-items:center;position:relative;gap:8px;text-align:center;
+}
+.discover-card .discover-close{
+  position:absolute;top:8px;right:8px;background:transparent;border:0;color:var(--muted);cursor:pointer;padding:4px;
+}
+.discover-card .discover-close i{width:16px;height:16px}
+.discover-card .discover-name{font-weight:700;font-size:13.5px;color:var(--text);width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.discover-card .discover-sub{font-size:11.5px;color:var(--muted);width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.discover-card .discover-follow-btn{
+  width:100%;background:#0084ff;color:#fff;border:0;border-radius:8px;padding:7px 0;font-weight:700;font-size:13px;cursor:pointer;transition:transform .1s;
+}
+.discover-card .discover-follow-btn:active{transform:scale(.95)}
+
 /* Tabs (posts / saved) */
 .ig-tabs{
   display:flex;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
-  margin-top:8px;
+  margin-top:0;
 }
 .ig-tab{
   flex:1;display:flex;align-items:center;justify-content:center;

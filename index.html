@@ -349,13 +349,24 @@
       <!-- VIEW MODE: IG-style profile -->
       <div id="profileViewMode" class="profile-mode">
         <div class="profile-titlebar">
-          <strong id="profileTitleUsername" class="profile-titlebar-name">@me</strong>
+          <button id="profileAddPostBtn" class="ghost-btn" title="Create" aria-label="Create">
+            <i data-lucide="plus"></i>
+          </button>
+          <div class="profile-titlebar-center">
+            <i data-lucide="lock" style="width:15px;height:15px;"></i>
+            <strong id="profileTitleUsername">username</strong>
+            <i data-lucide="chevron-down" style="width:16px;height:16px;color:var(--muted)"></i>
+          </div>
           <button id="profileSettingsBtn" class="ghost-btn" title="Settings" aria-label="Settings">
             <i data-lucide="menu"></i>
           </button>
         </div>
         <div class="ig-profile-head">
-          <span id="profileAvatarPreview" class="avatar xxl"></span>
+          <div class="profile-avatar-wrap" id="profileAvatarWrap">
+            <div id="profileMoodBubble" class="profile-mood-bubble" title="Set note">Current<br/>mood...</div>
+            <span id="profileAvatarPreview" class="avatar xxl"></span>
+            <button type="button" class="profile-avatar-add" id="profileAddStoryBtn" title="Add Story" aria-label="Add Story"><i data-lucide="plus"></i></button>
+          </div>
           <div class="ig-profile-stats">
             <button class="stat-btn" data-stat="posts"><strong id="statPosts">0</strong><span>posts</span></button>
             <button class="stat-btn" data-stat="followers"><strong id="statFollowers">0</strong><span>followers</span></button>
@@ -364,17 +375,29 @@
         </div>
         <div class="ig-profile-meta">
           <div id="profileDisplayName" class="ig-name"></div>
-          <div id="profileUsername" class="ig-handle"></div>
           <div id="profileBio" class="ig-bio"></div>
+          <div class="profile-banners-row" style="margin-top:8px;">
+            <button type="button" class="profile-banner-pill" id="profileAddNoteBtn"><i data-lucide="plus" style="width:14px;height:14px"></i> Add note / banner</button>
+          </div>
         </div>
         <div class="ig-profile-actions">
-          <button id="editProfileBtn" class="ig-action-btn primary">Edit profile</button>
-          <button id="shareProfileBtn" class="ig-action-btn">Share</button>
+          <button id="editProfileBtn" class="ig-action-btn dark-pill">Edit profile</button>
+          <button id="shareProfileBtn" class="ig-action-btn dark-pill">Share profile</button>
+          <button id="discoverToggleBtn" class="ig-action-btn dark-pill icon-only" title="Discover people" aria-label="Discover people"><i data-lucide="user-plus"></i></button>
+        </div>
+
+        <div class="ig-discover-section" id="profileDiscoverSection">
+          <div class="ig-discover-head">
+            <span>Discover people</span>
+            <button type="button" class="ig-discover-see-all" id="discoverSeeAllBtn">See all</button>
+          </div>
+          <div class="ig-discover-carousel" id="profileDiscoverList"></div>
         </div>
 
         <div class="ig-tabs">
           <button class="ig-tab active" data-grid="posts" aria-label="Posts"><i data-lucide="grid-3x3"></i></button>
-          <button class="ig-tab" data-grid="saved" aria-label="Saved"><i data-lucide="bookmark"></i></button>
+          <button class="ig-tab" data-grid="reels" aria-label="Reels"><i data-lucide="repeat"></i></button>
+          <button class="ig-tab" data-grid="tagged" aria-label="Tagged"><i data-lucide="user-check"></i></button>
         </div>
         <div id="profilePostsGrid" class="ig-posts-grid"></div>
       </div>
