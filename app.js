@@ -6289,7 +6289,7 @@ async function renderOwnProfile() {
   if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
   if ($('#profileUsername')) $('#profileUsername').textContent = '@' + (State.user.username || cachedUsername);
   // Fetch fresh relationship data so follower/following counts and sheets are correct.
-  try { await loadMembers(); } catch (_) {}
+  try { await loadMembers(); updateOwnProfileStatCounts(State.user); } catch (_) {}
   // Fetch fresh data (own profile uses same endpoint)
   try {
     const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
@@ -6312,13 +6312,13 @@ async function renderOwnProfile() {
       mb.innerHTML = note ? escapeHtml(note.text).slice(0, 30) : 'Current<br/>mood...';
     }
     $('#profileBio').textContent = u.bio || '';
-    updateOwnProfileStatCounts(u);
     renderAvatar($('#profileAvatarPreview'), u);
     renderDiscoverPeople();
     // Grid
     const grid = $('#profilePostsGrid');
     grid.innerHTML = '';
     let postsToShow = data.posts;
+    updateOwnProfileStatCounts({ ...u, postsCount: Array.isArray(postsToShow) ? postsToShow.length : (u.postsCount || 0) });
     if (_profileTab === 'saved') {
       // Use the bookmark localStorage to filter ALL posts
       const saved = getSaved();
@@ -6381,6 +6381,8 @@ async function openProfileRelationSheet(kind) {
   const lists = profileRelationLists();
   const rows = kind === 'following' ? lists.following : lists.followers;
   const title = kind === 'following' ? 'Following' : 'Followers';
+  const statEl = kind === 'following' ? $('#statFollowing') : $('#statFollowers');
+  if (statEl) statEl.textContent = String(Math.max(Number(statEl.textContent) || 0, rows.length));
   const existing = $('#profileRelationSheet');
   if (existing) existing.remove();
   const sheet = document.createElement('div');
@@ -6417,12 +6419,15 @@ async function openProfileRelationSheet(kind) {
       if (rm) rm.addEventListener('click', async () => {
         rm.disabled = true; rm.textContent = 'Removing…';
         try {
-          await api('/user/unfollow', { method: 'POST', body: { targetId: u.id } });
-          if (State.user.following) State.user.following = State.user.following.filter(id => id !== u.id);
+          const result = await api('/user/unfollow', { method: 'POST', body: { targetId: u.id } });
+          if (Array.isArray(result.followingIds)) State.user.following = result.followingIds;
+          else if (State.user.following) State.user.following = State.user.following.filter(id => id !== u.id);
           const member = (State.members || []).find(m => m.id === u.id); if (member) member.iFollow = false;
           row.remove();
           updateOwnProfileStatCounts(State.user);
-          if (!list.querySelector('.profile-relation-row')) list.innerHTML = '<div class="profile-relation-empty">No following yet</div>';
+          const remaining = list.querySelectorAll('.profile-relation-row').length;
+          const sg = $('#statFollowing'); if (sg) sg.textContent = String(remaining);
+          if (!remaining) list.innerHTML = '<div class="profile-relation-empty">No following yet</div>';
           renderDiscoverPeople();
         } catch (e) { rm.disabled = false; rm.textContent = 'Remove'; toast(e.message || 'Remove failed', 'error'); }
       });
@@ -6464,9 +6469,12 @@ function renderDiscoverPeople() {
     fb.addEventListener('click', async () => {
       fb.disabled = true; fb.textContent = 'Following...';
       try {
-        await api('/user/follow', { method: 'POST', body: { targetId: m.id } });
-        if (!State.user.following) State.user.following = [];
-        if (!State.user.following.includes(m.id)) State.user.following.push(m.id);
+        const result = await api('/user/follow', { method: 'POST', body: { targetId: m.id } });
+        if (Array.isArray(result.followingIds)) State.user.following = result.followingIds;
+        else {
+          if (!State.user.following) State.user.following = [];
+          if (!State.user.following.includes(m.id)) State.user.following.push(m.id);
+        }
         const member = (State.members || []).find(x => x.id === m.id); if (member) member.iFollow = true;
         updateOwnProfileStatCounts(State.user);
         card.remove(); if (box.children.length === 0) sec.style.display = 'none';
@@ -6785,7 +6793,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=18-close-friends-story-manage').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=43-profile-count-sync').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {

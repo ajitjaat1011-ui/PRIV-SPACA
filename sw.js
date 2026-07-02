@@ -5,7 +5,7 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v42-hide-flowers-chat-no-gap';
+const SW_VERSION = 'priv-spaca-v43-profile-count-sync';
 const STATIC_CACHE = 'priv-spaca-static-' + SW_VERSION;
 const RUNTIME_CACHE = 'priv-spaca-runtime-' + SW_VERSION;
 
@@ -13,7 +13,7 @@ const APP_SHELL = [
   '/',
   '/index.html',
   '/style.css',
-  '/app.js?v=18-close-friends-story-manage',
+  '/app.js?v=43-profile-count-sync',
   '/manifest.json',
 ];
 
