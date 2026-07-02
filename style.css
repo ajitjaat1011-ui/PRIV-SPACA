@@ -258,20 +258,38 @@ img{user-select:none;-webkit-user-drag:none}
 .ig-username-header #igUsernameText{font-weight:800;font-size:20px;letter-spacing:-.3px;color:var(--text);max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ig-username-chev{width:16px;height:16px;color:var(--muted)}
 .ig-username-dot{width:8px;height:8px;border-radius:50%;background:#ff3040}
-.brand-wordmark.hidden{display:none}
+.brand-wordmark-btn.hidden{display:none !important}
 
-/* IG-style cursive wordmark, centered */
-.brand-wordmark{
-  font-family:'Dancing Script', 'Inter', cursive;
-  font-weight:700;font-size:30px;line-height:1;
-  color:var(--text);letter-spacing:.2px;
-  text-align:center;justify-self:center;
-  background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;
+/* ===== Redesigned Topbar Brand Wordmark ===== */
+.brand-wordmark-btn{
+  background:transparent;border:0;padding:4px 6px;margin-left:-4px;
+  display:flex;align-items:center;gap:6px;cursor:pointer;
+  transition:transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+  border-radius:12px;user-select:none;
+}
+.brand-wordmark-btn:hover{transform:scale(1.06)}
+.brand-wordmark-btn:active{transform:scale(0.94)}
+.brand-text{
+  font-family:'Dancing Script', cursive;font-weight:700;font-size:32px;line-height:1;
+  letter-spacing:0.3px;
+  background:linear-gradient(135deg,#ff007f 0%,#7928ca 50%,#0084ff 100%);
+  background-size:200% 200%;
+  -webkit-background-clip:text;background-clip:text;
   -webkit-text-fill-color:transparent;
-  /* fallback if gradient text not supported */
-  text-shadow:none;
-  user-select:none;
-  padding:0 4px;
+  animation:brandShimmer 6s ease infinite;
+}
+@keyframes brandShimmer{
+  0%{background-position:0% 50%}
+  50%{background-position:100% 50%}
+  100%{background-position:0% 50%}
+}
+.brand-badge-spark{
+  font-size:15px;filter:drop-shadow(0 2px 4px rgba(255,0,127,0.4));
+  animation:sparkFloat 3s ease-in-out infinite;
+}
+@keyframes sparkFloat{
+  0%,100%{transform:translateY(0) rotate(0deg) scale(1)}
+  50%{transform:translateY(-3px) rotate(14deg) scale(1.18)}
 }
 .topbar .ghost-btn{padding:8px;color:var(--text)}
 .topbar .ghost-btn i{width:24px;height:24px;stroke-width:1.8}
