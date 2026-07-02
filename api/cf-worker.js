@@ -510,6 +510,13 @@ async function tursoEnsure() {
       value TEXT,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ps_user_feeds (
+      user_id TEXT NOT NULL,
+      post_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, post_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_user_feeds_user_created ON ps_user_feeds (user_id, created_at DESC);
   `);
   _tursoReady = true;
   return true;
@@ -2206,7 +2213,10 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     _broadcastEvent('new_post', { post: enriched }, myId);
     const persisted = await saveDatabaseVerified(db, d => (d.posts || []).some(p => p.id === post.id), 4, { skipSecondarySync: true });
     if (isPersist() && !persisted) return c.json({ error: 'Post storage unavailable. Please retry.' }, 503);
-    if (isTursoConfigured()) await tursoUpsertPosts([post]);
+    if (isTursoConfigured()) {
+      await tursoUpsertPosts([post]);
+      await fanoutPostToFollowers(post, db);
+    }
     return c.json({ post: enriched });
   } catch (e) { return c.json({ error: 'Create post failed' }, 500); }
 });
@@ -2541,3 +2551,107 @@ app.all('/api/*', (c) => c.json({ error: 'Route not found', path: c.req.path }, 
 
 // ---------- Export for Cloudflare ----------
 export default app;
+
+// ---------- Hybrid Fan-out Feed (DesignGurus Instagram optimization) ----------
+const FEED_FANOUT_THRESHOLD = 5000; // users with <= this many followers get push fan-out
+
+async function tursoUpsertUserFeeds(userFeeds) {
+  if (!isTursoConfigured() || !Array.isArray(userFeeds) || userFeeds.length === 0) return;
+  await tursoEnsure();
+  const stmts = userFeeds.map(uf => ({
+    sql: `INSERT INTO ps_user_feeds (user_id, post_id, created_at) VALUES (?, ?, ?) ON CONFLICT(user_id, post_id) DO UPDATE SET created_at = excluded.created_at`,
+    args: [uf.userId, uf.postId, uf.createdAt]
+  }));
+  await tursoClient().batch(stmts, 'write').catch(e => console.warn('[turso] user_feeds upsert failed', e?.message));
+}
+
+async function getFollowerCount(userId, db) {
+  if (!db || !db.follows) return 0;
+  return (db.follows || []).filter(f => f.targetId === userId).length;
+}
+
+async function fanoutPostToFollowers(post, db) {
+  if (!isTursoConfigured()) return;
+  const authorId = post.userId;
+  const followerCount = await getFollowerCount(authorId, db);
+  
+  if (followerCount > FEED_FANOUT_THRESHOLD) {
+    // Celebrity: use pull model (do nothing here)
+    return;
+  }
+  
+  // Normal user: fan-out to followers
+  const followers = (db.follows || []).filter(f => f.targetId === authorId).map(f => f.userId);
+  if (!followers.length) return;
+
+  const feedRows = followers.map(fid => ({
+    userId: fid,
+    postId: post.id,
+    createdAt: post.createdAt || nowMs()
+  }));
+  
+  await tursoUpsertUserFeeds(feedRows);
+}
+
+// New optimized feed endpoint
+app.get('/api/feed', requireAuth, async (c) => {
+  const myId = c.get('userId');
+  const limit = Math.min(50, Math.max(5, parseInt(c.req.query('limit') || '20')));
+  
+  if (!isTursoConfigured()) {
+    // Fallback to existing posts endpoint behavior
+    const db = await fetchDatabase();
+    const following = (db.follows || []).filter(f => f.userId === myId).map(f => f.targetId);
+    following.push(myId);
+    const posts = (db.posts || [])
+      .filter(p => following.includes(p.userId) && !p.story)
+      .sort((a,b) => (b.createdAt||0) - (a.createdAt||0))
+      .slice(0, limit);
+    return c.json({ posts, source: 'full-db-fallback' });
+  }
+
+  await tursoEnsure();
+  const c = tursoClient();
+
+  // 1. Get pre-fanned posts from ps_user_feeds (push model)
+  const feedRows = await c.execute({
+    sql: `SELECT post_id, created_at FROM ps_user_feeds WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
+    args: [myId, limit * 2]
+  }).catch(() => ({ rows: [] }));
+
+  let postIds = new Set(feedRows.rows?.map(r => r.post_id) || []);
+
+  // 2. Also fetch recent posts from people I follow (for celebrities + new follows)
+  const db = await fetchDatabase();
+  const following = (db.follows || []).filter(f => f.userId === myId).map(f => f.targetId);
+  following.push(myId);
+
+  if (following.length > 0) {
+    const placeholders = following.map(() => '?').join(',');
+    const recentPosts = await c.execute({
+      sql: `SELECT id FROM ps_posts WHERE user_id IN (${placeholders}) AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT ?`,
+      args: [...following, limit]
+    }).catch(() => ({ rows: [] }));
+
+    recentPosts.rows?.forEach(r => postIds.add(r.id));
+  }
+
+  // 3. Fetch full post data from Turso ps_posts
+  const finalPostIds = Array.from(postIds).slice(0, limit);
+  if (!finalPostIds.length) return c.json({ posts: [] });
+
+  const idPlaceholders = finalPostIds.map(() => '?').join(',');
+  const postData = await c.execute({
+    sql: `SELECT data_json FROM ps_posts WHERE id IN (${idPlaceholders})`,
+    args: finalPostIds
+  }).catch(() => ({ rows: [] }));
+
+  const posts = postData.rows?.map(r => {
+    try { return JSON.parse(r.data_json); } catch { return null; }
+  }).filter(Boolean).sort((a,b) => (b.createdAt||0)-(a.createdAt||0));
+
+  return c.json({ posts, source: 'hybrid-turso-feed' });
+});
+
+// Hook into existing post creation to trigger fan-out
+const _originalCreatePost = app.routes?.find(r => r.path === '/api/posts/create' && r.method === 'POST');
