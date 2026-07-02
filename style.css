@@ -480,7 +480,7 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .note-bubble::after{content:'';position:absolute;left:14px;bottom:-5px;width:9px;height:9px;background:var(--bg-soft);border-right:1px solid var(--line);border-bottom:1px solid var(--line);transform:rotate(45deg)}
 .note-bubble.placeholder{color:var(--muted);font-style:italic;border-style:dashed}
-.note-cell .note-avatar{width:52px;height:52px;position:relative}
+.note-cell .note-avatar{width:52px;height:52px;position:relative;filter:none!important;background-size:cover!important;background-position:center!important}
 .note-cell .note-name{font-size:11px;color:var(--muted);max-width:64px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .note-cell.mine .note-name{color:var(--text-2);font-weight:600}
 .note-add-badge{position:absolute;right:-2px;bottom:-2px;width:18px;height:18px;border-radius:50%;background:var(--accent);color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg-2)}
@@ -542,7 +542,12 @@ img{user-select:none;-webkit-user-drag:none}
 .note-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
 .note-actions .secondary-btn{background:var(--bg-soft);color:var(--text-2);border:1px solid var(--line);border-radius:10px;padding:9px 16px;font-weight:700;cursor:pointer}
 /* Music indicator on notes rail cells */
-.note-cell .note-avatar.has-music{padding:2.5px;background:var(--pink-grad,linear-gradient(135deg,#f107a3,#f9c449));box-sizing:border-box}
+.note-cell .note-avatar.has-music{
+  /* Do not paint the music gradient over the profile photo. Keep DP sharp and
+     use an outer ring instead of padding/background on the image itself. */
+  padding:0;box-sizing:border-box;filter:none!important;
+  box-shadow:0 0 0 2.5px #fa7e1e,0 0 0 4.5px #d62976;
+}
 .note-music-badge{position:absolute;right:-2px;bottom:-2px;width:19px;height:19px;border-radius:50%;background:#111;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg-2)}
 .note-bubble .note-bubble-song{display:block;font-size:9.5px;font-weight:700;color:var(--accent);margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
