@@ -850,6 +850,18 @@ function suppressSearchAutofillPrompt() {
 function switchTab(tab) {
   rememberCurrentScroll();
   State.currentTab = tab;
+  // Stop post music when leaving the feed — the user is no longer
+  // looking at any post, so silence is the expected UX.
+  if (tab !== 'feed' && isPostMusicPlaying()) {
+    const player = getPostMusicPlayer();
+    player.pause();
+    player.currentTime = 0;
+    _postMusicState.postId = null;
+    _postMusicState.src = '';
+    _postMusicState.title = '';
+    _postMusicState.artist = '';
+    syncPostMusicUI();
+  }
   $$('.bn-btn[data-tab]').forEach(b => {
     const active = b.dataset.tab === tab;
     b.classList.toggle('active', active);
@@ -3278,7 +3290,14 @@ async function playPostMusic(p) {
   const player = getPostMusicPlayer();
   const storyPlayer = $('#storyBgAudioPlayer');
   if (storyPlayer && !storyPlayer.paused) storyPlayer.pause();
+  // If the same track is already playing, do nothing
   if (player.src === p.music.audio && !player.paused) return;
+  // IMPORTANT: stop any OTHER post's music before starting this one,
+  // so only one post's music is audible at a time (Instagram-style).
+  if (_postMusicState.postId && _postMusicState.postId !== p.id && !player.paused) {
+    player.pause();
+    player.currentTime = 0;
+  }
   try {
     if (player.src !== p.music.audio) player.src = p.music.audio;
     player.currentTime = 0;
@@ -3295,8 +3314,17 @@ async function playPostMusic(p) {
 
 async function stopPostMusic(p) {
   const player = getPostMusicPlayer();
+  // Stop the music if this post is the one currently playing —
+  // handles scroll-away cleanly even when another post's playPostMusic
+  // has already changed _postMusicState.postId (in which case the
+  // player is already playing a different track, so this is a safe no-op).
   if (_postMusicState.postId === p.id && !player.paused) {
     player.pause();
+    player.currentTime = 0;
+    _postMusicState.postId = null;
+    _postMusicState.src = '';
+    _postMusicState.title = '';
+    _postMusicState.artist = '';
     syncPostMusicUI();
   }
 }
@@ -3315,6 +3343,41 @@ const postMusicObserver = new IntersectionObserver((entries) => {
   });
 }, { threshold: 0.6 });
 
+// Scroll-based safety net: on every feed scroll, check whether the
+// currently-playing music post card is still visible.  If the user
+// scrolled it completely out of view, stop the music immediately.
+// This catches edge cases where the IntersectionObserver (0.6 threshold)
+// doesn't fire soon enough (fast flick-scroll, mobile momentum, etc.).
+{
+  const feedView = document.getElementById('feedView');
+  if (feedView) {
+    let _musicScrollTick = false;
+    feedView.addEventListener('scroll', () => {
+      if (_musicScrollTick) return;
+      _musicScrollTick = true;
+      requestAnimationFrame(() => {
+        _musicScrollTick = false;
+        if (!_postMusicState.postId || !_postMusicPlayer || _postMusicPlayer.paused) return;
+        const card = document.querySelector('.post-card[data-id="' + _postMusicState.postId + '"]');
+        if (!card) return;
+        const rect = card.getBoundingClientRect();
+        const viewRect = feedView.getBoundingClientRect();
+        // If the card is completely above or below the visible feed area, stop.
+        const fullyOut = rect.bottom < viewRect.top || rect.top > viewRect.bottom;
+        if (fullyOut) {
+          _postMusicPlayer.pause();
+          _postMusicPlayer.currentTime = 0;
+          _postMusicState.postId = null;
+          _postMusicState.src = '';
+          _postMusicState.title = '';
+          _postMusicState.artist = '';
+          syncPostMusicUI();
+        }
+      });
+    }, { passive: true });
+  }
+}
+
 async function togglePostMusic(p) {
   if (!p || !p.music || !p.music.audio) return;
   const player = getPostMusicPlayer();
@@ -3327,6 +3390,11 @@ async function togglePostMusic(p) {
       else await player.play();
       syncPostMusicUI();
       return;
+    }
+    // Stop any other post's music before starting this one
+    if (_postMusicState.postId && _postMusicState.postId !== p.id && !player.paused) {
+      player.pause();
+      player.currentTime = 0;
     }
     if (player.src !== p.music.audio) player.src = p.music.audio;
     player.currentTime = 0;
