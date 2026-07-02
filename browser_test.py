@@ -87,8 +87,11 @@ with sync_playwright() as p:
     else:
         log("found signup submit button", False)
 
-
-    page.wait_for_timeout(3000)
+    try:
+        page.locator('#appShell:not(.hidden)').wait_for(state="visible", timeout=10000)
+    except Exception:
+        pass
+    page.wait_for_timeout(500)
     page.screenshot(path="/tmp/bt_3_after_signup.png")
 
     app_shell_visible = page.locator('#appShell:not(.hidden)').count() > 0
