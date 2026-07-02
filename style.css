@@ -1089,11 +1089,25 @@ img{user-select:none;-webkit-user-drag:none}
   width:40px;height:40px;font-size:15px;border-radius:50%;border:2px solid var(--surface);
 }
 .post-header-info{
-  display:flex;align-items:center;gap:6px;flex:1;min-width:0;
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;flex:1;min-width:0;
+}
+.post-header-userline{
+  display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;
 }
 .post-header-username{
   font-weight:800;font-size:15.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+.post-music-inline{
+  width:100%;display:flex;align-items:center;gap:6px;min-width:0;
+  font-size:12px;font-weight:700;color:var(--muted);line-height:1.1;
+}
+.post-music-inline i,.post-music-inline svg{width:13px;height:13px;flex-shrink:0;color:#ec4899}
+.post-music-inline.can-play{cursor:pointer}
+.post-music-inline.is-playing{color:#ec4899}
+.post-music-marquee{position:relative;min-width:0;flex:1;overflow:hidden;mask-image:linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%)}
+.post-music-marquee-track{display:flex;align-items:center;gap:26px;width:max-content;min-width:100%;animation:post-music-marquee 11s linear infinite}
+.post-music-marquee-track span{white-space:nowrap;display:inline-block}
+@keyframes post-music-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-50% - 13px))}}
 .post-verified-badge{
   color:#0084ff;display:inline-flex;align-items:center;flex-shrink:0;
 }
@@ -1115,6 +1129,19 @@ img{user-select:none;-webkit-user-drag:none}
 .post-img{
   display:block;width:100%;max-height:75vh;object-fit:cover;cursor:pointer;
 }
+.post-music-toggle{
+  position:absolute;right:12px;top:50%;transform:translateY(-50%);
+  width:42px;height:42px;border-radius:50%;border:0;z-index:7;
+  background:rgba(15,23,42,.78);backdrop-filter:blur(10px);color:#fff;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:0 10px 24px rgba(15,23,42,.24);transition:transform .18s ease, background .18s ease, color .18s ease;
+}
+.post-music-toggle:hover{transform:translateY(-50%) scale(1.06);background:rgba(15,23,42,.9)}
+.post-music-toggle:active{transform:translateY(-50%) scale(.94)}
+.post-music-toggle i,.post-music-toggle svg{width:20px;height:20px;stroke-width:2.2}
+.post-music-toggle.is-playing{background:rgba(236,72,153,.92);color:#fff}
+.post-card.music-playing .post-music-inline{color:#ec4899}
+.post-card.music-playing .post-music-marquee-track{animation-duration:8s}
 
 /* Post action bar */
 .post-actions{
