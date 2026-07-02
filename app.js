@@ -54,7 +54,11 @@ async function api(path, options = {}) {
     opts.body = JSON.stringify(opts.body);
   }
   const isGet = (opts.method || 'GET').toUpperCase() === 'GET';
-  const cacheKey = isGet ? path : null;
+  // High-frequency realtime polling endpoints must never use the general GET
+  // cache. In particular, caching /rtc/signals makes call pickup/ICE candidate
+  // delivery lag by up to API_CACHE_TTL_MS and can break WebRTC negotiation.
+  let cacheKey = isGet ? path : null;
+  if (cacheKey && cacheKey.startsWith('/rtc/signals')) cacheKey = null;
   if (cacheKey) {
     const cached = _apiCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < API_CACHE_TTL_MS) return cached.data;
@@ -7658,6 +7662,8 @@ let _callTimerInterval = null;
 let _callConnectedAt = 0;
 let _callConnected = false;   // single source of truth
 let _callConnecting = false;
+let _incomingCallAlertTimer = null;
+let _incomingCallAudioCtx = null;
 
 function initWebRTC() {
   const callBtn = $('#rtcCallBtn');
@@ -7673,7 +7679,7 @@ function initWebRTC() {
   const btnAccept = $('#rtcAcceptBtn');
   const btnReject = $('#rtcRejectBtn');
   if (btnAccept) btnAccept.addEventListener('click', acceptCall);
-  if (btnReject) btnReject.addEventListener('click', () => endCall(false));
+  if (btnReject) btnReject.addEventListener('click', rejectOrEndCall);
   // In-call controls
   const muteBtn = $('#callMuteBtn');
   const speakerBtn = $('#callSpeakerBtn');
@@ -7760,6 +7766,96 @@ function resetCallControlBtns() {
   if (flipBtn) { flipBtn.classList.add('hidden'); }
 }
 
+function callPeerName(user) {
+  return (user && (user.displayName || user.username)) || 'Someone';
+}
+
+function maybeNotifyIncomingCall(user, video) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (document.visibilityState === 'visible') return;
+  if (localStorage.getItem('ps_pushEnabled') !== '1') return;
+  try {
+    const n = new Notification('Incoming PRIV SPACA ' + (video ? 'video call' : 'voice call'), {
+      body: callPeerName(user) + ' is calling…',
+      tag: 'priv-spaca-incoming-call',
+      renotify: true,
+      silent: false,
+    });
+    n.onclick = () => { try { window.focus(); } catch (_) {} try { n.close(); } catch (_) {} };
+  } catch (_) {}
+}
+
+function playIncomingCallBeep() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!_incomingCallAudioCtx) _incomingCallAudioCtx = new AudioCtx();
+    const ctx = _incomingCallAudioCtx;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, t);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.045, t + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(t); osc.stop(t + 0.35);
+  } catch (_) {}
+}
+
+function startIncomingCallAlert(user, video) {
+  stopIncomingCallAlert();
+  maybeNotifyIncomingCall(user, video);
+  const pulse = () => {
+    try { if (navigator.vibrate) navigator.vibrate([240, 80, 240]); } catch (_) {}
+    playIncomingCallBeep();
+  };
+  pulse();
+  _incomingCallAlertTimer = setInterval(pulse, 1800);
+}
+
+function stopIncomingCallAlert() {
+  if (_incomingCallAlertTimer) clearInterval(_incomingCallAlertTimer);
+  _incomingCallAlertTimer = null;
+  try { if (navigator.vibrate) navigator.vibrate(0); } catch (_) {}
+}
+
+function showVideoCallChrome({ localCamera = false } = {}) {
+  $('#callVideos')?.classList.remove('hidden');
+  $('#callOverlay')?.classList.add('video-active');
+  $('#callVideoToggleBtn')?.classList.remove('hidden');
+  if (localCamera) $('#callFlipBtn')?.classList.remove('hidden');
+}
+
+async function handleRenegotiationOffer(peerId, signal) {
+  if (!rtcPeerConnection || rtcCurrentPeer !== peerId || !signal || !signal.offer) return;
+  try {
+    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.offer));
+    const answer = await rtcPeerConnection.createAnswer();
+    await rtcPeerConnection.setLocalDescription(answer);
+    isVideoCall = !!signal.video || isVideoCall;
+    sendRTCSignal(peerId, { type: 'answer', answer, video: isVideoCall });
+    if (isVideoCall) showVideoCallChrome({ localCamera: !!(rtcLocalStream && rtcLocalStream.getVideoTracks().length) });
+  } catch (e) {
+    console.warn('[RTC] renegotiation failed', e && e.message);
+    toast('Call update failed', 'error');
+  }
+}
+
+function rejectOrEndCall() {
+  const peerId = rtcCurrentPeer;
+  const isIncomingPending = !!window._rtcPendingOffer && !_callConnected;
+  if (isIncomingPending && peerId) {
+    sendRTCSignal(peerId, { type: 'reject' });
+    toast('Call declined', 'info');
+    endCall(true);
+    return;
+  }
+  endCall(false);
+}
+
 // ---- Signal sender ----
 function sendRTCSignal(targetId, signal) {
   api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => {
@@ -7815,12 +7911,31 @@ async function handleRTCSignal(data) {
     // Reject stale offers (>45s old — allows for DB write lag + polling delay)
     const age = Date.now() - (data.createdAt || 0);
     if (data.createdAt && age > 45000) return;
-    // Deduplicate
-    if (window._handledRtcOffers && window._handledRtcOffers.has(data.id)) return;
+
+    // Deduplicate offers delivered through both SSE and polling. SSE events do
+    // not carry the rtcSignals row id, so also key by SDP fingerprint.
+    const offerFingerprint = signal.offer && signal.offer.sdp
+      ? String(signal.offer.sdp).slice(0, 180)
+      : JSON.stringify(signal.offer || {}).slice(0, 180);
+    const offerKey = data.id || (peerId + ':' + offerFingerprint);
     if (!window._handledRtcOffers) window._handledRtcOffers = new Set();
-    if (data.id) window._handledRtcOffers.add(data.id);
-    // Busy? Send busy signal
-    if (rtcPeerConnection || _callConnecting) {
+    if (offerKey && window._handledRtcOffers.has(offerKey)) return;
+    if (offerKey) window._handledRtcOffers.add(offerKey);
+
+    // A second *new* offer from the active peer is WebRTC renegotiation (used by
+    // audio → video upgrade). Do not mark that as "busy".
+    if (rtcPeerConnection && rtcCurrentPeer === peerId && signal.offer) {
+      await handleRenegotiationOffer(peerId, signal);
+      return;
+    }
+
+    // If we are already showing this same caller's incoming screen, ignore
+    // duplicated offers rather than telling the caller we are busy.
+    if (window._rtcPendingOffer && rtcCurrentPeer === peerId) return;
+
+    // Busy or already ringing? Send busy signal so the caller gets immediate
+    // feedback instead of waiting for the 30s no-answer timeout.
+    if (rtcPeerConnection || _callConnecting || window._rtcPendingOffer) {
       sendRTCSignal(peerId, { type: 'busy' });
       return;
     }
@@ -7828,6 +7943,7 @@ async function handleRTCSignal(data) {
     isVideoCall = !!signal.video;
     window._rtcPendingOffer = signal.offer;
     showCallUI('Incoming ' + (isVideoCall ? 'Video' : 'Voice') + ' Call', author, true);
+    startIncomingCallAlert(author, isVideoCall);
     // Arm a timeout: if user doesn't accept within 30s, auto-reject
     _armCallTimeout();
 
@@ -7835,6 +7951,10 @@ async function handleRTCSignal(data) {
     if (!rtcPeerConnection || rtcCurrentPeer !== peerId) return;
     try {
       await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      if (signal.video) {
+        isVideoCall = true;
+        showVideoCallChrome({ localCamera: !!(rtcLocalStream && rtcLocalStream.getVideoTracks().length) });
+      }
       // Connection will be confirmed by oniceconnectionstatechange → 'connected'
     } catch (e) {
       console.warn('[RTC] setRemoteDescription(answer) failed', e.message);
@@ -7849,9 +7969,10 @@ async function handleRTCSignal(data) {
       console.warn('[RTC] addIceCandidate failed', e.message);
     }
 
-  } else if (signal.type === 'end' || signal.type === 'busy') {
+  } else if (signal.type === 'end' || signal.type === 'busy' || signal.type === 'reject') {
     if (rtcCurrentPeer === peerId) {
-      toast(signal.type === 'busy' ? 'User is busy' : 'Call ended', 'info');
+      const msg = signal.type === 'busy' ? 'User is busy' : (signal.type === 'reject' ? 'Call declined' : 'Call ended');
+      toast(msg, 'info');
       endCall(true);
     }
   }
@@ -7860,6 +7981,7 @@ async function handleRTCSignal(data) {
 // ---- Accept incoming call ----
 async function acceptCall() {
   if (!window._rtcPendingOffer) { toast('No pending call', 'error'); endCall(false); return; }
+  stopIncomingCallAlert();
   $('#rtcAcceptBtn').classList.add('hidden');
   $('#callStatusText').textContent = 'Connecting...';
   _callConnecting = true;
@@ -7872,7 +7994,7 @@ async function acceptCall() {
     if (isVideoCall) $('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
     toast('Camera/Microphone access denied.', 'error');
-    endCall(false);
+    rejectOrEndCall();
     return;
   }
 
@@ -8075,6 +8197,7 @@ function _disarmCallTimeout() { clearTimeout(_rtcConnectTimeout); _rtcConnectTim
 // ---- End call (full cleanup) ----
 function endCall(remote) {
   _disarmCallTimeout();
+  stopIncomingCallAlert();
   stopCallTimer();
   if (rtcPeerConnection) { try { rtcPeerConnection.close(); } catch (_) {} rtcPeerConnection = null; }
   if (rtcLocalStream) { rtcLocalStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} }); rtcLocalStream = null; }

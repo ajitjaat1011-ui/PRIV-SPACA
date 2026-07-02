@@ -203,7 +203,7 @@ function isAdminUser(u) {
 async function requireAdmin(c, next) {
   const auth = await requireAuth(c, async () => {});
   if (auth instanceof Response) return auth;
-  const db = await fetchDatabase({ fresh: true });
+  const db = await fetchPrimaryDatabase();
   const u = db.users.find(x => x.id === c.get('userId'));
   if (!isAdminUser(u)) return c.json({ error: 'Admin only' }, 403);
   c.set('adminUser', u);
@@ -783,8 +783,16 @@ async function tursoRefreshDmIndexForOwners(db, ownerIds) {
 
 async function ensureOwnerAccount(db) { return false; }
 
+async function fetchPrimaryDatabase() {
+  const remote = await repoRead();
+  if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
+    return normalizeDb(remote);
+  }
+  return normalizeDb(localCache);
+}
 
-async function fetchDatabase({ fresh = false } = {}) {
+async function fetchDatabase({ fresh = false, includeTurso = true } = {}) {
+  if (!includeTurso) fresh = true;
   const now = nowMs();
   if (!fresh && now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
     runScheduler(localCache);
@@ -794,7 +802,7 @@ async function fetchDatabase({ fresh = false } = {}) {
   if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
     localCache = normalizeDb(remote);
   }
-  if (isTursoConfigured()) {
+  if (includeTurso && isTursoConfigured()) {
     const mirror = await fetchTursoMirror(localCache);
     if ((mirror.users || []).length > 0) localCache.users = mirror.users;
     if ((mirror.posts || []).length > 0) localCache.posts = mirror.posts;
@@ -939,12 +947,10 @@ async function authFromRequest(c) {
 async function requireAuth(c, next) {
   const p = await authFromRequest(c);
   if (!p || !p.uid) return c.json({ error: 'Missing or invalid token' }, 401);
-  let u = null;
-  if (isTursoConfigured()) u = await fetchTursoUserById(p.uid);
-  if (!u) {
-    const db = await fetchDatabase();
-    u = (db.users || []).find(x => x.id === p.uid);
-  }
+  // Auth/session validation must use the primary write store. Turso is a
+  // structured read mirror and can lag briefly after password/PIN changes.
+  const authDb = await fetchPrimaryDatabase();
+  const u = (authDb.users || []).find(x => x.id === p.uid);
   if (!u) return c.json({ error: 'Missing or invalid token' }, 401);
   const tokenVersion = Number(p.sv || 0);
   const userVersion = Number(u.tokenVersion || 0);
@@ -1417,7 +1423,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     if (weak.has(pin)) return c.json({ error: 'Please choose a less obvious PIN' }, 400);
     if (termsAccepted !== true) return c.json({ error: 'You must accept the Terms & Community Guidelines.' }, 400);
 
-    const db = await fetchDatabase({ fresh: true });
+    const db = await fetchPrimaryDatabase();
     const emailLower = email.toLowerCase();
     const usernameLower = username.toLowerCase();
     if (db.users.some(u => u.email.toLowerCase() === emailLower)) return c.json({ error: 'Email already registered' }, 409);
@@ -1464,7 +1470,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
     }
-    const db = await fetchDatabase({ fresh: true });
+    const db = await fetchPrimaryDatabase();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) {
       await authFailureDelay();
@@ -1505,7 +1511,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return c.json({ error: 'Too many reset attempts. Please wait and try again.' }, 429);
     }
-    const db = await fetchDatabase({ fresh: true });
+    const db = await fetchPrimaryDatabase();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
     const pinOk = await bcrypt.compare(pin, user.pinHash);
@@ -1520,6 +1526,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       return !!u2 && u2.passwordHash === user.passwordHash && Number(u2.tokenVersion || 0) === user.tokenVersion;
     });
     if (isPersist() && !persisted) { user.passwordHash = oldHash; user.tokenVersion = oldTokenVersion; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
+    if (isTursoConfigured()) await tursoUpsertUser(user);
     const token = await signToken(user);
     return c.json({ ok: true, token, user: sanitizeUser(user) });
   } catch (e) {
@@ -1530,12 +1537,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
 
 // ---------- Auth: me ----------
 app.get('/api/auth/me', requireAuth, async (c) => {
-  let u = null;
-  if (isTursoConfigured()) u = await fetchTursoUserById(c.get('userId'));
-  if (!u) {
-    const db = await fetchDatabase();
-    u = db.users.find(x => x.id === c.get('userId'));
-  }
+  const u = c.get('authUser');
   if (!u) return c.json({ error: 'Not found' }, 404);
   return c.json({ user: sanitizeUser(u) });
 });
@@ -2526,7 +2528,7 @@ app.get('/api/stream', async (c) => {
   if (!token) return c.text('', 401);
   let payload;
   try { payload = await verifyToken(token); } catch (_) { return c.text('', 401); }
-  const authDb = await fetchDatabase();
+  const authDb = await fetchPrimaryDatabase();
   const authUser = (authDb.users || []).find(u => u.id === payload.uid);
   if (!authUser || Number(payload.sv || 0) !== Number(authUser.tokenVersion || 0)) return c.text('', 401);
   const userId = payload.uid;
