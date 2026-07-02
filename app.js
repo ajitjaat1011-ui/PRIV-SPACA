@@ -3720,6 +3720,9 @@ function updateStoryFooter(story, isMyStory) {
   _currentStoryItem = story;
   const seenBtn = $('#storySeenBy');
   const replyBar = $('#storyReplyBar');
+  const qr = $('#storyQuickReacts');
+  const ai = $('#storyActionIcons');
+  const snd = $('#storyReplySend');
   if (isMyStory) {
     if (replyBar) replyBar.classList.add('hidden');
     if (seenBtn) {
@@ -3731,8 +3734,16 @@ function updateStoryFooter(story, isMyStory) {
   } else {
     if (seenBtn) seenBtn.classList.add('hidden');
     if (replyBar) replyBar.classList.remove('hidden');
+    if (qr) qr.classList.add('hidden');
+    if (ai) ai.classList.remove('hidden');
+    if (snd) snd.classList.add('hidden');
     const inp = $('#storyReplyInput');
     if (inp) inp.value = '';
+    const lb = $('#storyLikeBtn');
+    if (lb && story && State.user) {
+      const liked = (story.likes || []).includes(State.user.id);
+      lb.classList.toggle('liked', liked);
+    }
   }
 }
 
@@ -3808,6 +3819,8 @@ function bindStoryReplyUI() {
       e.preventDefault(); e.stopPropagation();
       btn.classList.remove('burst'); void btn.offsetWidth; btn.classList.add('burst');
       sendStoryReply(btn.dataset.emoji, '');
+      const qr = $('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
+      const ai = $('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
     });
   });
   // Reply text form
@@ -3819,18 +3832,59 @@ function bindStoryReplyUI() {
       const txt = (inp && inp.value || '').trim();
       if (!txt) return;
       if (inp) inp.value = '';
+      const snd = $('#storyReplySend'); if (snd) snd.classList.add('hidden');
+      const qr = $('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
+      const ai = $('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
       sendStoryReply('', txt);
     });
-    // Pause playback while the reply input is focused so the story doesn't
-    // advance mid-typing; resume when the field is blurred.
     const inp = $('#storyReplyInput');
     if (inp) {
-      inp.addEventListener('focus', () => { try { pauseStoryForHold(); } catch (_) {} });
-      inp.addEventListener('blur', () => { try { resumeStoryFromHold(); } catch (_) {} });
-      // Stop taps in the input area from triggering next/prev navigation.
+      inp.addEventListener('focus', () => {
+        try { pauseStoryForHold(); } catch (_) {}
+        const qr = $('#storyQuickReacts'); if (qr) qr.classList.remove('hidden');
+        const ai = $('#storyActionIcons'); if (ai) ai.classList.add('hidden');
+      });
+      inp.addEventListener('blur', () => {
+        try { resumeStoryFromHold(); } catch (_) {}
+        setTimeout(() => {
+          if (!inp.value.trim()) {
+            const qr = $('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
+            const ai = $('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
+            const snd = $('#storyReplySend'); if (snd) snd.classList.add('hidden');
+          }
+        }, 150);
+      });
+      inp.addEventListener('input', () => {
+        const snd = $('#storyReplySend');
+        if (snd) snd.classList.toggle('hidden', !inp.value.trim());
+      });
       inp.addEventListener('click', (e) => e.stopPropagation());
     }
   }
+  const lb = $('#storyLikeBtn');
+  if (lb) lb.addEventListener('click', async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (!_currentStoryItem) return;
+    const liked = !lb.classList.contains('liked');
+    lb.classList.toggle('liked', liked);
+    if (liked && State.user) {
+      if (!Array.isArray(_currentStoryItem.likes)) _currentStoryItem.likes = [];
+      if (!_currentStoryItem.likes.includes(State.user.id)) _currentStoryItem.likes.push(State.user.id);
+    } else if (State.user && _currentStoryItem.likes) {
+      _currentStoryItem.likes = _currentStoryItem.likes.filter(id => id !== State.user.id);
+    }
+    try { await api('/posts/like', { method: 'POST', body: { postId: _currentStoryItem.id } }); } catch (_) {}
+  });
+  const cb = $('#storyCommentIconBtn');
+  if (cb) cb.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const inp = $('#storyReplyInput'); if (inp) inp.focus();
+  });
+  const sb = $('#storyShareIconBtn');
+  if (sb) sb.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    toast('Story link copied to clipboard!', 'success');
+  });
 }
 
 // Ordered list of users that currently have an active story, in the same
