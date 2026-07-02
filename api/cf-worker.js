@@ -9,12 +9,10 @@
  */
 
 import { Hono } from 'hono';
-import { cors } from 'hono/cors';
 import { Buffer } from 'node:buffer';
 import { neon } from '@neondatabase/serverless';
 
 const app = new Hono();
-app.use('*', cors());
 
 // ---------- Config (refreshed on every request from c.env) ----------
 let JWT_SECRET = 'priv-spaca-dev-secret-change-me';
@@ -24,11 +22,39 @@ let GH_REPO    = 'ajitjaat1011-ui/PRIV-SPACA';
 let GH_BRANCH  = 'data';
 let GH_FILE    = 'db.json';
 let VAPID_PUBLIC  = 'BG5msm1YiW_5l5N2ZNAvz5CkzQDGchg99ZSpkXVhXb4mm70X8vPPZs_7lrsaDXtvPns7QloRkh40vY4J5O0pqlI';
-let VAPID_PRIVATE = 'cD46cvq1tE2duI2EOZoyu0huGyL6vmZOsFzXMCvfjfQ';
+let VAPID_PRIVATE = ''; // must be set as encrypted env secret in production
 let VAPID_SUBJECT = 'mailto:admin@priv-spaca.app';
 let ADMIN_USERS = 'Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com';
 let OWNER_EMAIL = 'ajitjaat1011@gmail.com';
 let OWNER_USERNAME = 'Arvindjaat1011';
+function isAllowedCorsOrigin(origin) {
+  if (!origin) return true; // curl/server/API agents send no Origin
+  try {
+    const u = new URL(origin);
+    const h = u.hostname.toLowerCase();
+    if (h === 'priv-spaca.pages.dev' || h.endsWith('.priv-spaca.pages.dev')) return true;
+    if (h === 'localhost' || h === '127.0.0.1') return true;
+  } catch (_) {}
+  return false;
+}
+function applyCors(c) {
+  const origin = c.req.header('origin') || '';
+  if (origin && isAllowedCorsOrigin(origin)) {
+    c.header('Access-Control-Allow-Origin', origin);
+    c.header('Vary', 'Origin');
+  }
+  c.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Last-Event-ID');
+  c.header('Access-Control-Max-Age', '86400');
+}
+function isDefaultJwtSecret() {
+  return !JWT_SECRET || JWT_SECRET === 'priv-spaca-dev-secret-change-me';
+}
+function isProductionRequest(c) {
+  const host = new URL(c.req.url).hostname.toLowerCase();
+  return host.endsWith('priv-spaca.pages.dev') || host === 'priv-spaca.pages.dev';
+}
+
 function loadConfig(env) {
   if (!env) return;
   // Always overwrite — values can change per-deploy
@@ -891,6 +917,16 @@ function dmRoomFor(a, b) { return 'dm:' + [a, b].sort().join(':'); }
 // ---------- Middleware: load config + security headers + global rate limit ----------
 app.use('*', async (c, next) => {
   loadConfig(c.env);
+  applyCors(c);
+  if (c.req.method === 'OPTIONS') {
+    const origin = c.req.header('origin') || '';
+    return isAllowedCorsOrigin(origin) ? c.body(null, 204) : c.text('CORS origin denied', 403);
+  }
+  const origin = c.req.header('origin') || '';
+  if (origin && !isAllowedCorsOrigin(origin)) return c.json({ error: 'CORS origin denied' }, 403);
+  if (isProductionRequest(c) && isDefaultJwtSecret() && c.req.path.startsWith('/api/') && c.req.path !== '/api/health') {
+    return c.json({ error: 'Server auth secret is not configured' }, 503);
+  }
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('X-Frame-Options', 'SAMEORIGIN');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -1909,7 +1945,7 @@ app.post('/api/stories/:id/reply', requireAuth, async (c) => {
 app.all('/api/admin/*', (c) => c.json({ error: 'Admin panel removed' }, 404));
 
 // ---------- Push (subscribe endpoints - actual delivery is no-op for now) ----------
-app.get('/api/push/vapid-public', (c) => c.json({ key: VAPID_PUBLIC }));
+app.get('/api/push/vapid-public', (c) => c.json({ key: VAPID_PUBLIC || '' }));
 app.post('/api/push/subscribe', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { subscription } = body;
