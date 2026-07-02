@@ -2757,7 +2757,7 @@ async function loadPosts() {
 const STORY_TTL_MS = 24 * 60 * 60 * 1000;
 function isStoryRecord(p) {
   if (!p || p.deletedAt) return false;
-  return !!(p.story === true || p.kind === 'story' || p.storyExpiresAt || p.style || p.music);
+  return !!(p.story === true || p.kind === 'story' || p.storyExpiresAt);
 }
 function storyExpiresAt(p) {
   return Number(p && p.storyExpiresAt) || ((p && p.createdAt) ? (p.createdAt + STORY_TTL_MS) : 0);
@@ -6198,6 +6198,7 @@ function buildGridCell(p) {
   p = normalizeProfilePost(p) || p;
   const cell = document.createElement('div');
   cell.className = 'ig-grid-cell';
+  if (p && p.id) cell.dataset.postId = p.id;
   if (p.videoUrl) {
     const vid = document.createElement('video');
     vid.src = p.videoUrl;
@@ -6210,13 +6211,20 @@ function buildGridCell(p) {
     play.textContent = '▶';
     cell.appendChild(play);
   } else if (p.imageUrl) {
-    const img = lazyImg(p.imageUrl, '', p.id);
+    const ph = document.createElement('div');
+    ph.className = 'profile-grid-placeholder';
+    ph.textContent = (p.text || 'Post').slice(0, 80);
+    cell.appendChild(ph);
+    const img = document.createElement('img');
+    img.alt = p.text || 'post';
+    img.loading = 'eager';
+    img.decoding = 'async';
+    img.src = p.imageUrl;
+    img.addEventListener('load', () => { ph.remove(); img.classList.add('loaded'); });
     img.addEventListener('error', () => {
       img.remove();
-      const fb = document.createElement('div');
-      fb.className = 'text-only';
-      fb.textContent = p.text || '(image)';
-      cell.appendChild(fb);
+      ph.className = 'text-only';
+      ph.textContent = p.text || 'Image unavailable';
     });
     cell.appendChild(img);
   } else {
@@ -6333,6 +6341,21 @@ function mergeProfilePosts(primary, fallback, user = State.user) {
   return out.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
+
+function renderOwnProfileFromCache() {
+  if (!State.user || State.currentTab !== 'profile') return;
+  const grid = $('#profilePostsGrid');
+  if (!grid) return;
+  const cached = mergeProfilePosts([], State.posts || [], State.user);
+  if (!cached.length) return;
+  const existingIds = new Set(Array.from(grid.querySelectorAll('.ig-grid-cell[data-post-id]')).map(el => el.dataset.postId));
+  if (cached.every(p => existingIds.has(p.id))) return;
+  grid.innerHTML = '';
+  cached.forEach(p => grid.appendChild(buildGridCell(p)));
+  updateOwnProfileStatCounts({ ...State.user, postsCount: cached.length });
+  refreshIcons();
+}
+
 async function renderOwnProfile() {
   if (!State.user) return;
   const cachedUsername = State.user.username || State.user.displayName || 'me';
@@ -6341,9 +6364,10 @@ async function renderOwnProfile() {
   if (titleU) titleU.textContent = cachedUsername;
   if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
   if ($('#profileUsername')) $('#profileUsername').textContent = '@' + (State.user.username || cachedUsername);
-  // Fetch fresh relationship/post data so profile stats and grid are correct.
-  try { await loadMembers(); updateOwnProfileStatCounts(State.user); } catch (_) {}
-  try { await loadPosts(); } catch (_) {}
+  // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
+  // so the grid does not feel slow or blank while /users and /posts load.
+  loadMembers().then(() => updateOwnProfileStatCounts(State.user)).catch(() => {});
+  loadPosts().then(() => { if (State.currentTab === 'profile') renderOwnProfileFromCache(); }).catch(() => {});
   // Fetch fresh data (own profile uses same endpoint)
   try {
     const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
@@ -6844,7 +6868,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=43-profile-count-sync').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=45-profile-grid-immediate').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {

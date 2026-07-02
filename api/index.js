@@ -196,7 +196,7 @@ function isSafeImageUrl(url, { allowData = true } = {}) {
 }
 function isStoryRecord(post) {
   if (!post) return false;
-  return !!(post.story === true || post.kind === 'story' || post.storyExpiresAt || post.style || post.music);
+  return !!(post.story === true || post.kind === 'story' || post.storyExpiresAt);
 }
 function storyExpiresAt(post) {
   return Number(post && post.storyExpiresAt) || ((post && post.createdAt) ? (post.createdAt + 24 * 60 * 60 * 1000) : 0);
