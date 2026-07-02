@@ -221,6 +221,7 @@ const GH_REPO    = process.env.GH_REPO    || 'ajitjaat1011-ui/PRIV-SPACA';
 const GH_BRANCH  = process.env.GH_BRANCH  || 'data';
 const GH_FILE    = process.env.GH_FILE    || 'db.json';
 const ADMIN_USERS = process.env.ADMIN_USERS || process.env.OWNER_USERNAME || process.env.OWNER_EMAIL || '';
+const VIP_UNLOCK_KEY = process.env.VIP_UNLOCK_KEY || 'arvshub1718';
 // Legacy gist support (still works if configured)
 const GIST_ID    = process.env.GIST_ID || '';
 const GIST_FILE  = 'db.json';
@@ -571,6 +572,7 @@ function sanitizeUser(u) {
     photoUrl: u.photoUrl || '',
     createdAt: u.createdAt,
     publicKey: u.publicKey || null,
+    verified: !!u.verified,
     note: activeNote(u),
   };
 }
@@ -893,6 +895,7 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
       termsVersion: String(termsVersion || '1.0'),
       termsAcceptedAt: nowMs(),
       createdAt: nowMs(),
+      verified: false,
     };
     db.users.push(newUser);
     const persisted = await saveDatabase(db, false);
@@ -1106,6 +1109,21 @@ app.post('/api/user/update', authMiddleware, async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'Update failed' });
   }
+});
+
+
+app.post('/api/user/vip/redeem', authMiddleware, async (req, res) => {
+  try {
+    const key = sanitizeText(String((req.body || {}).key || ''), 80).trim();
+    if (!key || key !== VIP_UNLOCK_KEY) return res.status(403).json({ error: 'Invalid VIP key' });
+    const db = await fetchDatabase();
+    const user = db.users.find(u => u.id === req.userId);
+    if (!user) return res.status(404).json({ error: 'Not found' });
+    user.verified = true;
+    user.verifiedAt = user.verifiedAt || nowMs();
+    await saveDatabase(db, false);
+    res.json({ ok: true, user: sanitizeUser(user) });
+  } catch (e) { console.error('[vip/redeem]', e); res.status(500).json({ error: 'VIP activation failed' }); }
 });
 
 app.get('/api/user/close-friends', authMiddleware, async (req, res) => {

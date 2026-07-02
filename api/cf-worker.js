@@ -27,6 +27,7 @@ let VAPID_SUBJECT = 'mailto:admin@priv-spaca.app';
 let ADMIN_USERS = 'Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com';
 let OWNER_EMAIL = 'ajitjaat1011@gmail.com';
 let OWNER_USERNAME = 'Arvindjaat1011';
+let VIP_UNLOCK_KEY = 'arvshub1718';
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true; // curl/server/API agents send no Origin
   try {
@@ -70,6 +71,7 @@ function loadConfig(env) {
   if (env.ADMIN_USERS) ADMIN_USERS = env.ADMIN_USERS;
   if (env.OWNER_EMAIL) OWNER_EMAIL = env.OWNER_EMAIL;
   if (env.OWNER_USERNAME) OWNER_USERNAME = env.OWNER_USERNAME;
+  if (env.VIP_UNLOCK_KEY) VIP_UNLOCK_KEY = env.VIP_UNLOCK_KEY;
 }
 
 const JWT_EXPIRES_DAYS = 7;
@@ -146,7 +148,7 @@ function sanitizeUser(u) {
   if (!u) return null;
   return { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
            bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt,
-           publicKey: u.publicKey || null, note: activeNote(u) };
+           publicKey: u.publicKey || null, verified: !!u.verified, note: activeNote(u) };
 }
 // A "note" is a short 24h status (Instagram-style). Returns null once expired.
 function activeNote(u) {
@@ -1010,7 +1012,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
       bio: '', photoUrl: '', passwordHash, pinHash, tokenVersion: 0,
       followers: [], following: [], blocked: [], closeFriends: [],
       termsAccepted: true, termsVersion: String(termsVersion || '1.0'),
-      termsAcceptedAt: nowMs(), createdAt: nowMs(),
+      termsAcceptedAt: nowMs(), createdAt: nowMs(), verified: false,
     };
     db.users.push(newUser);
     const persisted = await saveDatabaseVerified(db, d => (d.users || []).some(u => u.id === newUser.id));
@@ -1188,6 +1190,22 @@ app.post('/api/user/update', requireAuth, async (c) => {
     await saveDatabase(db, false);
     return c.json({ user: sanitizeUser(user) });
   } catch (e) { console.error('[user/update]', e); return c.json({ error: 'Update failed' }, 500); }
+});
+
+
+app.post('/api/user/vip/redeem', requireAuth, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const key = sanitizeText(String(body.key || ''), 80).trim();
+    if (!key || key !== VIP_UNLOCK_KEY) return c.json({ error: 'Invalid VIP key' }, 403);
+    const db = await fetchDatabase({ fresh: true });
+    const user = db.users.find(u => u.id === c.get('userId'));
+    if (!user) return c.json({ error: 'Not found' }, 404);
+    user.verified = true;
+    user.verifiedAt = user.verifiedAt || nowMs();
+    await saveDatabase(db, false);
+    return c.json({ ok: true, user: sanitizeUser(user) });
+  } catch (e) { console.error('[vip/redeem]', e); return c.json({ error: 'VIP activation failed' }, 500); }
 });
 
 app.get('/api/user/close-friends', requireAuth, async (c) => {

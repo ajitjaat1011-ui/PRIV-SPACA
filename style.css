@@ -2291,3 +2291,16 @@ img{user-select:none;-webkit-user-drag:none}
 .post-verified-badge{display:inline-flex;align-items:center;flex-shrink:0;line-height:1}
 @keyframes ownerBadgeSpin{to{transform:rotate(360deg)}}
 @keyframes ownerBadgeShine{0%,100%{opacity:.14;transform:translateX(-1px)}50%{opacity:.34;transform:translateX(2px)}}
+
+/* VIP key activation in settings */
+.vip-settings-strip{padding:10px 12px}
+.vip-key-row{display:flex;align-items:center;gap:10px;width:100%;background:var(--bg-soft);border:1px solid var(--line);border-radius:14px;padding:9px 10px}
+.vip-key-row i,.vip-key-row svg{width:20px;height:20px;color:#159cff;flex-shrink:0}
+.vip-key-row input{flex:1;min-width:0;border:0;background:transparent;outline:none;color:var(--text);font:inherit;font-size:13.5px;font-weight:700}
+.vip-key-row button{border:0;border-radius:999px;background:#159cff;color:#fff;font-size:12px;font-weight:900;padding:8px 12px;cursor:pointer;flex-shrink:0}
+.vip-key-row button:disabled{opacity:.65;cursor:wait}
+
+/* Major-app style blue verification tick */
+.owner-verified-badge{filter:drop-shadow(0 1px 3px rgba(0,104,232,.22))!important}
+.owner-verified-badge .bt-shape{filter:drop-shadow(0 0 2px rgba(21,156,255,.28))}
+.owner-verified-badge .bt-check{filter:drop-shadow(0 1px 1px rgba(0,80,180,.25))}
