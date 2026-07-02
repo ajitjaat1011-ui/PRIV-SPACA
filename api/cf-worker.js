@@ -663,6 +663,93 @@ async function fetchTursoMessages(roomId, now = nowMs()) {
     return null;
   }
 }
+async function tursoUpsertPosts(posts) {
+  if (!isTursoConfigured()) return false;
+  const list = (posts || []).filter(Boolean);
+  if (!list.length) return true;
+  await tursoEnsure();
+  const ts = nowMs();
+  const stmts = list.map(p => ({
+    sql: 'INSERT INTO ps_posts (id, user_id, created_at, deleted_at, story, story_expires_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, created_at=excluded.created_at, deleted_at=excluded.deleted_at, story=excluded.story, story_expires_at=excluded.story_expires_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
+    args: [p.id, p.userId, Number(p.createdAt || 0), p.deletedAt ? Number(p.deletedAt) : null, p.story ? 1 : 0, p.storyExpiresAt ? Number(p.storyExpiresAt) : null, ts, JSON.stringify(p)],
+  }));
+  await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] post upsert failed', e && e.message); });
+  return true;
+}
+async function tursoUpsertNotifications(notifs) {
+  if (!isTursoConfigured()) return false;
+  const list = (notifs || []).filter(Boolean);
+  if (!list.length) return true;
+  await tursoEnsure();
+  const ts = nowMs();
+  const stmts = list.map(n => ({
+    sql: 'INSERT INTO ps_notifications (id, user_id, from_user_id, kind, created_at, seen_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, from_user_id=excluded.from_user_id, kind=excluded.kind, created_at=excluded.created_at, seen_at=excluded.seen_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
+    args: [n.id, n.userId, n.fromUserId || null, n.kind || null, Number(n.createdAt || 0), n.seenAt ? Number(n.seenAt) : null, ts, JSON.stringify(n)],
+  }));
+  await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] notification upsert failed', e && e.message); });
+  return true;
+}
+async function tursoClearNotificationsForUser(userId) {
+  if (!isTursoConfigured() || !userId) return false;
+  await tursoEnsure();
+  await tursoClient().execute({ sql: 'DELETE FROM ps_notifications WHERE user_id = ?', args: [userId] }).catch(e => { console.warn('[turso] notification clear failed', e && e.message); });
+  return true;
+}
+async function tursoUpsertMessages(messages) {
+  if (!isTursoConfigured()) return false;
+  const list = (messages || []).filter(Boolean);
+  if (!list.length) return true;
+  await tursoEnsure();
+  const ts = nowMs();
+  const stmts = list.map(m => ({
+    sql: 'INSERT INTO ps_messages (id, room_id, user_id, created_at, deleted_at, disappear_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET room_id=excluded.room_id, user_id=excluded.user_id, created_at=excluded.created_at, deleted_at=excluded.deleted_at, disappear_at=excluded.disappear_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
+    args: [m.id, m.roomId || 'general-group', m.userId || '', Number(m.createdAt || 0), m.deletedAt ? Number(m.deletedAt) : null, m.disappearAt ? Number(m.disappearAt) : null, ts, JSON.stringify(m)],
+  }));
+  await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] message upsert failed', e && e.message); });
+  return true;
+}
+async function tursoRefreshDmIndexForOwners(db, ownerIds) {
+  if (!isTursoConfigured()) return false;
+  const owners = Array.from(new Set((ownerIds || []).filter(Boolean)));
+  if (!owners.length) return true;
+  await tursoEnsure();
+  const ts = nowMs();
+  const stmts = [];
+  for (const ownerId of owners) {
+    stmts.push({ sql: 'DELETE FROM ps_dm_index WHERE owner_user_id = ?', args: [ownerId] });
+    const dmIndex = new Map();
+    for (const m of (db.messages || [])) {
+      if (!m || m.deletedAt || typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
+      const parts = m.roomId.slice(3).split(':').filter(Boolean);
+      if (!parts.includes(ownerId) || parts.length !== 2) continue;
+      const peerId = parts.find(id => id !== ownerId);
+      if (!peerId) continue;
+      const prev = dmIndex.get(peerId);
+      if (prev && Number(prev.createdAt || 0) >= Number(m.createdAt || 0)) continue;
+      let preview;
+      if (m.encrypted) preview = '🔒 Encrypted message';
+      else if (m.storyReply) preview = 'Replied to a story';
+      else if (m.imageUrl) preview = '📷 Photo';
+      else preview = String(m.text || '').slice(0, 60);
+      dmIndex.set(peerId, {
+        ownerUserId: ownerId,
+        peerUserId: peerId,
+        roomId: m.roomId,
+        createdAt: Number(m.createdAt || 0),
+        fromMe: m.userId === ownerId,
+        text: preview,
+      });
+    }
+    for (const row of dmIndex.values()) {
+      stmts.push({
+        sql: 'INSERT INTO ps_dm_index (owner_user_id, peer_user_id, room_id, created_at, from_me, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        args: [row.ownerUserId, row.peerUserId, row.roomId, row.createdAt, row.fromMe ? 1 : 0, ts, JSON.stringify(row)],
+      });
+    }
+  }
+  if (stmts.length) await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] dm index refresh failed', e && e.message); });
+  return true;
+}
 
 async function ensureOwnerAccount(db) { return false; }
 
@@ -690,7 +777,7 @@ async function fetchDatabase({ fresh = false } = {}) {
   return localCache;
 }
 
-async function saveDatabase(data, isEphemeral = false) {
+async function saveDatabase(data, isEphemeral = false, opts = {}) {
   localCache = data;
   cacheTimestamp = nowMs();
   if (!isPersist()) return true;
@@ -740,14 +827,14 @@ async function saveDatabase(data, isEphemeral = false) {
   if (ok) {
     localCache = normalizeDb(toWrite);
     cacheTimestamp = nowMs();
-    if (isTursoConfigured()) await syncTursoMirror(localCache);
+    if (isTursoConfigured() && !opts.skipSecondarySync) await syncTursoMirror(localCache);
   }
   return ok;
 }
 
-async function saveDatabaseVerified(data, verifyFn, attempts = 4) {
+async function saveDatabaseVerified(data, verifyFn, attempts = 4, opts = {}) {
   for (let i = 0; i < attempts; i++) {
-    const ok = await saveDatabase(data, false);
+    const ok = await saveDatabase(data, false, opts);
     if (ok) {
       await sleepMs(300 + i * 350);
       cacheTimestamp = 0;
@@ -1783,19 +1870,26 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     db.messages.push(msg);
 
     const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
+    const tursoNotifs = [];
     if (roomId.startsWith('dm:')) {
       const parts = roomId.slice(3).split(':');
       parts.filter(uid2 => uid2 !== myId).forEach(recip => {
         _pushEvent(recip, 'new_message', { roomId, message: enriched });
         // For E2E messages, server never sees plaintext → push preview is generic
         const previewText = isEncrypted ? '🔒 Encrypted message' : (ct || (ci ? '📷 Photo' : ''));
-        pushNotification(db, recip, 'message', myId, { text: previewText.slice(0, 80) });
+        const notif = pushNotification(db, recip, 'message', myId, { text: previewText.slice(0, 80) });
+        if (notif) tursoNotifs.push(notif);
       });
     } else {
       _broadcastEvent('new_message', { roomId, message: enriched }, myId);
     }
-    const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id));
+    const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true });
     if (isPersist() && !persisted) return c.json({ error: 'Message storage unavailable. Please retry.' }, 503);
+    if (isTursoConfigured()) {
+      await tursoUpsertMessages([msg]);
+      if (tursoNotifs.length) await tursoUpsertNotifications(tursoNotifs);
+      if (roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean));
+    }
     return c.json({ message: enriched });
   } catch (e) { console.error('[send]', e); return c.json({ error: 'Send failed' }, 500); }
 });
@@ -1809,7 +1903,11 @@ app.post('/api/messages/delete', requireAuth, async (c) => {
     if (!m) return c.json({ error: 'Not found' }, 404);
     if (m.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
     m.deletedAt = nowMs();
-    await saveDatabase(db, false);
+    await saveDatabase(db, false, { skipSecondarySync: true });
+    if (isTursoConfigured()) {
+      await tursoUpsertMessages([m]);
+      if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
+    }
     return c.json({ ok: true, undoUntil: m.deletedAt + 30 * 24 * 3600 * 1000 });
   } catch (e) { console.error('[delmsg]', e); return c.json({ error: 'Delete failed' }, 500); }
 });
@@ -1821,7 +1919,11 @@ app.post('/api/messages/restore', requireAuth, async (c) => {
     if (!m) return c.json({ error: 'Not found' }, 404);
     if (m.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
     delete m.deletedAt;
-    await saveDatabase(db, false);
+    await saveDatabase(db, false, { skipSecondarySync: true });
+    if (isTursoConfigured()) {
+      await tursoUpsertMessages([m]);
+      if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
+    }
     return c.json({ ok: true });
   } catch (e) { console.error('[restoremsg]', e); return c.json({ error: 'Restore failed' }, 500); }
 });
@@ -1898,15 +2000,26 @@ app.post('/api/notifications/seen', requireAuth, async (c) => {
   const db = await fetchDatabase();
   const now = nowMs();
   let n = 0;
-  (db.notifications || []).forEach(x => { if (x.userId === c.get('userId') && !x.seenAt) { x.seenAt = now; n++; } });
-  if (n) await saveDatabase(db, true);
+  const touched = [];
+  (db.notifications || []).forEach(x => {
+    if (x.userId === c.get('userId') && !x.seenAt) {
+      x.seenAt = now; n++; touched.push(x);
+    }
+  });
+  if (n) {
+    await saveDatabase(db, true);
+    if (isTursoConfigured()) await tursoUpsertNotifications(touched);
+  }
   return c.json({ ok: true, updated: n });
 });
 app.post('/api/notifications/clear', requireAuth, async (c) => {
   const db = await fetchDatabase();
   const before = (db.notifications || []).length;
   db.notifications = (db.notifications || []).filter(n => n.userId !== c.get('userId'));
-  if (before !== db.notifications.length) await saveDatabase(db, false);
+  if (before !== db.notifications.length) {
+    await saveDatabase(db, false, { skipSecondarySync: true });
+    if (isTursoConfigured()) await tursoClearNotificationsForUser(c.get('userId'));
+  }
   return c.json({ ok: true, removed: before - db.notifications.length });
 });
 
@@ -2091,8 +2204,9 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     db.posts.push(post);
     const enriched = { ...post, likeCount: 0, commentCount: 0, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
     _broadcastEvent('new_post', { post: enriched }, myId);
-    const persisted = await saveDatabaseVerified(db, d => (d.posts || []).some(p => p.id === post.id));
+    const persisted = await saveDatabaseVerified(db, d => (d.posts || []).some(p => p.id === post.id), 4, { skipSecondarySync: true });
     if (isPersist() && !persisted) return c.json({ error: 'Post storage unavailable. Please retry.' }, 503);
+    if (isTursoConfigured()) await tursoUpsertPosts([post]);
     return c.json({ post: enriched });
   } catch (e) { return c.json({ error: 'Create post failed' }, 500); }
 });
@@ -2114,8 +2228,12 @@ app.post('/api/posts/like', requireAuth, async (c) => {
   const idx = post.likes.indexOf(myId);
   let liked;
   if (idx === -1) { post.likes.push(myId); liked = true; } else { post.likes.splice(idx, 1); liked = false; }
-  if (liked) pushNotification(db, post.userId, 'like', myId, { postId: post.id });
-  await saveDatabase(db, false);
+  const notif = liked ? pushNotification(db, post.userId, 'like', myId, { postId: post.id }) : null;
+  await saveDatabase(db, false, { skipSecondarySync: true });
+  if (isTursoConfigured()) {
+    await tursoUpsertPosts([post]);
+    if (notif) await tursoUpsertNotifications([notif]);
+  }
   return c.json({ liked, likeCount: post.likes.length });
 });
 
@@ -2188,8 +2306,12 @@ app.post('/api/posts/comment', requireAuth, async (c) => {
   const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
   const comment = { id: uid('cmt'), userId: myId, text: ct, authorSnapshot: snap, createdAt: nowMs() };
   post.comments.push(comment);
-  pushNotification(db, post.userId, 'comment', myId, { postId: post.id, commentId: comment.id, text: ct.slice(0, 140) });
-  await saveDatabase(db, false);
+  const notif = pushNotification(db, post.userId, 'comment', myId, { postId: post.id, commentId: comment.id, text: ct.slice(0, 140) });
+  await saveDatabase(db, false, { skipSecondarySync: true });
+  if (isTursoConfigured()) {
+    await tursoUpsertPosts([post]);
+    if (notif) await tursoUpsertNotifications([notif]);
+  }
   return c.json({ comment: { ...comment, author: snap || { id: myId, displayName: 'Member', username: 'member' } } });
 });
 
@@ -2202,7 +2324,8 @@ app.post('/api/posts/delete', requireAuth, async (c) => {
   if (!p) return c.json({ error: 'Not found' }, 404);
   if (p.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
   p.deletedAt = nowMs();
-  await saveDatabase(db, false);
+  await saveDatabase(db, false, { skipSecondarySync: true });
+  if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true, undoUntil: p.deletedAt + 30 * 24 * 3600 * 1000 });
 });
 app.post('/api/posts/restore', requireAuth, async (c) => {
@@ -2214,7 +2337,8 @@ app.post('/api/posts/restore', requireAuth, async (c) => {
   if (!p) return c.json({ error: 'Not found' }, 404);
   if (p.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
   delete p.deletedAt;
-  await saveDatabase(db, false);
+  await saveDatabase(db, false, { skipSecondarySync: true });
+  if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true });
 });
 
@@ -2236,6 +2360,7 @@ app.post('/api/stories/:id/view', requireAuth, async (c) => {
   if (existing) { existing.at = nowMs(); }
   else { p.views.push({ userId: myId, at: nowMs() }); }
   await saveDatabase(db, true); // ephemeral: high-frequency, low-criticality
+  if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true, viewCount: p.views.length });
 });
 
@@ -2288,9 +2413,14 @@ app.post('/api/stories/:id/reply', requireAuth, async (c) => {
   db.messages.push(msg);
   const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
   _pushEvent(p.userId, 'new_message', { roomId, message: enriched });
-  pushNotification(db, p.userId, 'story_reply', myId, { text: bodyText.slice(0, 80), postId: p.id });
-  const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id));
+  const notif = pushNotification(db, p.userId, 'story_reply', myId, { text: bodyText.slice(0, 80), postId: p.id });
+  const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true });
   if (isPersist() && !persisted) return c.json({ error: 'Reply storage unavailable. Please retry.' }, 503);
+  if (isTursoConfigured()) {
+    await tursoUpsertMessages([msg]);
+    if (notif) await tursoUpsertNotifications([notif]);
+    await tursoRefreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean));
+  }
   return c.json({ ok: true, message: enriched });
 });
 
