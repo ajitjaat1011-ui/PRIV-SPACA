@@ -2076,6 +2076,21 @@ app.post('/api/user/follow', requireAuth, async (c) => {
   if (isTursoConfigured()) {
     await tursoUpsertUser(me);
     await tursoUpsertUser(target);
+    // Fan-out on follow: backfill the followed user's recent posts
+    // into the follower's feed table so they see content immediately.
+    try {
+      const tc = tursoClient();
+      const recentPosts = await tc.execute({
+        sql: `SELECT id, created_at FROM ps_posts WHERE user_id = ? AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT 50`,
+        args: [targetId]
+      }).catch(() => ({ rows: [] }));
+      if (recentPosts.rows?.length) {
+        const feedRows = recentPosts.rows.map(r => ({
+          userId: myId, postId: r.id, createdAt: Number(r.created_at) || nowMs()
+        }));
+        await tursoUpsertUserFeeds(feedRows);
+      }
+    } catch (_) { /* best-effort; don't fail the follow */ }
   }
   return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
@@ -2646,7 +2661,11 @@ app.get('/api/feed', requireAuth, async (c) => {
     const allFollowing = [...following, myId];
     const posts = (db.posts || [])
       .filter(p => allFollowing.includes(p.userId) && !p.story)
-      .sort((a,b) => (b.createdAt||0) - (a.createdAt||0))
+      .sort((a,b) => {
+        const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
+        const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
+        return ((b.createdAt||0) * 0.7 + engB * 0.3) - ((a.createdAt||0) * 0.7 + engA * 0.3);
+      })
       .slice(0, limit);
     return c.json({ posts, source: 'full-db-fallback' });
   }
@@ -2690,7 +2709,15 @@ app.get('/api/feed', requireAuth, async (c) => {
 
   const posts = postData.rows?.map(r => {
     try { return JSON.parse(r.data_json); } catch { return null; }
-  }).filter(Boolean).sort((a,b) => (b.createdAt||0)-(a.createdAt||0));
+  }).filter(Boolean).sort((a,b) => {
+    // Engagement-weighted ranking: recency (70%) + engagement (30%)
+    // Likes × 3 + comments × 5 = engagement score
+    const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
+    const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
+    const scoreA = (a.createdAt || 0) * 0.7 + engA * 0.3;
+    const scoreB = (b.createdAt || 0) * 0.7 + engB * 0.3;
+    return scoreB - scoreA;
+  });
 
   return c.json({ posts, source: 'hybrid-turso-feed' });
 });

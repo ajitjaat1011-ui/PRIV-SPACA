@@ -39,11 +39,11 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 function authHeaders() {
   return State.token ? { 'Authorization': 'Bearer ' + State.token } : {};
 }
-// Tiny GET cache (1.5s TTL) + in-flight de-duplication so notification poller
+// Tiny GET cache (5s TTL) + in-flight de-duplication so notification poller
 // and view loaders don't double-fetch the same endpoint within the same tick.
 const _apiCache = new Map();      // key -> { ts, data }
 const _apiInflight = new Map();   // key -> Promise
-const API_CACHE_TTL_MS = 300;
+const API_CACHE_TTL_MS = 5000;
 let startupFallback = null;
 
 async function api(path, options = {}) {
@@ -87,9 +87,11 @@ async function api(path, options = {}) {
       if (path.startsWith('/messages')) {
         for (const k of [..._apiCache.keys()]) if (k.startsWith('/messages')) _apiCache.delete(k);
       } else if (path.startsWith('/posts')) {
-        for (const k of [..._apiCache.keys()]) if (k.startsWith('/posts')) _apiCache.delete(k);
+        for (const k of [..._apiCache.keys()]) if (k.startsWith('/posts') || k.startsWith('/feed')) _apiCache.delete(k);
       } else if (path.startsWith('/user')) {
         _apiCache.delete('/users'); _apiCache.delete('/auth/me');
+        // Follow/unfollow changes the feed — bust it
+        if (path.includes('/follow') || path.includes('/unfollow')) _apiCache.delete('/feed');
       }
     }
     return data;
@@ -869,7 +871,7 @@ function switchTab(tab) {
   });
   $$('.view').forEach(v => v.classList.remove('active'));
   let activeView = null;
-  if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadPosts(); markTabSeen('feed'); }
+  if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadFeed(); loadPosts(); markTabSeen('feed'); }
   if (tab === 'search') {
     activeView = $('#searchView');
     activeView.classList.add('active');
@@ -2591,6 +2593,16 @@ let _fastPollUntil = 0;
 function boostPolling(durationMs = 30000) { _fastPollUntil = Date.now() + durationMs; }
 function isFastPolling() { return Date.now() < _fastPollUntil; }
 
+// Idle-aware polling: slow down dramatically when user isn't touching the screen.
+// Saves battery + bandwidth on mobile; SSE handles real-time when active.
+let _lastUserActivity = Date.now();
+['scroll', 'touchstart', 'mousedown', 'keydown', 'pointerdown'].forEach(evt => {
+  document.addEventListener(evt, () => { _lastUserActivity = Date.now(); }, { passive: true });
+});
+function isUserIdle() { return Date.now() - _lastUserActivity > 30000; }
+// Poll cadence multiplier: 1× when active, 3× when idle (3× slower)
+function pollGap(activeMs, idleMs) { return isUserIdle() ? idleMs : activeMs; }
+
 let _lastFeedPollAt = 0;
 let _lastNotifPollAt = 0;
 function isStorySurfaceOpen() {
@@ -2617,6 +2629,7 @@ function startPolls() {
     if (State.currentTab !== 'chat') return;
     if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
+    if (isUserIdle()) return; // skip entirely when idle — SSE handles it
     loadMessages(false);
   }, 1500);
   State.pollTimers.typing = setInterval(() => {
@@ -2631,17 +2644,17 @@ function startPolls() {
     if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
     const now = Date.now();
-    const minGap = isFastPolling() ? 1500 : 4000;
+    const minGap = pollGap(isFastPolling() ? 1500 : 4000, 12000);
     if ((now - _lastFeedPollAt) < minGap) return;
     _lastFeedPollAt = now;
-    loadPosts();
+    loadFeed();
   }, 1500);
   // NOTIFICATIONS: same dynamic fast-poll behavior as the feed.
   State.pollTimers.notif = setInterval(() => {
     if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
     const now = Date.now();
-    const minGap = isFastPolling() ? 2000 : 5000;
+    const minGap = pollGap(isFastPolling() ? 2000 : 5000, 15000);
     if ((now - _lastNotifPollAt) < minGap) return;
     _lastNotifPollAt = now;
     pollNotifications();
@@ -2757,7 +2770,7 @@ function handleRealtimeEvent(type, evt) {
     if (!State.posts.some(p => p.id === post.id)) {
       State.posts.unshift(post);
       lastPostsSignature = null; // force next loadPosts() to re-render even if list becomes empty
-      if (State.currentTab === 'feed') renderPosts();
+      if (State.currentTab === 'feed') { loadFeed(); renderPosts(); }
     }
     pollNotifications();
   } else if (type === 'notification') {
@@ -2944,6 +2957,39 @@ async function loadPosts(force = false) {
   return _loadPostsPromise;
 }
 
+// Optimized feed loader — uses the hybrid Turso fan-out endpoint for the
+// main feed view.  Falls back gracefully to /api/posts when Turso is down.
+// State.feedPosts holds the ranked feed; State.posts still holds ALL posts
+// (used by stories rail, profile grid, notifications).
+let _lastFeedLoadedAt = 0;
+let _loadFeedPromise = null;
+async function loadFeed(force = false) {
+  if (_loadFeedPromise) return _loadFeedPromise;
+  if (!force && _lastFeedLoadedAt && (Date.now() - _lastFeedLoadedAt) < 3000 && lastPostsSignature !== null) {
+    return State.feedPosts || State.posts;
+  }
+  _loadFeedPromise = (async () => {
+    try {
+      const data = await api('/feed');
+      const feedPosts = data.posts || [];
+      _lastFeedLoadedAt = Date.now();
+      State.feedPosts = feedPosts;
+      // Merge feed posts into State.posts so stories rail + profile still work
+      const existingIds = new Set(State.posts.map(p => p.id));
+      feedPosts.forEach(p => { if (!existingIds.has(p.id)) State.posts.push(p); });
+      renderPosts();
+      return feedPosts;
+    } catch (_) {
+      // Fallback: if /api/feed fails, loadPosts() covers us
+      if (!State.posts.length) await loadPosts(true);
+      return State.feedPosts || State.posts;
+    } finally {
+      _loadFeedPromise = null;
+    }
+  })();
+  return _loadFeedPromise;
+}
+
 const STORY_TTL_MS = 24 * 60 * 60 * 1000;
 function isStoryRecord(p) {
   if (!p || p.deletedAt) return false;
@@ -2967,7 +3013,9 @@ function hasActiveStory(userId) {
   return !!getLatestStory(userId);
 }
 function getFeedPosts() {
-  return (State.posts || []).filter(p => !isStoryRecord(p));
+  // Use the optimized feed (from /api/feed) when available; fall back to all posts
+  const source = (State.feedPosts && State.feedPosts.length) ? State.feedPosts : State.posts;
+  return source.filter(p => !isStoryRecord(p));
 }
 
 // "Stories" are kept separate from the main feed.
