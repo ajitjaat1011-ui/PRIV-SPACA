@@ -919,7 +919,8 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
   // (uncontended) case while remaining correct under real concurrency.
   if (isNeonConfigured()) {
     const originalData = data;
-    for (let attempt = 0; attempt < 6; attempt++) {
+    const MAX_CAS_ATTEMPTS = 15;
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
       let versioned;
       try {
         versioned = await neonReadDbVersioned();
@@ -941,9 +942,15 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
         return true;
       }
       // Conflict: someone else committed a write between our read and our
-      // write attempt. Small jitter to avoid a thundering-herd retry storm,
-      // then loop and re-read the newest version.
-      if (attempt < 5) await sleepMs(15 + Math.floor(Math.random() * 40));
+      // write attempt. Small randomized jitter (growing slightly with each
+      // attempt) avoids a thundering-herd retry storm while keeping total
+      // added latency low even at the full retry budget — each round trip
+      // is a single fast Postgres query, so 15 attempts is still well
+      // under a second in the worst case, unlike the old GitHub-shaped
+      // retry loop that used multi-second sleeps.
+      if (attempt < MAX_CAS_ATTEMPTS - 1) {
+        await sleepMs(10 + Math.floor(Math.random() * (20 + attempt * 10)));
+      }
     }
     console.error('[saveDatabase:neon] CAS retries exhausted for key=db');
     return false;
