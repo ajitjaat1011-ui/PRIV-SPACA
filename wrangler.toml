@@ -4,21 +4,21 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "."
 
-# Non-secret defaults only. Never put JWT_SECRET / GITHUB_PAT / DATABASE_URL /
+# Non-secret defaults only. Never put JWT_SECRET / GITHUB_PAT / CLOUDINARY_API_SECRET /
 # passwords here — this file is committed to a PUBLIC repo. Set those as
 # encrypted Pages secrets instead:
 #   wrangler pages secret put JWT_SECRET --project-name priv-spaca
 #   wrangler pages secret put GITHUB_PAT --project-name priv-spaca
-#   wrangler pages secret put DATABASE_URL --project-name priv-spaca
+#   wrangler pages secret put CLOUDINARY_CLOUD_NAME --project-name priv-spaca
+#   wrangler pages secret put CLOUDINARY_API_KEY --project-name priv-spaca
+#   wrangler pages secret put CLOUDINARY_API_SECRET --project-name priv-spaca
+# Neon has been removed from this build — do not set DATABASE_URL.
 # (or via the Cloudflare dashboard: Pages project → Settings → Environment variables → Encrypt)
 [vars]
 GH_REPO = "ajitjaat1011-ui/PRIV-SPACA"
 GH_BRANCH = "data"
 GH_FILE = "db.json"
-# Prefer the existing Turso/libSQL database as the zero-cost primary store.
-# This prevents Neon Postgres traffic even if DATABASE_URL remains configured
-# as a rollback secret in Cloudflare Pages.
-PRIMARY_DATABASE = "turso"
+# Turso/libSQL is the only primary store. Neon has been removed.
 ADMIN_USERS = "Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com"
 OWNER_EMAIL = "ajitjaat1011@gmail.com"
 OWNER_USERNAME = "Arvindjaat1011"

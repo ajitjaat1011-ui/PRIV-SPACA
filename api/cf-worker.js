@@ -17,7 +17,7 @@ const _b64decode = (b64) => {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new TextDecoder().decode(bytes);
 };
-import { neon } from '@neondatabase/serverless';
+
 import { createClient as createTursoClient } from '@libsql/client/web';
 
 const app = new Hono();
@@ -25,10 +25,8 @@ const app = new Hono();
 // ---------- Config (refreshed on every request from c.env) ----------
 let JWT_SECRET = 'priv-spaca-dev-secret-change-me';
 let GITHUB_PAT = '';
-let DATABASE_URL = '';
 let TURSO_DATABASE_URL = '';
 let TURSO_AUTH_TOKEN = '';
-let PRIMARY_DATABASE = 'auto'; // auto prefers Turso when configured, then Neon, then GitHub
 let GH_REPO    = 'ajitjaat1011-ui/PRIV-SPACA';
 let GH_BRANCH  = 'data';
 let GH_FILE    = 'db.json';
@@ -39,6 +37,10 @@ let ADMIN_USERS = 'Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.co
 let OWNER_EMAIL = 'ajitjaat1011@gmail.com';
 let OWNER_USERNAME = 'Arvindjaat1011';
 let VIP_UNLOCK_KEY = '';
+let CLOUDINARY_CLOUD_NAME = '';
+let CLOUDINARY_API_KEY = '';
+let CLOUDINARY_API_SECRET = '';
+let CLOUDINARY_FOLDER = 'priv-spaca';
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true; // curl/server/API agents send no Origin
   try {
@@ -72,10 +74,8 @@ function loadConfig(env) {
   // Always overwrite — values can change per-deploy
   if (env.JWT_SECRET) JWT_SECRET = env.JWT_SECRET;
   if (env.GITHUB_PAT) GITHUB_PAT = env.GITHUB_PAT;
-  if (env.DATABASE_URL) DATABASE_URL = String(env.DATABASE_URL).replace(/&amp;/g, '&');
   if (env.TURSO_DATABASE_URL) TURSO_DATABASE_URL = String(env.TURSO_DATABASE_URL).trim();
   if (env.TURSO_AUTH_TOKEN) TURSO_AUTH_TOKEN = String(env.TURSO_AUTH_TOKEN).trim();
-  if (env.PRIMARY_DATABASE || env.PRIMARY_DB) PRIMARY_DATABASE = String(env.PRIMARY_DATABASE || env.PRIMARY_DB || 'auto').trim().toLowerCase();
   if (env.GH_REPO) GH_REPO = env.GH_REPO;
   if (env.GH_BRANCH) GH_BRANCH = env.GH_BRANCH;
   if (env.GH_FILE) GH_FILE = env.GH_FILE;
@@ -86,6 +86,10 @@ function loadConfig(env) {
   if (env.OWNER_EMAIL) OWNER_EMAIL = env.OWNER_EMAIL;
   if (env.OWNER_USERNAME) OWNER_USERNAME = env.OWNER_USERNAME;
   if (env.VIP_UNLOCK_KEY) VIP_UNLOCK_KEY = env.VIP_UNLOCK_KEY;
+  if (env.CLOUDINARY_CLOUD_NAME) CLOUDINARY_CLOUD_NAME = env.CLOUDINARY_CLOUD_NAME;
+  if (env.CLOUDINARY_API_KEY) CLOUDINARY_API_KEY = env.CLOUDINARY_API_KEY;
+  if (env.CLOUDINARY_API_SECRET) CLOUDINARY_API_SECRET = env.CLOUDINARY_API_SECRET;
+  if (env.CLOUDINARY_FOLDER) CLOUDINARY_FOLDER = env.CLOUDINARY_FOLDER;
 }
 
 const JWT_EXPIRES_DAYS = 7;
@@ -110,7 +114,7 @@ const sleepMs = (ms) => new Promise(r => setTimeout(r, ms));
 const uid = (p = 'id') => p + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
 const safeJson = (s, f) => { try { return JSON.parse(s); } catch (_) { return f; } };
 const isRepo = () => !!(GITHUB_PAT && GH_REPO && GH_BRANCH);
-const isPersist = () => isTursoPrimary() || isNeonPrimary() || isRepo();
+const isPersist = () => isTursoPrimary() || isRepo();
 const isEmail = s => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 const isUsername = s => typeof s === 'string' && /^[a-zA-Z0-9_]{3,24}$/.test(s);
 const isPin = s => typeof s === 'string' && /^\d{4}$/.test(s);
@@ -231,133 +235,33 @@ async function requireAdmin(c, next) {
 }
 
 
-// ---------- Neon PostgreSQL JSON storage (primary) ----------
-let _neonSql = null;
-let _neonReady = false;
-function isNeonConfigured() { return !!DATABASE_URL; }
-function primaryMode() {
-  const m = String(PRIMARY_DATABASE || 'auto').trim().toLowerCase();
-  if (['turso', 'libsql', 'sqlite'].includes(m)) return 'turso';
-  if (['neon', 'postgres', 'postgresql'].includes(m)) return 'neon';
-  if (['github', 'repo'].includes(m)) return 'github';
-  return 'auto';
-}
+// ---------- Persistence routing (Turso primary, GitHub fallback) ----------
+// Neon Postgres has been removed from this build. Turso is the only primary
+// store. If Turso is unreachable or not configured, the app falls back to
+// reading/writing the GitHub db.json path. For local dev with neither
+// configured, an in-memory cache is used.
+//
+// The dead Neon stubs below (isNeonPrimary, neonReadDb, etc.) remain so the
+// rest of the file doesn't need additional edits; they all return
+// null/false, so they have no effect on behavior.
 function isTursoPrimary() {
-  if (!isTursoConfigured()) return false;
-  const m = primaryMode();
-  if (m === 'turso') return true;
-  if (m === 'neon' || m === 'github') return false;
-  // Zero-cost default: Turso replaces Neon whenever Turso credentials exist.
-  return true;
+  return isTursoConfigured();
 }
 function isNeonPrimary() {
-  if (!isNeonConfigured()) return false;
-  const m = primaryMode();
-  if (m === 'neon') return true;
-  if (m === 'turso' || m === 'github') return false;
-  return !isTursoConfigured();
+  return false;
 }
 function primaryPersistenceName() {
   if (isTursoPrimary()) return 'turso-libsql-primary';
-  if (isNeonPrimary()) return 'neon-postgres';
   if (isRepo()) return 'github-repo';
   return 'in-memory';
 }
-function neonClient() {
-  if (!_neonSql) _neonSql = neon(DATABASE_URL);
-  return _neonSql;
-}
-async function neonEnsure() {
-  if (!isNeonConfigured()) return false;
-  if (_neonReady) return true;
-  const sql = neonClient();
-  await sql`CREATE TABLE IF NOT EXISTS priv_spaca_kv (
-    key TEXT PRIMARY KEY,
-    value JSONB NOT NULL,
-    version BIGINT NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )`;
-  // Older deployments created this table before the `version` column existed —
-  // add it defensively so upgrades don't require a manual migration step.
-  await sql`ALTER TABLE priv_spaca_kv ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0`.catch(() => {});
-  await sql`CREATE TABLE IF NOT EXISTS priv_spaca_events (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    data JSONB NOT NULL,
-    created_at BIGINT NOT NULL
-  )`.catch(() => {});
-  await sql`CREATE INDEX IF NOT EXISTS idx_events_user_ts ON priv_spaca_events (user_id, created_at)`.catch(() => {});
-  await sql`CREATE INDEX IF NOT EXISTS idx_events_ts ON priv_spaca_events (created_at)`.catch(() => {});
-  await sql`CREATE TABLE IF NOT EXISTS priv_spaca_rate_limits (
-    key TEXT PRIMARY KEY,
-    count INTEGER NOT NULL,
-    reset_at BIGINT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )`.catch(() => {});
-  await sql`CREATE INDEX IF NOT EXISTS idx_rate_limits_reset_at ON priv_spaca_rate_limits (reset_at)`.catch(() => {});
-  const rows = await sql`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
-  if (rows.length === 0) {
-    const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', createdAt: Date.now() } });
-    await sql`INSERT INTO priv_spaca_kv (key, value, version) VALUES ('db', ${JSON.stringify(empty)}::jsonb, 0)
-      ON CONFLICT (key) DO NOTHING`;
-  }
-  _neonReady = true;
-  return true;
-}
-async function neonReadDb() {
-  if (!isNeonConfigured()) return null;
-  await neonEnsure();
-  const rows = await neonClient()`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
-  if (!rows || rows.length === 0) return normalizeDb({});
-  const val = rows[0].value;
-  return typeof val === 'string' ? safeJson(val, normalizeDb({})) : val;
-}
-// Read the db row together with its version counter, for optimistic-
-// concurrency-controlled writes (see neonWriteDbCAS below).
-async function neonReadDbVersioned() {
-  if (!isNeonConfigured()) return null;
-  await neonEnsure();
-  const rows = await neonClient()`SELECT value, version FROM priv_spaca_kv WHERE key = 'db'`;
-  if (!rows || rows.length === 0) return { db: normalizeDb({}), version: 0 };
-  const val = rows[0].value;
-  const db = typeof val === 'string' ? safeJson(val, normalizeDb({})) : val;
-  return { db, version: Number(rows[0].version || 0) };
-}
-async function neonWriteDb(dbObj) {
-  if (!isNeonConfigured()) return false;
-  await neonEnsure();
-  const db = normalizeDb(dbObj);
-  db.meta = { ...(db.meta || {}), storage: 'neon-json-v1', updatedAt: Date.now() };
-  await neonClient()`INSERT INTO priv_spaca_kv (key, value, version, updated_at)
-    VALUES ('db', ${JSON.stringify(db)}::jsonb, 1, NOW())
-    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, version = priv_spaca_kv.version + 1, updated_at = NOW()`;
-  return true;
-}
-// Compare-and-swap write: only succeeds if the row's version still matches
-// `expectedVersion` (i.e. nobody else wrote in between our read and this
-// write). Returns true on success, false on conflict (caller should re-read
-// the latest data, re-apply their change, and retry).
-async function neonWriteDbCAS(dbObj, expectedVersion) {
-  if (!isNeonConfigured()) return false;
-  await neonEnsure();
-  const db = normalizeDb(dbObj);
-  db.meta = { ...(db.meta || {}), storage: 'neon-json-v1', updatedAt: Date.now() };
-  const rows = await neonClient()`UPDATE priv_spaca_kv
-    SET value = ${JSON.stringify(db)}::jsonb, version = version + 1, updated_at = NOW()
-    WHERE key = 'db' AND version = ${expectedVersion}
-    RETURNING version`;
-  return !!(rows && rows.length > 0);
-}
-async function neonResetDb() {
-  if (!isNeonConfigured()) return false;
-  await neonEnsure();
-  const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', resetAt: Date.now() } });
-  await neonWriteDb(empty);
-  localCache = empty;
-  cacheTimestamp = Date.now();
-  return true;
-}
+function neonClient() { return null; }
+async function neonEnsure() { return false; }
+async function neonReadDb() { return null; }
+async function neonReadDbVersioned() { return null; }
+async function neonWriteDb() { return false; }
+async function neonWriteDbCAS() { return false; }
+async function neonResetDb() { return false; }
 
 // ---------- GitHub repo persistence ----------
 
@@ -978,11 +882,9 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
   cacheTimestamp = nowMs();
   if (!isPersist()) return true;
   // The 30s ephemeral-write throttle exists to protect GitHub API rate limits.
-  // Neon Postgres has no such constraint, so skip the throttle when Neon is
-  // the active backend — otherwise heartbeat/typing indicators are silently
-  // dropped almost all the time (they still report {ok:true} to the client,
-  // which is misleading and breaks the "who's typing" / online-status UI).
-  if (isEphemeral && !isNeonPrimary() && !isTursoPrimary()) {
+  // It is skipped when Turso is the active backend — otherwise heartbeat/typing
+  // indicators are silently dropped almost all the time.
+  if (isEphemeral && !isTursoPrimary()) {
     const now = nowMs();
     if (now - lastEphemeralWrite < EPHEMERAL_WRITE_INTERVAL_MS) return true;
     lastEphemeralWrite = now;
@@ -999,28 +901,7 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
     } catch (_) { /* best-effort; ephemeral data, ok to lose occasionally */ }
     return true;
   }
-  if (isEphemeral && isNeonPrimary()) {
-    // Write directly to Neon and await it. We intentionally do NOT use a
-    // fire-and-forget pattern here: Cloudflare Workers can terminate
-    // un-awaited promises as soon as the HTTP response is sent, which was
-    // silently dropping heartbeat/typing writes.
-    //
-    // IMPORTANT: this still uses compare-and-swap, not a blind overwrite.
-    // A blind UPSERT here would risk a stale heartbeat/typing write (these
-    // fire every ~15-20s per active user) silently clobbering a signup,
-    // message, or post that another concurrent request had just committed
-    // a moment earlier. On a CAS conflict we simply drop this particular
-    // ephemeral update (that's an acceptable, expected trade-off for
-    // heartbeat/typing) rather than retrying — losing a heartbeat tick is
-    // harmless; losing another user's data is not.
-    try {
-      const versioned = await neonReadDbVersioned();
-      const merged = mergeDatabase(versioned.db, data);
-      await neonWriteDbCAS(merged, versioned.version);
-    } catch (_) { /* best-effort; ephemeral data, ok to lose occasionally */ }
-    return true;
-  }
-  // ---- Neon fast path: optimistic concurrency control (compare-and-swap) ----
+// ---- Neon fast path: optimistic concurrency control (compare-and-swap) ----
   // The whole app's Neon storage is one JSON blob per row, so any two
   // concurrent mutating requests (e.g. two users signing up at the same
   // moment) can both read the same starting state, each add their own
@@ -1068,44 +949,6 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
     console.error('[saveDatabase:turso] CAS retries exhausted for key=db');
     return false;
   }
-  if (isNeonPrimary()) {
-    const originalData = data;
-    const MAX_CAS_ATTEMPTS = 15;
-    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
-      let versioned;
-      try {
-        versioned = await neonReadDbVersioned();
-      } catch (e) {
-        console.error('[saveDatabase:neon] read failed', e && e.message);
-        return false;
-      }
-      const merged = mergeDatabase(versioned.db, originalData);
-      let ok = false;
-      try {
-        ok = await neonWriteDbCAS(merged, versioned.version);
-      } catch (e) {
-        console.error('[saveDatabase:neon] CAS write failed', e && e.message);
-        return false;
-      }
-      if (ok) {
-        localCache = normalizeDb(merged);
-        cacheTimestamp = nowMs();
-        return true;
-      }
-      // Conflict: someone else committed a write between our read and our
-      // write attempt. Small randomized jitter (growing slightly with each
-      // attempt) avoids a thundering-herd retry storm while keeping total
-      // added latency low even at the full retry budget — each round trip
-      // is a single fast Postgres query, so 15 attempts is still well
-      // under a second in the worst case, unlike the old GitHub-shaped
-      // retry loop that used multi-second sleeps.
-      if (attempt < MAX_CAS_ATTEMPTS - 1) {
-        await sleepMs(10 + Math.floor(Math.random() * (20 + attempt * 10)));
-      }
-    }
-    console.error('[saveDatabase:neon] CAS retries exhausted for key=db');
-    return false;
-  }
   // ---- GitHub Contents API path (legacy / fallback persistence) ----
   // Merge with the newest remote DB before writing. This prevents a later request
   // from overwriting a user/message/post created by an earlier request.
@@ -1142,7 +985,7 @@ async function saveDatabaseVerified(data, verifyFn, attempts = 4, opts = {}) {
   // committed. Re-reading afterwards to "verify" would be redundant, so we
   // just surface saveDatabase()'s result directly. verifyFn is intentionally
   // unused on this path (kept only for signature/call-site compatibility).
-  if (isTursoPrimary() || isNeonPrimary()) {
+  if (isTursoPrimary()) {
     return await saveDatabase(data, false, opts);
   }
   // ---- GitHub Contents API path (legacy / fallback persistence) ----
@@ -1289,27 +1132,9 @@ async function sharedRateLimit({ key, limit, windowMs }) {
       return rateLimit({ key, limit, windowMs });
     }
   }
-  if (!isNeonPrimary()) return rateLimit({ key, limit, windowMs });
-  try {
-    await neonEnsure();
-    const rows = await neonClient()`INSERT INTO priv_spaca_rate_limits AS rl (key, count, reset_at, updated_at)
-      VALUES (${key}, 1, ${nextResetAt}, NOW())
-      ON CONFLICT (key) DO UPDATE SET
-        count = CASE WHEN rl.reset_at <= ${now} THEN 1 ELSE rl.count + 1 END,
-        reset_at = CASE WHEN rl.reset_at <= ${now} THEN ${nextResetAt} ELSE rl.reset_at END,
-        updated_at = NOW()
-      RETURNING count, reset_at`;
-    if (Math.random() < 0.01) {
-      neonClient()`DELETE FROM priv_spaca_rate_limits WHERE reset_at < ${now - (24 * 60 * 60 * 1000)}`.catch(() => {});
-    }
-    const row = rows && rows[0] ? rows[0] : { count: 1, reset_at: nextResetAt };
-    const count = Number(row.count || 0);
-    const resetAt = Number(row.reset_at || nextResetAt);
-    return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetAt };
-  } catch (e) {
-    console.warn('[sharedRateLimit:neon] falling back to in-memory limiter:', e && e.message);
-    return rateLimit({ key, limit, windowMs });
-  }
+  // Neon rate-limit path removed. If we reach here, Turso primary is not set,
+  // so we fall back to the in-memory limiter.
+  return rateLimit({ key, limit, windowMs });
 }
 function clientIp(c) {
   return c.req.header('cf-connecting-ip')
@@ -1407,11 +1232,7 @@ function _pushEvent(userId, kind, data) {
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
       args: [evt.id, userId, kind, JSON.stringify(evt), evt.ts],
     })).catch(() => {});
-  } else if (isNeonPrimary()) {
-    neonClient()`INSERT INTO priv_spaca_events (id, user_id, kind, data, created_at)
-      VALUES (${evt.id}, ${userId}, ${kind}, ${JSON.stringify(evt)}::jsonb, ${evt.ts})
-      ON CONFLICT (id) DO NOTHING`.catch(() => {});
-  }
+  } // Neon events path removed
   return evt;
 }
 function _broadcastEvent(kind, data, excludeUserId) {
@@ -1419,7 +1240,7 @@ function _broadcastEvent(kind, data, excludeUserId) {
     if (userId === excludeUserId) continue;
     _pushEvent(userId, kind, data);
   }
-  if (isTursoPrimary() || isNeonPrimary()) {
+  if (isTursoPrimary()) {
     _pushEvent('__ALL__', kind, data);
   }
 }
@@ -1741,7 +1562,7 @@ app.get('/api/diag', requireAdmin, async (c) => {
       out.canRead = true;
       out.userCount = (db.users || []).length;
       // Do not perform a real write in diagnostics; it can conflict with signup/message saves.
-      out.canWrite = isTursoPrimary() || isNeonPrimary() || !!GITHUB_PAT;
+      out.canWrite = isTursoPrimary() || !!GITHUB_PAT;
     } else if (!isPersist()) {
       out.canRead = true; out.canWrite = true;
       out.userCount = (localCache.users || []).length;
@@ -1902,7 +1723,62 @@ app.get('/api/auth/me', requireAuth, async (c) => {
   return c.json({ user: sanitizeUser(u, true) });
 });
 
-// ---------- Upload photo (to GitHub CDN) ----------
+// ---------- Cloudinary upload helper ----------
+// When CLOUDINARY_* env vars are set, uploads go to Cloudinary (faster, has
+// its own CDN, and avoids burning our GitHub Contents API quota). When not
+// set, we fall back to the GitHub raw-content path that has shipped since
+// day 1. The response shape is identical: { url, persisted }.
+async function sha1Hex(str) {
+  const enc = new TextEncoder();
+  const buf = await crypto.subtle.digest('SHA-1', enc.encode(str));
+  let s = '';
+  for (const b of new Uint8Array(buf)) s += b.toString(16).padStart(2, '0');
+  return s;
+}
+function isCloudinaryConfigured() {
+  return !!(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
+}
+async function uploadToCloudinary(dataUrl, folder, publicId) {
+  // 1) Decode data URL to a binary buffer
+  const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return null;
+  const mime = m[1];
+  const bytes = Uint8Array.from(atob(m[2]), c => c.charCodeAt(0));
+  // 2) Build signed-form params. Cloudinary signature = SHA-1 of
+  //    sorted-key-joined "k=v" pairs + api_secret, all as a single string.
+  const timestamp = Math.floor(Date.now() / 1000);
+  const params = {
+    folder,
+    public_id: publicId,
+    timestamp: String(timestamp),
+    overwrite: 'true',
+  };
+  const toSign = Object.keys(params).sort()
+    .map(k => k + '=' + params[k])
+    .join('&') + CLOUDINARY_API_SECRET;
+  const signature = await sha1Hex(toSign);
+  // 3) Build multipart/form-data
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type: mime }), 'upload');
+  form.append('api_key', CLOUDINARY_API_KEY);
+  form.append('timestamp', String(timestamp));
+  form.append('signature', signature);
+  form.append('folder', folder);
+  form.append('public_id', publicId);
+  form.append('overwrite', 'true');
+  // 4) POST to Cloudinary upload endpoint
+  const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+  const r = await fetch(url, { method: 'POST', body: form });
+  if (!r.ok) {
+    const t = await r.text().catch(() => '');
+    console.error('[cloudinary]', r.status, t.slice(0, 300));
+    return null;
+  }
+  const j = await r.json();
+  return j.secure_url || j.url || null;
+}
+
+// ---------- Upload photo (Cloudinary -> GitHub CDN -> inline fallback) ----------
 app.post('/api/upload-photo', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
@@ -1923,6 +1799,14 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     const safeKind = (kind === 'post' || kind === 'avatar') ? kind : 'media';
     const folder = safeKind === 'avatar' ? 'avatars' : (safeKind === 'post' ? 'posts' : 'media');
     const id = safeKind === 'avatar' ? userId : uid(isVideo ? 'vid' : 'img');
+    // Cloudinary: fastest path, has its own CDN, no GitHub rate-limit cost.
+    if (isCloudinaryConfigured()) {
+      try {
+        const cdn = await uploadToCloudinary(dataUrl, `${CLOUDINARY_FOLDER}/${folder}`, id);
+        if (cdn) return c.json({ url: cdn, persisted: true });
+      } catch (e) { console.warn('[upload] cloudinary failed, falling back to GitHub:', e && e.message); }
+    }
+    // GitHub: legacy fallback. Stable but slow + has rate limits.
     const path = `media/${folder}/${id}.${ext}`;
     if (!isRepo()) return c.json({ url: dataUrl, persisted: false });
     let priorSha = null;
@@ -2937,25 +2821,18 @@ app.get('/api/stream', async (c) => {
       const heartbeat = setInterval(() => { try { send(': ping\n\n'); } catch (_) {} }, 10000);
       let lastSeenTs = Date.now() - 1500;
       const sentIds = new Set();
-      const primaryPoller = (isTursoPrimary() || isNeonPrimary()) ? setInterval(async () => {
+      const primaryPoller = isTursoPrimary() ? setInterval(async () => {
         if (sub.closed) return;
         try {
           let rows = [];
-          if (isTursoPrimary()) {
-            await tursoEnsure();
-            const rs = await tursoClient().execute({
-              sql: `SELECT id, kind, data, created_at FROM ps_events
-                    WHERE (user_id = ? OR user_id = ?) AND created_at > ?
-                    ORDER BY created_at ASC LIMIT 30`,
-              args: [userId, '__ALL__', lastSeenTs],
-            });
-            rows = rs.rows || [];
-          } else if (isNeonPrimary()) {
-            const sql = neonClient();
-            rows = await sql`SELECT id, kind, data, created_at FROM priv_spaca_events
-              WHERE (user_id = ${userId} OR user_id = '__ALL__') AND created_at > ${lastSeenTs}
-              ORDER BY created_at ASC LIMIT 30`;
-          }
+          await tursoEnsure();
+          const rs = await tursoClient().execute({
+            sql: `SELECT id, kind, data, created_at FROM ps_events
+                  WHERE (user_id = ? OR user_id = ?) AND created_at > ?
+                  ORDER BY created_at ASC LIMIT 30`,
+            args: [userId, '__ALL__', lastSeenTs],
+          });
+          rows = rs.rows || [];
           for (const r of rows || []) {
             const ts = Number(r.created_at);
             if (ts > lastSeenTs) lastSeenTs = ts;
@@ -2971,8 +2848,7 @@ data: ${payloadStr}
           }
           if (Math.random() < 0.03) {
             const oldTs = Date.now() - 300_000;
-            if (isTursoPrimary()) tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ?', args: [oldTs] }).catch(() => {});
-            else if (isNeonPrimary()) neonClient()`DELETE FROM priv_spaca_events WHERE created_at < ${oldTs}`.catch(() => {});
+            tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ?', args: [oldTs] }).catch(() => {});
           }
         } catch (_) {}
       }, 1500) : null;
