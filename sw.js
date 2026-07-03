@@ -5,15 +5,15 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v53-search-glass-fix';
+const SW_VERSION = 'priv-spaca-v54-fix-blank-load';
 const STATIC_CACHE = 'priv-spaca-static-' + SW_VERSION;
 const RUNTIME_CACHE = 'priv-spaca-runtime-' + SW_VERSION;
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=53-search-glass-fix',
-  '/app.js?v=53-search-glass-fix',
+  '/style.css?v=54-fix-blank-load',
+  '/app.js?v=54-fix-blank-load',
   '/manifest.json',
 ];
 
