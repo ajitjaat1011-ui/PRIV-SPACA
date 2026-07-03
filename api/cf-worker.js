@@ -96,7 +96,7 @@ const EPHEMERAL_WRITE_INTERVAL_MS = 30000;
 // ---------- In-memory cache + DB ----------
 let localCache = {
   users: [], messages: [], scheduledMessages: [], posts: [], notifications: [],
-  typing: {}, heartbeat: {}, rtcSignals: [], privSnaps: [], privStreaks: [],
+  typing: {}, heartbeat: {}, rtcSignals: [],
 };
 let cacheTimestamp = 0;
 let lastEphemeralWrite = 0;
@@ -130,11 +130,6 @@ function isSafeMediaUrl(url, { allowData = true } = {}) {
   if (/^https?:\/\//i.test(u)) return true;
   if (allowData && /^data:(image|audio|video)\/(jpeg|jpg|png|webp|gif|webm|mp3|mp4|quicktime|mov);base64,[a-z0-9+/=]+$/i.test(u)) return true;
   return false;
-}
-function isSafePrivImageUrl(url) {
-  if (isSafeImageUrl(url)) return true;
-  if (typeof url !== 'string' || url.length > 4000000) return false;
-  return /^data:image\/(jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(url.trim());
 }
 function isSafeImageUrl(url, { allowData = true } = {}) {
   if (typeof url !== 'string') return false;
@@ -207,84 +202,6 @@ function canViewProfileCard(owner, viewerId) {
   return false;
 }
 // A "note" is a short 24h status (Instagram-style). Returns null once expired.
-
-function dayKey(ts = nowMs()) {
-  return new Date(ts).toISOString().slice(0, 10);
-}
-function previousDayKey(key) {
-  const d = new Date(key + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-function privPairId(a, b) {
-  return 'privstreak_' + [a, b].sort().join('_');
-}
-function canViewPrivSnap(snap, viewerId, db) {
-  if (!snap || !viewerId) return false;
-  if (snap.expiresAt && snap.expiresAt <= nowMs()) return false;
-  if (Array.isArray(snap.openedBy) && snap.openedBy.includes(viewerId)) return false;
-  // One-time PRIV: every viewer, including the sender, must be in recipients.
-  if (!Array.isArray(snap.recipients) || !snap.recipients.includes(viewerId)) return false;
-  const author = (db.users || []).find(u => u.id === snap.userId);
-  const viewer = (db.users || []).find(u => u.id === viewerId);
-  // Recipients are computed at send time and are the source of truth. If user
-  // mirrors lag, do not hide the snap; only enforce block checks when both
-  // records are available.
-  if (author && viewer) {
-    if (Array.isArray(author.blocked) && author.blocked.includes(viewerId)) return false;
-    if (Array.isArray(viewer.blocked) && viewer.blocked.includes(author.id)) return false;
-  }
-  return true;
-}
-function privRecipientsFor(user, db, audience) {
-  const ids = new Set();
-  if (!user) return [];
-  if (audience === 'all') {
-    for (const u of db.users || []) {
-      if (u.id === user.id) continue;
-      if (Array.isArray(user.blocked) && user.blocked.includes(u.id)) continue;
-      if (Array.isArray(u.blocked) && u.blocked.includes(user.id)) continue;
-      ids.add(u.id);
-    }
-  } else if (audience === 'mutuals') {
-    for (const u of db.users || []) {
-      if (u.id !== user.id && Array.isArray(user.following) && user.following.includes(u.id) && Array.isArray(u.following) && u.following.includes(user.id)) ids.add(u.id);
-    }
-  } else {
-    for (const id of (Array.isArray(user.closeFriends) ? user.closeFriends : [])) if (id !== user.id) ids.add(id);
-  }
-  return Array.from(ids).filter(id => (db.users || []).some(u => u.id === id));
-}
-function updatePrivStreaks(db, fromId, recipientIds) {
-  db.privStreaks = Array.isArray(db.privStreaks) ? db.privStreaks : [];
-  const today = dayKey();
-  const yesterday = previousDayKey(today);
-  for (const toId of recipientIds || []) {
-    if (!toId || toId === fromId) continue;
-    const id = privPairId(fromId, toId);
-    let row = db.privStreaks.find(s => s.id === id);
-    if (!row) {
-      row = { id, users: [fromId, toId].sort(), count: 0, lastDay: '', lastBy: {}, updatedAt: nowMs() };
-      db.privStreaks.push(row);
-    }
-    row.lastBy = row.lastBy && typeof row.lastBy === 'object' ? row.lastBy : {};
-    row.lastBy[fromId] = today;
-    const otherId = row.users.find(x => x !== fromId);
-    if (row.lastBy[otherId] === today && row.lastDay !== today) {
-      row.count = row.lastDay === yesterday ? Number(row.count || 0) + 1 : 1;
-      row.lastDay = today;
-    }
-    row.updatedAt = nowMs();
-  }
-}
-function streakForPair(db, a, b) {
-  const row = (db.privStreaks || []).find(s => s.id === privPairId(a, b));
-  if (!row) return { count: 0 };
-  const today = dayKey(), yesterday = previousDayKey(today);
-  const active = row.lastDay === today || row.lastDay === yesterday;
-  return { count: active ? Number(row.count || 0) : 0, lastDay: row.lastDay || '' };
-}
-
 function activeNote(u) {
   const n = u && u.note;
   if (!n || (!n.text && !n.music)) return null;
@@ -347,7 +264,7 @@ async function neonEnsure() {
   await sql`CREATE INDEX IF NOT EXISTS idx_rate_limits_reset_at ON priv_spaca_rate_limits (reset_at)`.catch(() => {});
   const rows = await sql`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
   if (rows.length === 0) {
-    const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], privSnaps: [], privStreaks: [], meta: { storage: 'neon-json-v1', createdAt: Date.now() } });
+    const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', createdAt: Date.now() } });
     await sql`INSERT INTO priv_spaca_kv (key, value) VALUES ('db', ${JSON.stringify(empty)}::jsonb)`;
   }
   _neonReady = true;
@@ -374,7 +291,7 @@ async function neonWriteDb(dbObj) {
 async function neonResetDb() {
   if (!isNeonConfigured()) return false;
   await neonEnsure();
-  const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], privSnaps: [], privStreaks: [], meta: { storage: 'neon-json-v1', resetAt: Date.now() } });
+  const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', resetAt: Date.now() } });
   await neonWriteDb(empty);
   localCache = empty;
   cacheTimestamp = Date.now();
@@ -473,12 +390,6 @@ function runScheduler(db) {
     db.rtcSignals = db.rtcSignals.filter(x => x && (!x.expiresAt || x.expiresAt > now));
     if (db.rtcSignals.length !== beforeRtc) changed = true;
   } else { db.rtcSignals = []; changed = true; }
-  if (Array.isArray(db.privSnaps)) {
-    const beforePriv = db.privSnaps.length;
-    db.privSnaps = db.privSnaps.filter(x => x && (!x.expiresAt || x.expiresAt > now));
-    if (db.privSnaps.length !== beforePriv) changed = true;
-  } else { db.privSnaps = []; changed = true; }
-  if (!Array.isArray(db.privStreaks)) { db.privStreaks = []; changed = true; }
   if (!Array.isArray(db.scheduledMessages) || db.scheduledMessages.length === 0) return changed;
   const due = [], remaining = [];
   for (const sm of db.scheduledMessages) {
@@ -511,8 +422,6 @@ function normalizeDb(remote) {
     typing: r.typing && typeof r.typing === 'object' ? r.typing : {},
     heartbeat: r.heartbeat && typeof r.heartbeat === 'object' ? r.heartbeat : {},
     rtcSignals: Array.isArray(r.rtcSignals) ? r.rtcSignals : [],
-    privSnaps: Array.isArray(r.privSnaps) ? r.privSnaps : [],
-    privStreaks: Array.isArray(r.privStreaks) ? r.privStreaks : [],
     meta: r.meta && typeof r.meta === 'object' ? r.meta : {},
   };
 }
@@ -543,8 +452,6 @@ function mergeDatabase(remoteRaw, localRaw) {
     posts: mergeById(remote.posts, local.posts),
     notifications: mergeById(remote.notifications, local.notifications),
     rtcSignals: mergeById(remote.rtcSignals, local.rtcSignals).slice(-200),
-    privSnaps: mergeById(remote.privSnaps, local.privSnaps).slice(-500),
-    privStreaks: mergeById(remote.privStreaks, local.privStreaks).slice(-1000),
     typing: mergeMaps(remote.typing, local.typing),
     heartbeat: mergeMaps(remote.heartbeat, local.heartbeat),
     meta: { ...remote.meta, ...local.meta, updatedAt: nowMs(), storage: 'github-merge-v3' },
@@ -2615,72 +2522,6 @@ app.post('/api/stories/:id/reply', requireAuth, async (c) => {
     await tursoRefreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean));
   }
   return c.json({ ok: true, message: enriched });
-});
-
-
-// ---------- PRIV Instants + Streaks ----------
-app.get('/api/priv', requireAuth, async (c) => {
-  const myId = c.get('userId');
-  const db = await fetchDatabase({ fresh: true });
-  const visible = (db.privSnaps || [])
-    .filter(s => canViewPrivSnap(s, myId, db))
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-    .slice(0, 30)
-    .map(s => {
-      const author = (db.users || []).find(u => u.id === s.userId);
-      return { ...s, author: sanitizeUser(author), openedByMe: Array.isArray(s.openedBy) && s.openedBy.includes(myId), streak: s.userId === myId ? { count: 0 } : streakForPair(db, myId, s.userId) };
-    });
-  const streaks = (db.privStreaks || []).filter(x => Array.isArray(x.users) && x.users.includes(myId)).map(x => ({ id: x.id, users: x.users, count: streakForPair(db, x.users[0], x.users[1]).count, lastDay: x.lastDay || '' }));
-  return c.json({ snaps: visible, streaks, now: nowMs() });
-});
-app.post('/api/priv/send', requireAuth, async (c) => {
-  try {
-    const body = await c.req.json().catch(() => ({}));
-    const imageUrl = String(body.imageUrl || '').trim();
-    const audience = body.audience === 'mutuals' ? 'mutuals' : 'all';
-    const caption = sanitizeText(body.caption || '', 120).trim();
-    if (!isSafePrivImageUrl(imageUrl)) return c.json({ error: 'Valid image required' }, 400);
-    const db = await fetchDatabase({ fresh: true });
-    const me = (db.users || []).find(u => u.id === c.get('userId'));
-    if (!me) return c.json({ error: 'Not found' }, 404);
-    const recipients = privRecipientsFor(me, db, audience);
-    const recipientsWithSelf = Array.from(new Set([me.id, ...recipients]));
-    db.privSnaps = Array.isArray(db.privSnaps) ? db.privSnaps : [];
-    // One active PRIV per user: tombstone previous active instants from me so
-    // merge-write cannot resurrect them from a remote snapshot.
-    for (const oldSnap of db.privSnaps) {
-      if (oldSnap && oldSnap.userId === me.id && !oldSnap.deletedAt) {
-        oldSnap.deletedAt = nowMs();
-        oldSnap.expiresAt = nowMs() - 1;
-        oldSnap.recipients = [];
-      }
-    }
-    const snap = { id: uid('priv'), userId: me.id, imageUrl, caption, audience, recipients: recipientsWithSelf, openedBy: [], createdAt: nowMs(), expiresAt: null };
-    db.privSnaps.push(snap);
-    updatePrivStreaks(db, me.id, recipients);
-    await saveDatabase(db, false);
-    return c.json({ ok: true, snap, recipients: recipients.length });
-  } catch (e) { console.error('[priv/send]', e); return c.json({ error: 'PRIV send failed' }, 500); }
-});
-app.post('/api/priv/open', requireAuth, async (c) => {
-  const { snapId } = await c.req.json().catch(() => ({}));
-  if (!snapId) return c.json({ error: 'snapId required' }, 400);
-  const db = await fetchDatabase({ fresh: true });
-  const snap = (db.privSnaps || []).find(s => s.id === snapId);
-  if (!snap || !canViewPrivSnap(snap, c.get('userId'), db)) return c.json({ error: 'Not found' }, 404);
-  const viewerId = c.get('userId');
-  snap.openedBy = Array.isArray(snap.openedBy) ? snap.openedBy : [];
-  if (!snap.openedBy.includes(viewerId)) snap.openedBy.push(viewerId);
-  snap.recipients = Array.isArray(snap.recipients) ? snap.recipients.filter(id => id !== viewerId) : [];
-  const deleted = snap.recipients.length === 0;
-  if (deleted) {
-    // Keep a tombstone through the merge-write path so the old row is not
-    // resurrected by mergeById(), then scheduler purges it on next read.
-    snap.deletedAt = nowMs();
-    snap.expiresAt = nowMs() - 1;
-  }
-  await saveDatabase(db, false);
-  return c.json({ ok: true, deleted });
 });
 
 // ---------- Admin panel removed by owner request ----------
