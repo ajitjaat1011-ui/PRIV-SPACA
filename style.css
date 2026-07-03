@@ -160,317 +160,353 @@ img{user-select:none;-webkit-user-drag:none}
 .logo-pulse{animation:logo-pulse 2.4s ease-in-out infinite}
 .plane-anim{animation:plane-anim .7s cubic-bezier(.2,.8,.2,1) both}
 
-/* ===== Auth Shell — soft pastel (no glass) ===== */
+/* ===== Auth Shell — Instagram-style, liquid glass accents ===== */
 .auth-shell{
   position:fixed;inset:0;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  /* Soft pastel gradient backdrop */
-  background:linear-gradient(160deg, #d6e4ff 0%, #e8d6ff 50%, #ffd6e8 100%);
-  padding:24px 16px;
+  display:flex;flex-direction:column;
+  /* Soft pastel background, like the Instagram login screen but with our
+     blue→purple→pink gradient. The glass card will subtly reflect this. */
+  background:
+    radial-gradient(1200px 700px at 80% -10%, rgba(0,162,255,.18), transparent 60%),
+    radial-gradient(1000px 600px at -10% 110%, rgba(195,75,255,.14), transparent 60%),
+    radial-gradient(600px 400px at 90% 90%, rgba(255,120,200,.10), transparent 60%),
+    linear-gradient(160deg, #d6e4ff 0%, #e8d6ff 50%, #ffd6e8 100%);
   animation:fade-in .4s ease;
   overflow-y:auto;
-  gap:14px;
+  overflow-x:hidden;
 }
 [data-theme="dark"] .auth-shell,
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]) .auth-shell{
-    background:linear-gradient(160deg, #1a1838 0%, #1d1240 50%, #321230 100%);
+    background:
+      radial-gradient(1200px 700px at 80% -10%, rgba(0,162,255,.18), transparent 60%),
+      radial-gradient(1000px 600px at -10% 110%, rgba(195,75,255,.14), transparent 60%),
+      radial-gradient(600px 400px at 90% 90%, rgba(255,120,200,.10), transparent 60%),
+      linear-gradient(160deg, #0d1828 0%, #14172a 50%, #1a1224 100%);
   }
 }
 
-/* Top back button — sits above the card, on the page background */
+/* Top bar: just a back arrow on the left, no card around it (IG-style) */
+.auth-topbar{
+  display:flex;align-items:center;
+  padding:14px 16px;
+  flex-shrink:0;
+  z-index:2;
+}
 .auth-top-back{
-  display:inline-flex;align-items:center;gap:6px;
-  align-self:center;
-  background:#ffffff;color:#5a4a8a;
-  border:0;cursor:pointer;
-  font-size:13px;font-weight:700;letter-spacing:.2px;
-  padding:10px 18px 10px 14px;border-radius:999px;
-  box-shadow:0 4px 14px -4px rgba(120,80,200,0.35), 0 1px 3px rgba(20,30,40,0.08);
-  transition:transform .15s ease, box-shadow .2s ease, background .15s;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:transparent;border:0;cursor:pointer;
+  color:var(--text);
+  width:44px;height:44px;border-radius:50%;
+  transition:background .15s, transform .15s;
 }
 .auth-top-back:hover{
-  transform:translateY(-1px);
-  background:#f5e9ff;color:#3d1a8a;
-  box-shadow:0 6px 18px -4px rgba(120,80,200,0.50), 0 2px 4px rgba(20,30,40,0.10);
+  background:rgba(255,255,255,0.45);
+  transform:translateX(-2px);
 }
-.auth-top-back:active{transform:translateY(0)}
-.auth-top-back svg{transition:transform .2s ease}
-.auth-top-back:hover svg{transform:translateX(-2px)}
+.auth-top-back:active{transform:translateX(-3px) scale(0.96)}
 [data-theme="dark"] .auth-top-back,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .auth-top-back{
-    background:#2a2240;color:#e8e0ff;
-  }
-  :root:not([data-theme="light"]) .auth-top-back:hover{
-    background:#352848;color:#fff;
-  }
+  :root:not([data-theme="light"]) .auth-top-back{color:#f5f8fb}
+  :root:not([data-theme="light"]) .auth-top-back:hover{background:rgba(255,255,255,0.08)}
 }
 
-.auth-card{
-  width:100%;max-width:440px;
-  /* Solid white card, no transparency, no blur */
-  background:#ffffff;
-  border-radius:24px;
-  padding:28px 26px 24px;
-  box-shadow:
-    0 18px 50px -12px rgba(120,80,200,0.30),
-    0 6px 18px -6px rgba(80,40,160,0.18),
-    0 1px 3px rgba(20,30,40,0.04);
-  animation:text-anim .6s cubic-bezier(.2,.8,.2,1) both;
-  position:relative;
-  overflow:hidden;
-}
-[data-theme="dark"] .auth-card,
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .auth-card{
-    background:#1f1b2e;
-    box-shadow:
-      0 18px 50px -12px rgba(0,0,0,0.7),
-      0 6px 18px -6px rgba(0,0,0,0.5);
-  }
+/* Main content area */
+.auth-main{
+  flex:1;
+  display:flex;flex-direction:column;align-items:center;
+  padding:0 24px;
+  max-width:440px;
+  width:100%;
+  margin:0 auto;
 }
 
-.auth-brand{
-  display:flex;align-items:center;gap:14px;margin-bottom:22px;
-  position:relative;z-index:1;
+/* App icon: large, centered, with a liquid-glass ring */
+.auth-icon-wrap{
+  display:flex;flex-direction:column;align-items:center;gap:18px;
+  margin:24px 0 36px;
 }
 .logo-badge{
-  width:56px;height:56px;border-radius:18px;
-  /* Soft pastel gradient — no glass, no conic ring */
-  background:linear-gradient(135deg,#ff7ab8 0%,#c33dff 50%,#5b8bff 100%);
-  display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;
-  box-shadow:0 8px 22px -6px rgba(195,75,255,0.45);
+  width:96px;height:96px;border-radius:24px;
+  /* Iridescent conic-gradient ring (the glass "border") */
+  position:relative;
+  display:flex;align-items:center;justify-content:center;
+  padding:3px;
+  background:
+    conic-gradient(from 220deg,
+      #ff7ab8 0%,#ffa86a 18%,#ffd23f 30%,#7ee0a8 48%,
+      #5b8bff 66%,#c33dff 84%,#ff5e9c 100%);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.4),
+    0 16px 40px -8px rgba(195,75,255,0.55);
+  animation:logo-pulse 2.4s ease-in-out infinite;
 }
-.logo-badge svg{animation:plane-anim .7s cubic-bezier(.2,.8,.2,1) both}
+.logo-badge::before{
+  /* The actual icon face — glassy fill so the ring reads as a bezel */
+  content:"";position:absolute;inset:3px;border-radius:21px;
+  background:linear-gradient(160deg,rgba(255,255,255,0.65) 0%,rgba(255,255,255,0.25) 100%);
+  -webkit-backdrop-filter:blur(14px) saturate(200%);
+  backdrop-filter:blur(14px) saturate(200%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.85);
+  z-index:0;
+}
+.logo-badge > *{position:relative;z-index:1}
+.brand-name{
+  font-size:30px;font-weight:800;letter-spacing:-.5px;margin:0;
+  text-align:center;
+  background:linear-gradient(120deg,#ff7ab8 0%,#ff3d77 30%,#c33dff 60%,#5b8bff 100%);
+  background-size:200% 200%;
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+  animation:brandShift 6s ease-in-out infinite;
+  filter:drop-shadow(0 2px 8px rgba(195,75,255,0.25));
+}
+@keyframes brandShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+.brand-tag{display:none} /* we don't show the tagline on the IG-style screen */
 .logo-badge.sm{width:34px;height:34px;border-radius:10px;box-shadow:0 4px 12px rgba(0,162,255,.28)}
-.brand-name{font-size:24px;font-weight:800;letter-spacing:-.3px;margin:0;color:#1a2733}
-.brand-name.sm{font-size:16px;letter-spacing:.2px}
-.brand-tag{margin:2px 0 0;font-size:13px;color:#8696a3}
 
-/* === Auth panels container === */
-.auth-panels{
-  position:relative;z-index:1;
-  animation:fade-in .25s ease both;
-}
+/* Panel container (one form visible at a time) */
+.auth-panels{width:100%}
 .auth-panel{
   display:flex;flex-direction:column;
   animation:text-anim .35s cubic-bezier(.2,.8,.2,1) both;
+  width:100%;
 }
-.auth-back{
-  display:inline-flex;align-items:center;gap:6px;
+
+/* In-panel back arrow (only on signup / reset) */
+.ig-back{
+  display:inline-flex;align-items:center;justify-content:center;
   align-self:flex-start;
   background:transparent;border:0;cursor:pointer;
-  color:#8696a3;font-size:13px;font-weight:600;
-  padding:6px 10px 6px 4px;border-radius:10px;
-  margin:0 0 4px -4px;
-  transition:color .15s, background .15s, transform .15s;
+  color:var(--text);
+  width:40px;height:40px;border-radius:50%;
+  margin:0 0 8px -4px;
+  transition:background .15s, transform .15s;
 }
-.auth-back:hover{color:#1a2733;background:rgba(120,80,200,0.08)}
-.auth-back:active{transform:translateX(-1px)}
-.auth-back svg{transition:transform .2s ease}
-.auth-back:hover svg{transform:translateX(-2px)}
-.auth-panel-title{
-  font-size:20px;font-weight:800;color:#1a2733;
-  letter-spacing:-.4px;margin:2px 0 4px;
-}
-.auth-panel-sub{
-  font-size:13px;color:#8696a3;margin:0 0 18px;line-height:1.5;
-}
-[data-theme="dark"] .brand-name,
-[data-theme="dark"] .auth-panel-title{
-  color:#f5f8fb;
-}
-[data-theme="dark"] .brand-tag,
-[data-theme="dark"] .auth-panel-sub{
-  color:#9aa8b6;
-}
-[data-theme="dark"] .auth-back,
+.ig-back:hover{background:rgba(255,255,255,0.45);transform:translateX(-2px)}
+.ig-back:active{transform:translateX(-3px) scale(0.96)}
+[data-theme="dark"] .ig-back,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .auth-back{color:#9aa8b6}
-  :root:not([data-theme="light"]) .auth-back:hover{color:#fff;background:rgba(255,255,255,0.06)}
+  :root:not([data-theme="light"]) .ig-back{color:#f5f8fb}
+  :root:not([data-theme="light"]) .ig-back:hover{background:rgba(255,255,255,0.08)}
 }
 
-/* === Secondary actions: shown on the sign-in panel === */
-.auth-secondary{
-  display:flex;flex-direction:column;gap:10px;
-  margin-top:18px;padding-top:18px;
-  border-top:1.5px dashed #edf1f5;
-  position:relative;z-index:1;
+.auth-eyebrow{
+  text-align:center;color:var(--muted);font-size:13.5px;line-height:1.5;
+  margin:0 0 22px;font-weight:500;
 }
-[data-theme="dark"] .auth-secondary,
+[data-theme="dark"] .auth-eyebrow,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .auth-secondary{border-top:1.5px dashed #243245}
-}
-.auth-secondary-btn{
-  display:flex;align-items:center;gap:14px;
-  width:100%;
-  padding:12px 14px;
-  border-radius:16px;
-  border:0;cursor:pointer;
-  text-align:left;
-  transition:transform .15s ease, box-shadow .2s ease, background .2s ease;
-  /* Soft pastel surface */
-  background:#f4eaff;color:#1a2733;
-  box-shadow:0 2px 0 #e6d8f5 inset, 0 4px 12px -4px rgba(120,80,200,0.20);
-}
-.auth-secondary-btn:hover{
-  transform:translateY(-1px);
-  background:#ecd9ff;
-  box-shadow:0 2px 0 #d9c5f0 inset, 0 8px 18px -4px rgba(120,80,200,0.32);
-}
-.auth-secondary-btn:active{transform:translateY(0) scale(.99)}
-/* "Join now" button gets a special highlight + 'Join now' badge */
-.auth-secondary-primary{
-  background:linear-gradient(135deg,#ffd6f0 0%,#d6e4ff 100%);
-  box-shadow:0 2px 0 rgba(255,255,255,0.85) inset, 0 6px 16px -4px rgba(195,75,255,0.30);
-}
-.auth-secondary-primary:hover{
-  background:linear-gradient(135deg,#ffc8ec 0%,#c8d8ff 100%);
-  box-shadow:0 2px 0 rgba(255,255,255,0.95) inset, 0 10px 22px -4px rgba(195,75,255,0.42);
-}
-.join-badge{
-  display:inline-flex;align-items:center;
-  padding:5px 11px;border-radius:999px;
-  background:linear-gradient(135deg,#c33dff 0%,#5b8bff 100%);
-  color:#fff;font-size:11.5px;font-weight:800;letter-spacing:.5px;
-  text-transform:uppercase;
-  box-shadow:0 2px 6px rgba(120,80,200,0.45), 0 1px 0 rgba(255,255,255,0.35) inset;
-  flex-shrink:0;
-}
-.auth-secondary-ic{
-  width:38px;height:38px;flex-shrink:0;border-radius:12px;
-  display:flex;align-items:center;justify-content:center;
-  background:#e8dcf5;color:#5a4a8a;
-  box-shadow:0 1px 0 rgba(255,255,255,0.85) inset;
-}
-.auth-secondary-text{
-  display:flex;flex-direction:column;flex:1;min-width:0;line-height:1.25;
-}
-.auth-secondary-text strong{font-size:14.5px;font-weight:800;color:#1a2733;letter-spacing:-.2px}
-.auth-secondary-text small{font-size:12px;color:#8696a3;font-weight:500;margin-top:1px}
-.auth-secondary-chev{
-  font-size:20px;font-weight:700;color:#8696a3;
-  transition:transform .2s ease, color .2s ease;
-}
-.auth-secondary-btn:hover .auth-secondary-chev{transform:translateX(2px);color:#5a4a8a}
-[data-theme="dark"] .auth-secondary-btn{
-  background:#272238;color:#f5f8fb;
-  box-shadow:0 2px 0 #1d1830 inset, 0 4px 12px -4px rgba(0,0,0,0.5);
-}
-[data-theme="dark"] .auth-secondary-primary,
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .auth-secondary-primary{
-    background:linear-gradient(135deg,#3a1d4d 0%,#1d2c4d 100%);
-    box-shadow:0 2px 0 rgba(255,255,255,0.10) inset, 0 6px 16px -4px rgba(0,0,0,0.6);
-  }
-}
-[data-theme="dark"] .auth-secondary-text strong,
-[data-theme="dark"] .auth-secondary-ic,
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .auth-secondary-ic{background:#1a152a;color:#cdb4ff}
-  :root:not([data-theme="light"]) .auth-secondary-text strong{color:#f5f8fb}
-  :root:not([data-theme="light"]) .auth-secondary-text small{color:#9aa8b6}
+  :root:not([data-theme="light"]) .auth-eyebrow{color:#c3ccd6}
 }
 
-.auth-form{display:none;flex-direction:column;gap:14px;animation:text-anim .35s cubic-bezier(.2,.8,.2,1) both}
-.auth-form.active{display:flex}
-.field{display:flex;flex-direction:column;gap:7px}
-.field>span{font-size:11px;font-weight:700;color:#8696a3;letter-spacing:.6px;text-transform:uppercase}
+/* === Form === */
+.auth-form{display:flex;flex-direction:column;gap:12px;width:100%}
+.field{display:flex;flex-direction:column;gap:6px}
+.field>span{display:none} /* IG-style hides the label */
+.ig-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* The pill input — IG style: tall, fully rounded, light grey fill,
+   dark border on focus. We add a subtle frosted highlight on the
+   inner top edge so it has a glass feel. */
 .field input, .field textarea{
   width:100%;
-  /* Soft solid input — no glass, no transparency */
-  border:1.5px solid #dde5ec;
-  background:#fbfdff;
-  padding:12px 14px;border-radius:12px;font-size:14.5px;color:#1a2733;
-  font-family:inherit;outline:none;
+  border:1px solid #dde5ec;
+  background:#fafafa;
+  color:var(--text);
+  font-family:inherit;
+  outline:none;
+  font-size:14px;
+  /* default — but the .ig-pill override below is what most inputs use */
+  padding:12px 14px;border-radius:10px;
   transition:border-color .15s, box-shadow .15s, background .15s;
-  box-shadow:0 1px 2px rgba(20,30,40,0.02);
 }
 .field input:focus, .field textarea:focus{
-  border-color:#00a2ff;
+  border-color:#1a2733;
   background:#fff;
-  box-shadow:0 0 0 4px rgba(0,162,255,0.12), 0 1px 2px rgba(20,30,40,0.04);
 }
-.field input::placeholder, .field textarea::placeholder{color:#b4c0cc}
-[data-theme="dark"] .field input,
-[data-theme="dark"] .field textarea,
+.field input::placeholder, .field textarea::placeholder{color:#8696a3;font-size:14px}
+
+/* IG-style pill: tall, fully rounded, light fill */
+.ig-pill input{
+  border:1px solid #dbdbdb;
+  background:#fafafa;
+  padding:15px 14px;
+  border-radius:12px;
+  font-size:14px;
+}
+.ig-pill input:focus{
+  border-color:#1a2733;
+  background:#fff;
+}
+[data-theme="dark"] .ig-pill input,
+[data-theme="dark"] .ig-pill textarea,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .field input,
-  :root:not([data-theme="light"]) .field textarea{
-    background:#181428;
-    border:1.5px solid #2e3e54;
+  :root:not([data-theme="light"]) .ig-pill input{
+    background:#1c1c1c;
+    border:1px solid #363636;
     color:#f5f8fb;
   }
-  :root:not([data-theme="light"]) .field input:focus,
-  :root:not([data-theme="light"]) .field textarea:focus{
-    background:#1d1830;
+  :root:not([data-theme="light"]) .ig-pill input:focus{
+    background:#252525;
     border-color:#5b8bff;
   }
-  :root:not([data-theme="light"]) .field>span{color:#9aa8b6}
 }
-.row-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.primary-btn{
-  /* Pastel gradient button — solid, no glass */
-  background:linear-gradient(135deg, #00a2ff 0%, #5b8bff 50%, #c33dff 100%);
-  color:#fff;border:0;padding:13px 18px;border-radius:14px;font-weight:800;
-  cursor:pointer;font-size:14px;letter-spacing:.2px;
-  transition:transform .15s, box-shadow .2s, filter .15s;
+
+/* Solid primary "Log in" button — IG-style, no gradient, no glass */
+.ig-primary{
+  background:#0095f6;
+  color:#fff;border:0;
+  padding:14px 18px;border-radius:12px;
+  font-weight:700;font-size:14.5px;letter-spacing:.2px;
+  cursor:pointer;
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.35) inset,
-    0 8px 20px rgba(0,100,220,0.35);
-  text-shadow:0 1px 1px rgba(0,40,90,0.25);
+  margin-top:6px;
+  box-shadow:0 2px 0 rgba(0,0,0,0.04);
+  transition:background .15s, transform .1s;
 }
-.primary-btn:hover{
-  filter:brightness(1.06);
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.45) inset,
-    0 12px 28px rgba(0,100,220,0.50);
-  transform:translateY(-1px);
+.ig-primary:hover{background:#1877f2}
+.ig-primary:active{transform:scale(0.99)}
+.ig-primary:disabled{opacity:.5;cursor:not-allowed}
+.ig-primary .spinner{
+  width:14px;height:14px;border:2px solid rgba(255,255,255,.4);
+  border-top-color:#fff;border-radius:50%;animation:spinner .6s linear infinite;
 }
-.primary-btn:active{transform:translateY(0)}
-.primary-btn.sm{padding:9px 14px;font-size:13px;border-radius:10px}
-.primary-btn:disabled{opacity:.6;cursor:not-allowed;filter:none;transform:none}
-.primary-btn .spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spinner .6s linear infinite}
-.auth-hint{font-size:12px;color:#8696a3;margin:0;text-align:center;line-height:1.5}
-.auth-error{color:#ed4956;font-size:13px;font-weight:500;min-height:18px;text-align:center}
-.auth-footer{margin-top:20px;color:#8696a3;font-size:12px}
-[data-theme="dark"] .auth-hint,
-[data-theme="dark"] .auth-footer,
+[data-theme="dark"] .ig-primary{
+  background:#0095f6;
+}
+[data-theme="dark"] .ig-primary:hover{
+  background:#1877f2;
+}
+
+/* "Forgotten password?" link — center, plain text */
+.ig-link{
+  background:transparent;border:0;cursor:pointer;
+  color:#00376b;font-size:13.5px;font-weight:600;
+  text-align:center;
+  padding:14px 0 4px;margin:0;
+  align-self:center;
+}
+.ig-link:hover{color:#0095f6}
+[data-theme="dark"] .ig-link,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .auth-hint,
-  :root:not([data-theme="light"]) .auth-footer{color:#9aa8b6}
+  :root:not([data-theme="light"]) .ig-link{color:#e0f1ff}
+  :root:not([data-theme="light"]) .ig-link:hover{color:#ffffff}
 }
+
+/* PIN block (signup / reset) */
+.ig-pin-block{
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  padding:8px 0 4px;
+}
+.ig-pin-hint{
+  font-size:12.5px;color:var(--muted);margin:0;text-align:center;line-height:1.4;
+}
+[data-theme="dark"] .ig-pin-hint,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .ig-pin-hint{color:#9aa8b6}
+}
+
+.row-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+/* Terms & conditions row */
+.terms-row{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted);margin:6px 0 0;line-height:1.45;cursor:pointer}
+.terms-row input[type=checkbox]{width:16px;height:16px;margin-top:2px;flex-shrink:0;accent-color:var(--accent);cursor:pointer}
+.terms-link{background:transparent;border:0;padding:0;color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline;font-size:12.5px}
+.terms-link:hover{color:var(--accent-2)}
+
+/* Error / hint text */
+.auth-hint{font-size:12px;color:var(--muted);margin:0;text-align:center;line-height:1.5}
+.auth-error{color:#ed4956;font-size:13px;font-weight:500;min-height:18px;text-align:center;margin:0}
+[data-theme="dark"] .auth-hint,
+@media (prefers-color-scheme dark){
+  :root:not([data-theme="light"]) .auth-hint{color:#9aa8b6}
+}
+
+/* === Bottom: "Don't have an account? [Create new account]" (IG-style) === */
+.auth-bottom{
+  flex-shrink:0;
+  margin-top:auto;
+  padding:18px 16px 28px;
+  display:flex;flex-direction:column;align-items:center;gap:14px;
+  /* Subtle frosted separator at the top */
+  position:relative;
+  z-index:1;
+}
+.auth-bottom::before{
+  content:"";position:absolute;left:0;right:0;top:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(20,30,40,0.12),transparent);
+}
+[data-theme="dark"] .auth-bottom::before,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .auth-bottom::before{
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,0.12),transparent);
+  }
+}
+.auth-bottom-text{
+  font-size:13.5px;color:var(--muted);margin:0;text-align:center;
+  font-weight:500;
+}
+[data-theme="dark"] .auth-bottom-text,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .auth-bottom-text{color:#9aa8b6}
+}
+.auth-bottom-text a,
+.auth-bottom-text button.ig-link{color:#00376b;font-weight:600;background:transparent;border:0;padding:0;cursor:pointer;font-size:inherit;text-decoration:none}
+.auth-bottom-text a:hover,
+.auth-bottom-text button.ig-link:hover{color:#0095f6}
+
+/* "Create new account" outlined button (IG-style) */
+.ig-outline{
+  background:transparent;
+  color:#0095f6;
+  border:1.5px solid #0095f6;
+  padding:11px 22px;
+  border-radius:10px;
+  font-weight:700;font-size:14px;letter-spacing:.2px;
+  cursor:pointer;
+  transition:background .15s, color .15s, transform .1s;
+}
+.ig-outline:hover{
+  background:rgba(0,149,246,0.08);
+}
+.ig-outline:active{transform:scale(0.99)}
+[data-theme="dark"] .ig-outline,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .ig-outline{color:#e0f1ff;border-color:#e0f1ff}
+  :root:not([data-theme="light"]) .ig-outline:hover{background:rgba(255,255,255,0.06)}
+}
+
 /* PIN segmented input */
 .pin-input{
   display:flex;gap:10px;justify-content:center;
 }
 .pin-input input{
-  width:52px;height:60px;text-align:center;font-size:24px;font-weight:700;
-  border:2px solid #dde5ec;border-radius:14px;
-  background:#fbfdff;color:#1a2733;
+  width:54px;height:60px;text-align:center;font-size:22px;font-weight:700;
+  border:1.5px solid #dbdbdb;border-radius:10px;
+  background:#fafafa;color:#1a2733;
   font-family:inherit;transition:all .15s;letter-spacing:0;
-  box-shadow:0 1px 2px rgba(20,30,40,0.02);
+  outline:none;
 }
-.pin-input input:focus{outline:none;border-color:#00a2ff;
+.pin-input input:focus{
+  border-color:#1a2733;
   background:#fff;
-  box-shadow:0 0 0 4px rgba(0,162,255,0.12), 0 1px 2px rgba(20,30,40,0.04);
-  transform:scale(1.03)}
+  transform:scale(1.04);
+}
 .pin-input input.filled{
-  border-color:#00a2ff;
+  border-color:#1a2733;
   background:#fff;
 }
 [data-theme="dark"] .pin-input input,
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]) .pin-input input{
-    background:#181428;
-    border:2px solid #2e3e54;
+    background:#1c1c1c;
+    border:1.5px solid #363636;
     color:#f5f8fb;
   }
   :root:not([data-theme="light"]) .pin-input input:focus,
   :root:not([data-theme="light"]) .pin-input input.filled{
-    background:#1d1830;
+    background:#252525;
     border-color:#5b8bff;
   }
 }
@@ -2618,7 +2654,7 @@ img{user-select:none;-webkit-user-drag:none}
   .chat-view{grid-template-columns:1fr}
   .rooms-pane{display:none;position:absolute;inset:54px 0 72px 0;z-index:10;background:var(--bg-2)}
   .chat-view.show-rooms .rooms-pane{display:flex}
-  .row-2{grid-template-columns:1fr}
+  .row-2, .ig-row{grid-template-columns:1fr}
   .message .bubble-wrap{max-width:78%}
   .back-btn{display:inline-flex}
   .chat-header{padding:12px 14px}

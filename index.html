@@ -26,7 +26,7 @@
 <script defer src="https://unpkg.com/lucide@1.23.0/dist/umd/lucide.js"></script>
 <!-- Motion One v10 - lightweight (~3 KB gz) Framer-Motion-style animations for vanilla JS -->
 <script defer src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.min.js"></script>
-<link rel="stylesheet" href="style.css?v=58-soft-pastel" />
+<link rel="stylesheet" href="style.css?v=59-instagram-style" />
 <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
@@ -46,73 +46,63 @@
 
 <!-- ====== AUTH SHELL ====== -->
 <section id="authShell" class="auth-shell hidden">
-  <!-- Top back button: returns user to whatever they came from (splash, onboarding, etc.) -->
-  <button type="button" class="auth-top-back" id="authTopBack" aria-label="Go back">
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-    <span>Back</span>
-  </button>
+  <!-- Top bar: just a back arrow on the left (Instagram-style) -->
+  <header class="auth-topbar">
+    <button type="button" class="auth-top-back" id="authTopBack" aria-label="Go back">
+      <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+  </header>
 
-  <div class="auth-card">
-    <div class="auth-brand">
+  <main class="auth-main">
+    <!-- App icon centered at the top (Instagram-style) -->
+    <div class="auth-icon-wrap">
       <div class="logo-badge logo-pulse">
-        <svg viewBox="0 0 64 64" width="38" height="38" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true">
           <path fill="#fff" d="M14 32 50 14 42 50 32 36 14 32z"/>
         </svg>
       </div>
-      <div>
-        <h1 class="brand-name text-anim">PRIV SPACA</h1>
-        <p class="brand-tag">Private chat · Real community</p>
-      </div>
+      <h1 class="brand-name text-anim">PRIV SPACA</h1>
     </div>
 
     <!-- The three forms swap in here. Sign in is the default visible one. -->
     <div class="auth-panels" data-auth-panels>
 
       <div class="auth-panel" data-auth-panel="login">
-        <h2 class="auth-panel-title">Welcome back</h2>
-        <p class="auth-panel-sub">Sign in with your email or username.</p>
         <form id="loginForm" class="auth-form active" autocomplete="on">
-          <label class="field">
-            <span>Email or username</span>
-            <input name="identifier" type="text" required minlength="3" placeholder="you@example.com" />
+          <label class="field ig-pill">
+            <input name="identifier" type="text" required minlength="3" placeholder="Username, email address or mobile number" />
           </label>
-          <label class="field">
-            <span>Password</span>
-            <input name="password" type="password" required minlength="6" placeholder="Your password" />
+          <label class="field ig-pill">
+            <input name="password" type="password" required minlength="6" placeholder="Password" />
           </label>
-          <button type="submit" class="primary-btn">Sign in</button>
+          <button type="submit" class="ig-primary">Log in</button>
           <div class="auth-error" data-error></div>
+          <button type="button" class="ig-link" data-auth-step="reset">Forgotten password?</button>
         </form>
       </div>
 
       <div class="auth-panel" data-auth-panel="signup" hidden>
-        <button type="button" class="auth-back" data-auth-back aria-label="Back to sign in">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-          Back to sign in
+        <button type="button" class="ig-back" data-auth-back aria-label="Back to sign in">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <h2 class="auth-panel-title">Create your account</h2>
-        <p class="auth-panel-sub">It takes about 20 seconds.</p>
+        <p class="auth-eyebrow">Sign up to see photos and videos from your friends.</p>
         <form id="signupForm" class="auth-form active" autocomplete="on">
-          <div class="row-2">
-            <label class="field">
-              <span>Display name</span>
-              <input name="displayName" type="text" required minlength="1" maxlength="60" placeholder="Your name" />
+          <div class="ig-row">
+            <label class="field ig-pill">
+              <input name="displayName" type="text" required minlength="1" maxlength="60" placeholder="Display name" />
             </label>
-            <label class="field">
-              <span>Username</span>
-              <input name="username" type="text" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9_]{3,24}" placeholder="username" />
+            <label class="field ig-pill">
+              <input name="username" type="text" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9_]{3,24}" placeholder="Username" />
             </label>
           </div>
-          <label class="field">
-            <span>Email</span>
-            <input name="email" type="email" required placeholder="you@example.com" />
+          <label class="field ig-pill">
+            <input name="email" type="email" required placeholder="Email" />
           </label>
-          <label class="field">
-            <span>Password</span>
-            <input name="password" type="password" required minlength="6" placeholder="At least 6 characters" />
+          <label class="field ig-pill">
+            <input name="password" type="password" required minlength="6" placeholder="Password" />
           </label>
-          <div class="field">
-            <span>4-digit Security PIN</span>
+          <div class="ig-pin-block">
+            <p class="ig-pin-hint">Set a 4-digit PIN — you'll need it to recover your account</p>
             <div class="pin-input" data-pin-group="signup">
               <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="0" />
               <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="1" />
@@ -121,35 +111,28 @@
             </div>
             <input name="pin" type="hidden" required pattern="[0-9]{4}" />
           </div>
-
-          <!-- Terms & Conditions (pre-checked, required) -->
           <label class="terms-row">
             <input type="checkbox" id="termsCheckbox" name="terms" checked />
             <span class="terms-text">
               I agree to the <button type="button" class="terms-link" id="openTermsBtn">Terms &amp; Community Guidelines</button>.
             </span>
           </label>
-
-          <button type="submit" class="primary-btn">Create account</button>
-          <p class="auth-hint">Your PIN is the only way to recover a forgotten password. Memorize it.</p>
+          <button type="submit" class="ig-primary">Sign up</button>
           <div class="auth-error" data-error></div>
         </form>
       </div>
 
       <div class="auth-panel" data-auth-panel="reset" hidden>
-        <button type="button" class="auth-back" data-auth-back aria-label="Back to sign in">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-          Back to sign in
+        <button type="button" class="ig-back" data-auth-back aria-label="Back to sign in">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <h2 class="auth-panel-title">Forgot password</h2>
-        <p class="auth-panel-sub">Enter your account and the 4-digit PIN you set at signup.</p>
+        <p class="auth-eyebrow">Trouble logging in? Enter your details and your 4-digit PIN.</p>
         <form id="resetForm" class="auth-form active" autocomplete="off">
-          <label class="field">
-            <span>Email or username</span>
-            <input name="identifier" type="text" required minlength="3" placeholder="Your account" />
+          <label class="field ig-pill">
+            <input name="identifier" type="text" required minlength="3" placeholder="Username, email or mobile number" />
           </label>
-          <div class="field">
-            <span>4-digit PIN</span>
+          <div class="ig-pin-block">
+            <p class="ig-pin-hint">Your 4-digit security PIN</p>
             <div class="pin-input" data-pin-group="reset">
               <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="0" />
               <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" data-pin-cell="1" />
@@ -158,42 +141,22 @@
             </div>
             <input name="pin" type="hidden" required pattern="[0-9]{4}" />
           </div>
-          <label class="field">
-            <span>New password</span>
-            <input name="newPassword" type="password" required minlength="6" placeholder="At least 6 characters" />
+          <label class="field ig-pill">
+            <input name="newPassword" type="password" required minlength="6" placeholder="New password" />
           </label>
-          <button type="submit" class="primary-btn">Reset password</button>
+          <button type="submit" class="ig-primary">Reset password</button>
           <div class="auth-error" data-error></div>
         </form>
       </div>
 
     </div>
+  </main>
 
-    <!-- Secondary actions: only shown on the login (default) panel. Tapping a
-         secondary action swaps in that panel and hides this row. The in-panel
-         "Back to sign in" button (inside each panel above) brings it back. -->
-    <div class="auth-secondary" data-auth-secondary>
-      <button type="button" class="auth-secondary-btn auth-secondary-primary" data-auth-step="signup">
-        <span class="join-badge">Join now</span>
-        <span class="auth-secondary-text">
-          <strong>Create account</strong>
-          <small>New here? Set up your account in 20s</small>
-        </span>
-        <span class="auth-secondary-chev" aria-hidden="true">›</span>
-      </button>
-      <button type="button" class="auth-secondary-btn" data-auth-step="reset">
-        <span class="auth-secondary-ic" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        </span>
-        <span class="auth-secondary-text">
-          <strong>Forgot password?</strong>
-          <small>Recover with your 4-digit PIN</small>
-        </span>
-      </button>
-    </div>
-
-  </div>
-  <p class="auth-footer">© <span id="yr"></span> PRIV SPACA · Secure community for the close few.</p>
+  <!-- Bottom: "Don't have an account? Sign up" + "Create new account" button (IG-style) -->
+  <footer class="auth-bottom" data-auth-secondary>
+    <p class="auth-bottom-text">Don't have an account?</p>
+    <button type="button" class="ig-outline" data-auth-step="signup">Create new account</button>
+  </footer>
 </section>
 
 <!-- ====== APP SHELL ====== -->
@@ -1300,6 +1263,6 @@ window.__privSpacaLoaderFallback = setTimeout(function () {
   });
 })();
 </script>
-<script src="app.js?v=58-soft-pastel"></script>
+<script src="app.js?v=59-instagram-style"></script>
 </body>
 </html>
