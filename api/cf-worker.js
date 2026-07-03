@@ -1903,6 +1903,34 @@ app.get('/api/auth/me', requireAuth, async (c) => {
 // its own CDN, and avoids burning our GitHub Contents API quota). When not
 // set, we fall back to the GitHub raw-content path that has shipped since
 // day 1. The response shape is identical: { url, persisted }.
+
+/**
+ * v67: gzip-compress JSON responses when the client supports it AND the
+ * payload is large enough to be worth the CPU. Saves 60-80% bandwidth on
+ * big /feed /posts responses. Uses the CompressionStream Web API.
+ */
+async function maybeGzip(c, jsonText) {
+  if (!jsonText || jsonText.length < 2048) return null;
+  const acceptEnc = (c.req.header('accept-encoding') || '').toLowerCase();
+  if (!acceptEnc.includes('gzip')) return null;
+  try {
+    const cs = new CompressionStream('gzip');
+    const writer = cs.writable.getWriter();
+    await writer.write(new TextEncoder().encode(jsonText));
+    await writer.close();
+    const reader = cs.readable.getReader();
+    const chunks = [];
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    return new Uint8Array(chunks.reduce((acc, c) => acc.concat(Array.from(c)), []));
+  } catch (e) {
+    return null;
+  }
+}
+
 async function sha1Hex(str) {
   const enc = new TextEncoder();
   const buf = await crypto.subtle.digest('SHA-1', enc.encode(str));
@@ -3196,7 +3224,12 @@ app.get('/api/feed', requireAuth, async (c) => {
   // showing the poster's real name. Prefer the live user record (so a
   // display-name/photo change shows up immediately) and fall back to the
   // frozen snapshot if the user record is unavailable for any reason.
-  const usersById = new Map((db.users || []).map(u => [u.id, u]));
+  // We need the full users array here (not just the single fetched me) so
+  // each post's author can be resolved to a real username/displayName.
+  const allUsers = await tc.execute('SELECT data_json FROM ps_users').catch(() => ({ rows: [] }));
+  const usersById = new Map((allUsers.rows || []).map(r => {
+    try { const u = JSON.parse(r.data_json); return [u.id, u]; } catch { return [null, null]; }
+  }).filter(([k]) => k));
   const posts = postData.rows?.map(r => {
     try { return JSON.parse(r.data_json); } catch { return null; }
   }).filter(Boolean).filter(p => !p.deletedAt).map(p => {

@@ -11,3 +11,4 @@ backups/turso_before_neon_replacement_*.json
 .wrangler/
 test_results.json
 backups/db-wipe-*.json
+dist/
