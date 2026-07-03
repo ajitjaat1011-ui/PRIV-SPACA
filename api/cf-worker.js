@@ -859,6 +859,40 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
     } catch (_) { /* best-effort; ephemeral data, ok to lose occasionally */ }
     return true;
   }
+  // ---- Neon fast path ----
+  // neonWriteDb() is a single atomic UPSERT — it either succeeds or throws.
+  // Unlike GitHub's Contents API (which needs SHA-conflict retries because
+  // every write is a git commit), Neon does not need multi-second sleeps or
+  // a "verify by re-reading" step. We still merge against the freshest
+  // remote copy first (mergeById is conflict-safe for our array/id shape),
+  // but keep this to 1-2 fast round trips with no artificial delay so
+  // concurrent requests don't stack up and get killed as "hung" by the
+  // Workers runtime.
+  if (isNeonConfigured()) {
+    let toWrite = data;
+    try {
+      const fresh = await neonReadDb();
+      if (fresh && typeof fresh === 'object') toWrite = mergeDatabase(fresh, data);
+    } catch (_) { /* fall back to writing local data as-is */ }
+    try {
+      await neonWriteDb(toWrite);
+      localCache = normalizeDb(toWrite);
+      cacheTimestamp = nowMs();
+      return true;
+    } catch (e) {
+      // One quick retry on transient network/DB errors only — no sleep.
+      try {
+        await neonWriteDb(toWrite);
+        localCache = normalizeDb(toWrite);
+        cacheTimestamp = nowMs();
+        return true;
+      } catch (e2) {
+        console.error('[saveDatabase:neon]', e2 && e2.message);
+        return false;
+      }
+    }
+  }
+  // ---- GitHub Contents API path (legacy / fallback persistence) ----
   // Merge with the newest remote DB before writing. This prevents a later request
   // from overwriting a user/message/post created by an earlier request.
   let toWrite = data;
@@ -887,6 +921,20 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
 }
 
 async function saveDatabaseVerified(data, verifyFn, attempts = 4, opts = {}) {
+  // ---- Neon fast path ----
+  // neonWriteDb() is a direct atomic UPSERT: if saveDatabase() returns true,
+  // the write is already durably committed, so re-reading it back to
+  // "verify" is redundant round-trip latency (this was previously the
+  // single biggest contributor to slow/hung requests under concurrent
+  // load, since it ran on top of an already-redundant retry loop).
+  if (isNeonConfigured()) {
+    for (let i = 0; i < Math.min(attempts, 3); i++) {
+      const ok = await saveDatabase(data, false, opts);
+      if (ok) return true;
+    }
+    return false;
+  }
+  // ---- GitHub Contents API path (legacy / fallback persistence) ----
   for (let i = 0; i < attempts; i++) {
     const ok = await saveDatabase(data, false, opts);
     if (ok) {
@@ -2636,9 +2684,6 @@ app.get('/api/stream', async (c) => {
   });
 });
 
-// ---------- 404 ----------
-app.all('/api/*', (c) => c.json({ error: 'Route not found', path: c.req.path }, 404));
-
 // ---------- Export for Cloudflare ----------
 export default app;
 
@@ -2758,5 +2803,9 @@ app.get('/api/feed', requireAuth, async (c) => {
   return c.json({ posts, source: 'hybrid-turso-feed' });
 });
 
-// Hook into existing post creation to trigger fan-out
-const _originalCreatePost = app.routes?.find(r => r.path === '/api/posts/create' && r.method === 'POST');
+// ---------- 404 ----------
+// Must be registered LAST (after every real route above, including /api/feed).
+// Hono matches routes in registration order, so a catch-all placed earlier
+// would shadow any route defined after it — which is exactly what happened
+// to /api/feed before this fix (it always hit this 404 handler instead).
+app.all('/api/*', (c) => c.json({ error: 'Route not found', path: c.req.path }, 404));
