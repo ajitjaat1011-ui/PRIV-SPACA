@@ -7678,7 +7678,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=65-auth-sync-fix').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=66-perf-batch').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
@@ -8225,7 +8225,16 @@ async function handleRTCSignal(data) {
     const offerKey = data.id || (peerId + ':' + offerFingerprint);
     if (!window._handledRtcOffers) window._handledRtcOffers = new Set();
     if (offerKey && window._handledRtcOffers.has(offerKey)) return;
-    if (offerKey) window._handledRtcOffers.add(offerKey);
+    if (offerKey) {
+      window._handledRtcOffers.add(offerKey);
+      // v66: bound the dedup set so it doesn't grow unboundedly over a
+      // long session. When we hit 50 entries, drop the oldest half.
+      if (window._handledRtcOffers.size > 50) {
+        const drop = Math.floor(window._handledRtcOffers.size / 2);
+        const it = window._handledRtcOffers.values();
+        for (let i = 0; i < drop; i++) window._handledRtcOffers.delete(it.next().value);
+      }
+    }
 
     // A second *new* offer from the active peer is WebRTC renegotiation (used by
     // audio → video upgrade). Do not mark that as "busy".
