@@ -3329,8 +3329,10 @@ function syncPostMusicUI() {
     if (btn) {
       btn.classList.toggle('is-active', active);
       btn.classList.toggle('is-playing', active && playing);
-      btn.setAttribute('aria-label', active && playing ? 'Pause post music' : 'Play post music');
-      btn.innerHTML = `<i data-lucide="${active && playing ? 'pause' : 'volume-2'}"></i>`;
+      btn.setAttribute('aria-label', active && playing ? 'Mute post music' : 'Unmute post music');
+      // Instagram-style audio control: show speaker when audio is on,
+      // muted-speaker when this post's audio is off.
+      btn.innerHTML = `<i data-lucide="${active && playing ? 'volume-2' : 'volume-x'}"></i>`;
     }
     const meta = card.querySelector('.post-music-inline');
     if (meta) meta.classList.toggle('is-playing', active && playing);
@@ -3537,8 +3539,8 @@ function renderPost(p) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'post-music-toggle';
-    btn.setAttribute('aria-label', 'Play post music');
-    btn.innerHTML = '<i data-lucide="volume-2"></i>';
+    btn.setAttribute('aria-label', 'Unmute post music');
+    btn.innerHTML = '<i data-lucide="volume-x"></i>';
     btn.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();

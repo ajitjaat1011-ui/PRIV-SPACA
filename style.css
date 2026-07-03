@@ -1147,24 +1147,24 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .post-music-toggle{
   position:absolute;right:14px;bottom:14px;top:auto;transform:none;
-  width:52px;height:52px;border-radius:20px;border:1px solid rgba(255,255,255,.42);z-index:7;
-  background:linear-gradient(145deg,rgba(255,255,255,.32),rgba(255,255,255,.10) 42%,rgba(15,23,42,.30));
-  backdrop-filter:blur(18px) saturate(1.65);-webkit-backdrop-filter:blur(18px) saturate(1.65);
+  width:44px;height:44px;border-radius:50%;border:0;z-index:7;
+  background:rgba(72,72,72,.86);
+  backdrop-filter:blur(10px) saturate(1.25);-webkit-backdrop-filter:blur(10px) saturate(1.25);
   color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.55),inset 0 -10px 20px rgba(255,255,255,.08),0 12px 34px rgba(15,23,42,.26);
-  transition:transform .18s cubic-bezier(.2,.8,.2,1), background .18s ease, box-shadow .18s ease, border-color .18s ease;
+  box-shadow:0 5px 16px rgba(0,0,0,.20),inset 0 1px 0 rgba(255,255,255,.10);
+  transition:transform .16s ease, background .16s ease, box-shadow .16s ease, opacity .16s ease;
 }
 .post-music-toggle::before{
-  content:'';position:absolute;inset:5px 6px auto 6px;height:42%;border-radius:15px;
-  background:linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,0));pointer-events:none;
+  content:'';position:absolute;inset:0;border-radius:50%;
+  background:radial-gradient(circle at 34% 24%,rgba(255,255,255,.22),rgba(255,255,255,0) 46%);
+  pointer-events:none;
 }
-.post-music-toggle:hover{transform:scale(1.05);border-color:rgba(255,255,255,.62);box-shadow:inset 0 1px 1px rgba(255,255,255,.62),0 16px 38px rgba(15,23,42,.30)}
-.post-music-toggle:active{transform:scale(.94)}
-.post-music-toggle i,.post-music-toggle svg{width:23px;height:23px;stroke-width:2.4;filter:drop-shadow(0 2px 5px rgba(0,0,0,.28))}
+.post-music-toggle:hover{transform:scale(1.06);background:rgba(58,58,58,.90);box-shadow:0 7px 18px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.14)}
+.post-music-toggle:active{transform:scale(.92)}
+.post-music-toggle i,.post-music-toggle svg{width:22px;height:22px;stroke-width:2.9;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
 .post-music-toggle.is-playing{
-  background:linear-gradient(145deg,rgba(255,133,193,.92),rgba(236,72,153,.82) 52%,rgba(159,39,117,.74));
-  border-color:rgba(255,255,255,.50);color:#fff;
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.60),0 14px 36px rgba(236,72,153,.34),0 0 0 5px rgba(255,255,255,.10);
+  background:rgba(72,72,72,.86);
+  color:#fff;
 }
 .post-card.music-playing .post-music-inline{color:#ec4899}
 .post-card.music-playing .post-music-marquee-track{animation-duration:8s}
