@@ -222,7 +222,16 @@
         </div>
       </div>
       <span id="memberCount" class="hidden">0</span>
-      <button id="privChatFab" type="button" class="priv-chat-fab" aria-label="New PRIV instant"><span>+</span><b>PRIV</b></button>
+      <button id="privChatFab" type="button" class="priv-chat-fab" aria-label="Open PRIV instants"><span>+</span><b>PRIV</b><em id="privFabBadge" class="hidden">0</em></button>
+      <section id="privPanel" class="priv-panel priv-chat-panel hidden" aria-label="PRIV instants">
+        <div class="priv-panel-head">
+          <div><strong>PRIV</strong><span>Instant snaps · streaks</span></div>
+          <div class="priv-actions">
+            <button id="privCaptureBtn" type="button" class="priv-capture-btn"><i data-lucide="camera"></i><span>New</span></button>
+          </div>
+        </div>
+        <div id="privStack" class="priv-stack-wrap"></div>
+      </section>
     </aside>
 
     <section class="chat-pane">
