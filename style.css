@@ -264,11 +264,36 @@ img{user-select:none;-webkit-user-drag:none}
 .flower-container{
   position:absolute;bottom:-4px;pointer-events:none;opacity:0;
   transform:translateY(28px) scale(0.2) rotate(-8deg);
-  transition:all 0.95s cubic-bezier(0.34,1.56,0.64,1);
-  filter:drop-shadow(0 0 8px rgba(255,140,0,0.6));
+  transition:opacity 0.95s cubic-bezier(0.34,1.56,0.64,1),
+             transform 0.95s cubic-bezier(0.34,1.56,0.64,1);
+  filter:hue-rotate(var(--fl-hue, 0deg)) drop-shadow(0 0 8px rgba(255,140,0,0.6));
+  transform-origin:bottom center;
 }
+.flower-container svg{display:block;transform-origin:bottom center}
 .flower-container.animate{
   opacity:0.95;transform:translateY(0) scale(1) rotate(0deg);
+  animation:flowerSway calc(3.6s + (var(--fl-idx, 0) * 0.35s)) ease-in-out calc(0.95s + (var(--fl-idx, 0) * 0.08s)) infinite,
+            flowerGlow calc(2.8s + (var(--fl-idx, 0) * 0.22s)) ease-in-out calc(0.95s + (var(--fl-idx, 0) * 0.08s)) infinite;
+}
+@keyframes flowerSway{
+  0%,100%{transform:translateY(0) scale(1) rotate(calc(var(--fl-sway, 1) * -2.5deg));}
+  50%{transform:translateY(-3px) scale(1.03) rotate(calc(var(--fl-sway, 1) * 2.5deg));}
+}
+@keyframes flowerGlow{
+  0%,100%{filter:hue-rotate(var(--fl-hue, 0deg)) drop-shadow(0 0 6px rgba(255,140,0,0.45));}
+  50%{filter:hue-rotate(var(--fl-hue, 0deg)) drop-shadow(0 0 12px rgba(255,180,60,0.85));}
+}
+.flower-sparkle{
+  position:absolute;border-radius:50%;pointer-events:none;
+  opacity:0;animation:flowerSparkleTwinkle 2.4s ease-in-out infinite;
+}
+@keyframes flowerSparkleTwinkle{
+  0%,100%{opacity:0;transform:scale(0.4);}
+  50%{opacity:0.95;transform:scale(1.15);}
+}
+@media (prefers-reduced-motion: reduce){
+  .flower-container.animate{animation:none;}
+  .flower-sparkle{animation:none;opacity:0.7;}
 }
 .topbar-left-icon{justify-self:start}
 .topbar > .ghost-btn:last-child{justify-self:end}
