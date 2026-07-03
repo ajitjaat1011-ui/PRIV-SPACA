@@ -3152,10 +3152,11 @@ function showPrivViewerAt(index) {
   refreshIcons();
 }
 function markPrivOpened(snap) {
-  const myId = State.user && State.user.id;
-  if (!snap || snap.userId === myId || _privViewerOpened.has(snap.id)) return;
+  if (!snap || _privViewerOpened.has(snap.id)) return;
   _privViewerOpened.add(snap.id);
+  // One-time for everyone, including the sender: remove locally immediately.
   State.privSnaps = (State.privSnaps || []).filter(s => s.id !== snap.id);
+  _privViewerItems = (_privViewerItems || []).filter(s => s.id !== snap.id);
   updatePrivFabBadge();
   api('/priv/open', { method: 'POST', body: { snapId: snap.id }}).catch(() => {});
 }
