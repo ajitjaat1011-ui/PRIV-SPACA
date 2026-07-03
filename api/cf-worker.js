@@ -1721,7 +1721,6 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // search identifier. 60s TTL means a password reset via the
     // structured table is visible within a minute. Caching the user
     // object directly saves a Turso round trip on every login.
-    if (!_loginUserCache) _loginUserCache = new Map();
     const userCacheKey = 'user:' + idLower;
     let user = _loginUserCache.get(userCacheKey);
     if (user && (Date.now() - user._cachedAt) < 60_000) {
@@ -1766,7 +1765,6 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // is short enough that password changes take effect quickly.
     const bcryptCacheKey = matchUser.id + '|' + (matchUser.passwordHash || '').slice(0, 30) + '|' + password;
     let ok = false;
-    if (!_bcryptVerifyCache) _bcryptVerifyCache = new Map();
     const cached = _bcryptVerifyCache.get(bcryptCacheKey);
     if (cached && (Date.now() - cached.ts) < 300_000) {
       ok = cached.ok;
