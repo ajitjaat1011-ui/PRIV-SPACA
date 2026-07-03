@@ -7006,7 +7006,8 @@ function openProfileCard(profileData = null, fallbackUser = null) {
     </div>`;
   renderAvatar(mount.querySelector('.reflective-user-avatar'), u);
   sheet.classList.remove('hidden');
-  springIn(mount.querySelector('.reflective-card-container'));
+  // Keep reveal intentionally light: CSS handles a simple fade-in.
+  // Avoid spring/blur transforms here because they jank on mobile GPUs.
   refreshIcons();
 }
 function closeProfileCard() {
