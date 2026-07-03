@@ -163,7 +163,7 @@ async function rawFetch(url, opts = {}) {
       const { value, done } = await reader.read();
       if (done) break;
       buf += dec.decode(value);
-      if (buf.includes('data:') || buf.includes('event:')) { sseData = buf.slice(0, 200); break; }
+      if (buf.includes('data:') || buf.includes('event:') || buf.includes(': connected')) { sseData = buf.slice(0, 200); break; }
     }
   } catch (e) {
     // Expected for some servers
