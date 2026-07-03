@@ -789,7 +789,8 @@ function restoreScrollForTab(tab) {
     if (tab === 'feed') { const el = $('#feedView'); if (el) el.scrollTop = _scrollMemory.feed || 0; }
     if (tab === 'search') { const el = $('#searchView'); if (el) el.scrollTop = _scrollMemory.search || 0; }
     if (tab === 'profile') { const el = $('#profileView'); if (el) el.scrollTop = _scrollMemory.profile || 0; }
-    if (tab === 'chat' || tab === 'groups') {
+    if (tab === 'reels') { const el = $('#reelsView'); if (el) el.scrollTop = _scrollMemory.reels || 0; }
+  if (tab === 'chat' || tab === 'groups') {
       const rooms = $('.rooms-pane'); if (rooms) rooms.scrollTop = _scrollMemory.roomsPane || 0;
       const members = $('#membersList'); if (members) members.scrollTop = _scrollMemory.membersList || 0;
       const msgs = $('#messagesScroll'); if (msgs && !$('#chatView').classList.contains('show-rooms')) msgs.scrollTop = _scrollMemory.messagesScroll || 0;
@@ -913,6 +914,13 @@ function switchTab(tab) {
     $('#profileEditMode').classList.add('hidden');
     $('#profileViewMode').classList.remove('hidden');
     renderOwnProfile();
+  }
+  if (tab === 'reels') {
+    activeView = $('#reelsView');
+    if (activeView) {
+      activeView.classList.add('active');
+      loadReels(false);
+    }
   }
   updateTopbarHeader(tab);
   updateChatThreadChrome();
@@ -7661,7 +7669,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=62-pause-audio').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=63-reels-tab').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
@@ -7828,6 +7836,576 @@ function installAudioPauseGuard() {
 // Install immediately so it covers any audio that starts before boot() runs.
 installAudioPauseGuard();
 
+// ============================================================
+// ====== REELS (TikTok-style short vertical videos)        ====
+// ============================================================
+//
+// Two kinds of reel:
+//   1. Self-uploaded (kind: 'reel', source: 'self')
+//      - video uploaded via /api/upload-photo (Cloudinary or GitHub)
+//      - stored in ps_posts as a regular post with kind:'reel'
+//      - plays IN-APP via <video> tag, TikTok-style vertical scroll
+//   2. Instagram link (kind: 'reel', source: 'instagram')
+//      - we proxy IG's oEmbed API to grab embed HTML + thumbnail + author
+//      - we store the embed HTML, NOT the raw video (IG doesn't expose it)
+//      - plays as a tappable card that opens Instagram in a new tab on tap
+//      - Instagram's ToS forbids in-app playback of their videos, so this
+//        is the only legally-defensible way to "see" an IG reel inside our app.
+//
+// Both kinds live in ps_posts, share the same list/feed, and the audio-pause
+// guard installed earlier already covers any <video> / <audio> we render.
+
+let _reels = [];
+let _reelsTab = 'all';           // 'all' | 'mine'
+let _reelsListSig = '';
+let _reelViewer = { open: false, items: [], index: 0, igEmbedHost: null };
+
+function isReelKind(p) {
+  return !!(p && p.kind === 'reel');
+}
+
+async function loadReels(force) {
+  try {
+    const data = await api('/reels');
+    _reels = Array.isArray(data.reels) ? data.reels : [];
+    renderReels();
+  } catch (e) {
+    if (e && e.status !== 401) console.warn('[reels] load failed', e.message);
+  }
+}
+
+function renderReels() {
+  const list = $('#reelsList');
+  if (!list) return;
+  const meId = State.user && State.user.id;
+  const filtered = _reels.filter(r => {
+    if (_reelsTab === 'mine') return r.userId === meId;
+    return true;
+  });
+  const sig = filtered.map(r => r.id + ':' + (r.likeCount || 0) + ':' + (r.commentCount || 0)).join('|');
+  if (sig === _reelsListSig && list.children.length > 0) return;
+  _reelsListSig = sig;
+  list.innerHTML = '';
+  if (filtered.length === 0) {
+    const empty = $('#reelsEmpty');
+    if (empty) {
+      empty.style.display = '';
+      const s = empty.querySelector('.s');
+      if (s) {
+        s.innerHTML = _reelsTab === 'mine'
+          ? 'You haven\'t posted any reels yet. Tap <strong>+</strong> to upload one.'
+          : 'Tap <strong>+</strong> to upload your first short video, or paste an Instagram reel link.';
+      }
+    }
+    list.appendChild(empty);
+    refreshIcons();
+    return;
+  }
+  filtered.forEach((r, idx) => list.appendChild(buildReelThumb(r, idx)));
+  // Stagger the thumbnail entrance for a polished feel
+  staggerIn([...list.children].filter(c => c.classList.contains('reel-thumb')), { delayPer: 0.03 });
+  refreshIcons();
+}
+
+function buildReelThumb(r, idx) {
+  const cell = document.createElement('div');
+  cell.className = 'reel-thumb';
+  cell.dataset.reelId = r.id;
+  cell.setAttribute('role', 'button');
+  cell.setAttribute('aria-label', 'Open reel');
+
+  // Cover image
+  const coverSrc = (r.source === 'instagram' && r.igThumbnail) ? r.igThumbnail : (r.videoUrl || '');
+  if (coverSrc) {
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = 'Reel cover';
+    img.src = coverSrc;
+    img.addEventListener('error', () => { img.style.display = 'none'; });
+    cell.appendChild(img);
+  } else {
+    const ph = document.createElement('div');
+    ph.style.cssText = 'position:absolute;inset:0;background:linear-gradient(135deg,#1a1a2e,#0f3460);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.4);font-size:32px;';
+    ph.textContent = '▶';
+    cell.appendChild(ph);
+  }
+
+  // Play badge (only for self videos; IG card shows its own play affordance)
+  if (r.source === 'self' || r.source !== 'instagram') {
+    const pb = document.createElement('div');
+    pb.className = 'reel-play-badge';
+    pb.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+    cell.appendChild(pb);
+  }
+
+  // Instagram brand badge
+  if (r.source === 'instagram') {
+    const ig = document.createElement('div');
+    ig.className = 'reel-ig-badge';
+    ig.textContent = 'IG';
+    ig.title = 'Instagram reel — tap to open on Instagram';
+    cell.appendChild(ig);
+  }
+
+  // Stats (likes count)
+  if ((r.likeCount || 0) > 0 || (r.commentCount || 0) > 0) {
+    const stats = document.createElement('div');
+    stats.className = 'reel-stats';
+    if ((r.likeCount || 0) > 0) {
+      const lk = document.createElement('span');
+      lk.className = 'reel-stat';
+      lk.innerHTML = '<svg viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M12 21s-7-4.5-9.5-9.5C.8 7 4 3 7.5 3c2 0 3.5 1 4.5 2.5C13 4 14.5 3 16.5 3 20 3 23.2 7 21.5 11.5 19 16.5 12 21 12 21z"/></svg>' + r.likeCount;
+      stats.appendChild(lk);
+    }
+    cell.appendChild(stats);
+  }
+
+  // Bottom info (author + caption)
+  const info = document.createElement('div');
+  info.className = 'reel-info';
+  const author = r.author || {};
+  const nm = document.createElement('div');
+  nm.className = 'nm';
+  nm.textContent = (author.displayName || author.username || 'someone') + (r.source === 'instagram' ? ' • IG' : '');
+  info.appendChild(nm);
+  if (r.text) {
+    const ct = document.createElement('div');
+    ct.className = 'ct';
+    ct.textContent = r.text;
+    info.appendChild(ct);
+  }
+  cell.appendChild(info);
+
+  cell.addEventListener('click', () => openReelViewer(r.id));
+  return cell;
+}
+
+function switchReelsTab(tab) {
+  _reelsTab = tab === 'mine' ? 'mine' : 'all';
+  $$('.reels-tab').forEach(t => t.classList.toggle('active', t.dataset.reelsTab === _reelsTab));
+  _reelsListSig = '';
+  renderReels();
+}
+
+// ---- Add Reel Sheet ----
+let _addReel = {
+  mode: 'upload',                    // 'upload' | 'instagram'
+  file: null,
+  videoUrl: null,                    // persisted CDN URL after upload
+  uploading: false,
+  igEmbed: null,
+  igThumbnail: null,
+  igAuthor: null,
+  igAuthorUrl: null,
+  igUrl: null,
+  igFetching: false,
+};
+
+function openAddReelSheet() {
+  if (!State.user) { toast('Sign in first', 'error'); return; }
+  const sheet = $('#addReelSheet');
+  if (!sheet) return;
+  resetAddReelState();
+  sheet.classList.remove('hidden');
+  sheet.setAttribute('aria-hidden', 'false');
+  refreshIcons();
+}
+
+function closeAddReelSheet() {
+  const sheet = $('#addReelSheet');
+  if (!sheet) return;
+  sheet.classList.add('hidden');
+  sheet.setAttribute('aria-hidden', 'true');
+  // Revoke any blob URL we created
+  if (_addReel.videoUrl && _addReel.videoUrl.startsWith('blob:')) {
+    try { URL.revokeObjectURL(_addReel.videoUrl); } catch (_) {}
+  }
+  resetAddReelState();
+}
+
+function resetAddReelState() {
+  _addReel = { mode: 'upload', file: null, videoUrl: null, uploading: false, igEmbed: null, igThumbnail: null, igAuthor: null, igAuthorUrl: null, igUrl: null, igFetching: false };
+  const fi = $('#addReelFile'); if (fi) fi.value = '';
+  const drop = $('#addReelDrop'); if (drop) drop.style.borderColor = '';
+  const inner = $('#addReelDropInner'); if (inner) inner.classList.remove('hidden');
+  const prev = $('#addReelPreview'); if (prev) { prev.removeAttribute('src'); prev.classList.add('hidden'); }
+  const status = $('#addReelUploadStatus'); if (status) status.classList.add('hidden');
+  const cap = $('#addReelCaption'); if (cap) cap.value = '';
+  const igUrl = $('#addReelIgUrl'); if (igUrl) igUrl.value = '';
+  const igPrev = $('#addReelIgPreview'); if (igPrev) igPrev.classList.add('hidden');
+  const igErr = $('#addReelIgError'); if (igErr) igErr.classList.add('hidden');
+  updateAddReelSubmitState();
+}
+
+function setAddReelMode(mode) {
+  _addReel.mode = mode === 'instagram' ? 'instagram' : 'upload';
+  $$('.add-reel-tab').forEach(t => t.classList.toggle('active', t.dataset.addReelTab === _addReel.mode));
+  $$('[data-add-reel-pane]').forEach(p => p.classList.toggle('hidden', p.dataset.addReelPane !== _addReel.mode));
+  updateAddReelSubmitState();
+}
+
+function updateAddReelSubmitState() {
+  const btn = $('#addReelSubmitBtn');
+  if (!btn) return;
+  let ready = false;
+  if (_addReel.mode === 'upload') {
+    ready = !!_addReel.videoUrl;
+  } else {
+    ready = !!(_addReel.igEmbed && _addReel.igThumbnail && _addReel.igUrl);
+  }
+  btn.disabled = !ready || _addReel.uploading || _addReel.igFetching;
+}
+
+async function handleAddReelFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith('video/')) { toast('Please pick a video file', 'error'); return; }
+  if (file.size > 10 * 1024 * 1024) { toast('Video too large (max 10 MB)', 'error'); return; }
+  _addReel.file = file;
+  _addReel.videoUrl = null;
+  // Show local preview
+  const localUrl = URL.createObjectURL(file);
+  const prev = $('#addReelPreview');
+  if (prev) { prev.src = localUrl; prev.classList.remove('hidden'); prev.load(); }
+  const inner = $('#addReelDropInner'); if (inner) inner.classList.add('hidden');
+  const status = $('#addReelUploadStatus');
+  if (status) { status.classList.remove('hidden'); status.textContent = 'Uploading…'; }
+  _addReel.uploading = true;
+  updateAddReelSubmitState();
+  try {
+    // Convert to base64 data URL (simple, works on small files)
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(new Error('Read failed'));
+      r.readAsDataURL(file);
+    });
+    const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind: 'post' } });
+    _addReel.videoUrl = res.url || localUrl;
+    if (status) status.textContent = res.persisted ? '✓ Uploaded — ready to post' : '⚠ Saved inline (may not persist)';
+  } catch (e) {
+    if (status) status.textContent = '';
+    toast('Upload failed: ' + (e.message || ''), 'error');
+    if (prev) { prev.classList.add('hidden'); prev.removeAttribute('src'); }
+    if (inner) inner.classList.remove('hidden');
+  } finally {
+    _addReel.uploading = false;
+    updateAddReelSubmitState();
+  }
+}
+
+let _addReelIgTimer = null;
+async function fetchAddReelIgPreview() {
+  const input = $('#addReelIgUrl');
+  if (!input) return;
+  const url = String(input.value || '').trim();
+  _addReel.igUrl = url;
+  _addReel.igEmbed = null;
+  _addReel.igThumbnail = null;
+  _addReel.igAuthor = null;
+  _addReel.igAuthorUrl = null;
+  const prev = $('#addReelIgPreview'); if (prev) prev.classList.add('hidden');
+  const err = $('#addReelIgError'); if (err) err.classList.add('hidden');
+  if (!url) { updateAddReelSubmitState(); return; }
+  if (!/^https?:\/\/(www\.)?instagram\.com\/(reel|p|tv)\//i.test(url)) {
+    if (err) { err.textContent = 'URL must start with https://www.instagram.com/reel/...'; err.classList.remove('hidden'); }
+    updateAddReelSubmitState();
+    return;
+  }
+  clearTimeout(_addReelIgTimer);
+  _addReelIgTimer = setTimeout(async () => {
+    _addReel.igFetching = true;
+    updateAddReelSubmitState();
+    if (err) { err.classList.add('hidden'); }
+    try {
+      const r = await api('/instagram/oembed?url=' + encodeURIComponent(url));
+      _addReel.igEmbed = r.html;
+      _addReel.igThumbnail = r.thumbnail_url;
+      _addReel.igAuthor = r.author_name;
+      _addReel.igAuthorUrl = r.author_url;
+      // Show preview
+      const thumb = $('#addReelIgThumb'); if (thumb) thumb.src = r.thumbnail_url || '';
+      const au = $('#addReelIgAuthor'); if (au) au.textContent = r.author_name || 'Instagram';
+      const tt = $('#addReelIgTitle'); if (tt) tt.textContent = r.title || 'Tap to open on Instagram';
+      if (prev) prev.classList.remove('hidden');
+    } catch (e) {
+      if (err) { err.textContent = e.message || 'Could not fetch reel info'; err.classList.remove('hidden'); }
+    } finally {
+      _addReel.igFetching = false;
+      updateAddReelSubmitState();
+    }
+  }, 500);
+}
+
+async function submitAddReel() {
+  const btn = $('#addReelSubmitBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+  try {
+    if (_addReel.mode === 'upload') {
+      if (!_addReel.videoUrl) { toast('Pick a video first', 'error'); return; }
+      await api('/reels/add', { method: 'POST', body: {
+        videoUrl: _addReel.videoUrl,
+        text: String($('#addReelCaption')?.value || '').trim(),
+      }});
+    } else {
+      if (!_addReel.igEmbed || !_addReel.igThumbnail || !_addReel.igUrl) { toast('Fetch the reel info first', 'error'); return; }
+      await api('/reels/add', { method: 'POST', body: {
+        igUrl: _addReel.igUrl,
+        igEmbed: _addReel.igEmbed,
+        igThumbnail: _addReel.igThumbnail,
+        igAuthor: _addReel.igAuthor,
+        igAuthorUrl: _addReel.igAuthorUrl,
+      }});
+    }
+    closeAddReelSheet();
+    await loadReels(true);
+    toast('Reel posted!', 'success');
+  } catch (e) {
+    toast(e.message || 'Could not post reel', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Post Reel'; }
+    updateAddReelSubmitState();
+  }
+}
+
+// ---- Reel Viewer (TikTok-style vertical scroll) ----
+function openReelViewer(reelId) {
+  const meId = State.user && State.user.id;
+  let list = _reels;
+  if (_reelsTab === 'mine') {
+    list = _reels.filter(r => r.userId === meId);
+  }
+  const idx = list.findIndex(r => r.id === reelId);
+  if (idx === -1) return;
+  _reelViewer = { open: true, items: list, index: idx };
+  const viewer = $('#reelViewer');
+  if (!viewer) return;
+  viewer.classList.remove('hidden');
+  viewer.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  renderReelViewer();
+  refreshIcons();
+}
+
+function closeReelViewer() {
+  const viewer = $('#reelViewer');
+  if (!viewer) return;
+  viewer.classList.add('hidden');
+  viewer.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  // Stop and clean up any <video> inside the track
+  $$('#reelViewerTrack video').forEach(v => { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) {} });
+  _reelViewer.open = false;
+}
+
+function renderReelViewer() {
+  const track = $('#reelViewerTrack');
+  if (!track) return;
+  track.innerHTML = '';
+  _reelViewer.items.forEach((r, idx) => track.appendChild(buildReelSlide(r, idx)));
+  // Scroll to the requested index and start playing it
+  requestAnimationFrame(() => {
+    const slide = track.children[_reelViewer.index];
+    if (slide) slide.scrollIntoView({ behavior: 'instant', block: 'start' });
+    playSlideAt(_reelViewer.index);
+  });
+  // Wire vertical scroll → update index and autoplay the visible slide
+  if (!track.dataset.bound) {
+    track.dataset.bound = '1';
+    let scrollTicking = false;
+    track.addEventListener('scroll', () => {
+      if (scrollTicking) return;
+      scrollTicking = true;
+      requestAnimationFrame(() => {
+        const slideH = track.clientHeight || window.innerHeight;
+        const newIdx = Math.round(track.scrollTop / slideH);
+        if (newIdx !== _reelViewer.index && newIdx >= 0 && newIdx < _reelViewer.items.length) {
+          _reelViewer.index = newIdx;
+          playSlideAt(newIdx);
+        }
+        scrollTicking = false;
+      });
+    }, { passive: true });
+  }
+}
+
+function buildReelSlide(r, idx) {
+  const slide = document.createElement('div');
+  slide.className = 'reel-slide';
+  slide.dataset.reelId = r.id;
+  if (r.source === 'instagram') {
+    // IG card — shows the thumbnail as a "click to open on IG" poster
+    const card = document.createElement('div');
+    card.className = 'reel-ig-card';
+    const cover = document.createElement('img');
+    cover.className = 'ig-cover';
+    cover.alt = r.igAuthor || 'Instagram reel';
+    cover.src = r.igThumbnail || '';
+    cover.addEventListener('error', () => { cover.style.display = 'none'; });
+    card.appendChild(cover);
+    const overlay = document.createElement('div'); overlay.className = 'ig-overlay'; card.appendChild(overlay);
+    const igBadge = document.createElement('div'); igBadge.className = 'ig-ig-badge'; igBadge.textContent = 'IG'; card.appendChild(igBadge);
+    const playHint = document.createElement('div'); playHint.className = 'ig-play-hint';
+    playHint.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+    card.appendChild(playHint);
+    const info = document.createElement('div'); info.className = 'ig-info';
+    const au = document.createElement('div'); au.className = 'au'; au.textContent = '@' + (r.igAuthor || 'instagram');
+    info.appendChild(au);
+    const tt = document.createElement('div'); tt.className = 'tt';
+    tt.textContent = r.text || r.igAuthorUrl || 'Watch on Instagram';
+    info.appendChild(tt);
+    const cta = document.createElement('a'); cta.className = 'ig-cta';
+    cta.textContent = 'Open in Instagram ↗';
+    cta.target = '_blank'; cta.rel = 'noopener noreferrer';
+    cta.href = r.igUrl || '#';
+    cta.addEventListener('click', (e) => { e.stopPropagation(); });
+    info.appendChild(cta);
+    card.appendChild(info);
+    slide.appendChild(card);
+  } else {
+    // Self-uploaded video
+    if (r.videoUrl) {
+      const v = document.createElement('video');
+      v.src = r.videoUrl;
+      v.playsInline = true;
+      v.loop = true;
+      v.preload = 'metadata';
+      v.setAttribute('webkit-playsinline', 'true');
+      v.dataset.slideIdx = String(idx);
+      slide.appendChild(v);
+    }
+  }
+  // Author + caption footer (only for self-uploaded; IG card has its own footer)
+  if (r.source !== 'instagram') {
+    const bot = document.createElement('div'); bot.className = 'reel-bottom';
+    const author = r.author || {};
+    const auWrap = document.createElement('div'); auWrap.className = 'author';
+    const av = document.createElement('span'); av.className = 'avatar md';
+    renderAvatar(av, author);
+    auWrap.appendChild(av);
+    const auText = document.createElement('div'); auText.style.minWidth = '0';
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.textContent = (author.displayName || author.username || 'someone');
+    const un = document.createElement('div'); un.className = 'un';
+    un.textContent = '@' + (author.username || 'unknown');
+    auText.appendChild(nm); auText.appendChild(un);
+    auWrap.appendChild(auText);
+    bot.appendChild(auWrap);
+    if (r.text) {
+      const cap = document.createElement('div'); cap.className = 'cap';
+      cap.textContent = r.text;
+      bot.appendChild(cap);
+    }
+    slide.appendChild(bot);
+    // Side actions
+    const actions = document.createElement('div'); actions.className = 'reel-actions';
+    const heart = document.createElement('button'); heart.className = 'reel-action';
+    heart.setAttribute('aria-label', 'Like');
+    heart.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>';
+    if ((r.likeCount || 0) > 0) {
+      const cnt = document.createElement('span'); cnt.className = 'count'; cnt.textContent = r.likeCount;
+      heart.appendChild(cnt);
+    }
+    heart.addEventListener('click', (e) => { e.stopPropagation(); toast('Likes coming soon', 'info'); });
+    actions.appendChild(heart);
+    const cmt = document.createElement('button'); cmt.className = 'reel-action';
+    cmt.setAttribute('aria-label', 'Comments');
+    cmt.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    if ((r.commentCount || 0) > 0) {
+      const cnt = document.createElement('span'); cnt.className = 'count'; cnt.textContent = r.commentCount;
+      cmt.appendChild(cnt);
+    }
+    cmt.addEventListener('click', (e) => { e.stopPropagation(); toast('Comments coming soon', 'info'); });
+    actions.appendChild(cmt);
+    slide.appendChild(actions);
+    // Tap to play/pause (mobile-friendly)
+    slide.addEventListener('click', () => {
+      const v = slide.querySelector('video');
+      if (!v) return;
+      if (v.paused) { v.play().catch(() => {}); }
+      else { v.pause(); }
+    });
+  }
+  return slide;
+}
+
+function playSlideAt(idx) {
+  const track = $('#reelViewerTrack');
+  if (!track) return;
+  $$('#reelViewerTrack video').forEach((v, i) => {
+    try {
+      if (i === idx) {
+        // Autoplay (muted-ish; many browsers require muted for autoplay; the
+        // audio-pause guard installed earlier will kill it if the user leaves)
+        v.muted = false;
+        v.play().catch(() => {
+          // If unmuted autoplay is blocked, try muted
+          v.muted = true; v.play().catch(() => {});
+        });
+      } else {
+        v.pause(); v.currentTime = 0;
+      }
+    } catch (_) {}
+  });
+}
+
+function bindReels() {
+  // Wire the bottom-nav "reels" tab
+  const reelsTab = document.querySelector('.bn-btn[data-tab="reels"]');
+  if (reelsTab) {
+    reelsTab.addEventListener('click', () => {
+      // Use the existing switchTab path so the topbar + bottom-nav highlight stay in sync
+      if (typeof switchTab === 'function') switchTab('reels');
+    });
+  }
+  // Header + button
+  const addBtn = $('#reelsAddBtn');
+  if (addBtn) addBtn.addEventListener('click', openAddReelSheet);
+  // Tab strip
+  $$('.reels-tab').forEach(t => t.addEventListener('click', () => switchReelsTab(t.dataset.reelsTab)));
+  // Add-reel sheet
+  $$('[data-close-add-reel]').forEach(el => el.addEventListener('click', closeAddReelSheet));
+  $$('.add-reel-tab').forEach(t => t.addEventListener('click', () => setAddReelMode(t.dataset.addReelTab)));
+  // File picker
+  const drop = $('#addReelDrop');
+  if (drop) {
+    drop.addEventListener('click', (e) => {
+      // Don't re-open the picker if the user clicked the video preview itself
+      if (e.target.closest('video')) return;
+      $('#addReelFile')?.click();
+    });
+  }
+  const fileInp = $('#addReelFile');
+  if (fileInp) fileInp.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (f) handleAddReelFile(f);
+  });
+  // Drag-and-drop
+  if (drop) {
+    ;['dragover', 'dragenter'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; }));
+    ;['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.style.borderColor = ''; }));
+    drop.addEventListener('drop', (e) => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) handleAddReelFile(f);
+    });
+  }
+  // IG URL input
+  const igInp = $('#addReelIgUrl');
+  if (igInp) igInp.addEventListener('input', fetchAddReelIgPreview);
+  const igPaste = igInp;
+  if (igPaste) igPaste.addEventListener('paste', () => setTimeout(fetchAddReelIgPreview, 50));
+  // Submit
+  const sub = $('#addReelSubmitBtn');
+  if (sub) sub.addEventListener('click', submitAddReel);
+  // Viewer close
+  const vc = $('#reelViewerClose');
+  if (vc) vc.addEventListener('click', closeReelViewer);
+  // Esc closes viewer
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && _reelViewer.open) closeReelViewer();
+  });
+}
+
 function boot() {
   const yr = $('#yr');
   if (yr) yr.textContent = String(new Date().getFullYear());
@@ -7852,6 +8430,7 @@ function boot() {
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
     bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
+    bindReels,
   ];
   for (const step of bindSteps) {
     try { step(); } catch (e) { console.error('[boot] ' + (step.name || 'bind step') + ' failed:', e); }
