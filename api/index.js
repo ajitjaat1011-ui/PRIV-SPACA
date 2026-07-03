@@ -577,10 +577,143 @@ async function tursoEnsure() {
       value TEXT,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ps_diagnostics (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'check',
+      severity TEXT NOT NULL,
+      category TEXT NOT NULL,
+      code TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      data_json TEXT,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      resolved_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_diagnostics_created ON ps_diagnostics (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ps_diagnostics_resolved_created ON ps_diagnostics (resolved, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ps_diagnostics_code ON ps_diagnostics (code, resolved);
   `);
   _tursoReady = true;
   return true;
 }
+
+// ---------- Shared diagnostics logic (ESM) ----------
+let _diagnosticsLibPromise = null;
+function getDiagnosticsLib() {
+  if (!_diagnosticsLibPromise) {
+    _diagnosticsLibPromise = import('./diagnostics-lib.mjs').catch(e => {
+      console.error('[diagnostics] failed to load diagnostics-lib.mjs', e.message);
+      return null;
+    });
+  }
+  return _diagnosticsLibPromise;
+}
+
+// ---------- Diagnostics persistence ----------
+function generateId(prefix = 'id') {
+  return prefix + '_' + Math.random().toString(36).slice(2) + '_' + nowMs().toString(36);
+}
+async function tursoQuery(sql, args = []) {
+  if (!isTursoConfigured()) return { rows: [] };
+  await tursoEnsure();
+  return tursoClient().execute({ sql, args });
+}
+async function insertDiagnostics(problems, { kind = 'check' } = {}) {
+  if (!isTursoConfigured() || !problems.length) return 0;
+  await tursoEnsure();
+  const c = tursoClient();
+  const ts = nowMs();
+  let inserted = 0;
+  for (const p of problems) {
+    const id = generateId('diag');
+    try {
+      await c.execute({
+        sql: `INSERT INTO ps_diagnostics
+              (id, kind, severity, category, code, title, description, data_json, resolved, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+        args: [id, kind, p.severity, p.category, p.code, p.title, p.description || '', JSON.stringify(p.data || {}), ts, ts],
+      });
+      inserted++;
+    } catch (e) {
+      console.warn('[diagnostics] insert failed', e.message);
+    }
+  }
+  return inserted;
+}
+async function resolveDiagnostics(codes) {
+  if (!isTursoConfigured() || !codes.length) return 0;
+  await tursoEnsure();
+  const placeholders = codes.map(() => '?').join(',');
+  const rs = await tursoClient().execute({
+    sql: `UPDATE ps_diagnostics SET resolved = 1, resolved_at = ?, updated_at = ?
+          WHERE resolved = 0 AND code IN (${placeholders})`,
+    args: [nowMs(), nowMs(), ...codes],
+  });
+  return Number(rs.rowsAffected || 0);
+}
+async function fetchUnresolvedDiagnostics({ limit = 200, severity } = {}) {
+  if (!isTursoConfigured()) return [];
+  await tursoEnsure();
+  let sql = 'SELECT * FROM ps_diagnostics WHERE resolved = 0';
+  const args = [];
+  if (severity && severity !== 'all') {
+    sql += ' AND severity = ?';
+    args.push(severity);
+  }
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  args.push(limit);
+  const rs = await tursoClient().execute({ sql, args });
+  return (rs.rows || []).map(r => ({
+    id: r.id,
+    kind: r.kind,
+    severity: r.severity,
+    category: r.category,
+    code: r.code,
+    title: r.title,
+    description: r.description,
+    data: safeJson(String(r.data_json || '{}'), {}),
+    resolved: !!r.resolved,
+    createdAt: Number(r.created_at || 0),
+    updatedAt: Number(r.updated_at || 0),
+    resolvedAt: r.resolved_at ? Number(r.resolved_at) : null,
+  }));
+}
+async function runAndStoreDiagnostics() {
+  const lib = await getDiagnosticsLib();
+  const now = nowMs();
+  let db = null;
+  let dbReachable = false;
+  let dbError = null;
+  try {
+    db = await fetchPrimaryDatabase();
+    dbReachable = true;
+  } catch (e) {
+    dbError = e.message;
+  }
+  const problems = lib
+    ? await lib.runFullDiagnostics({
+        db,
+        now,
+        dbReachable,
+        dbError,
+        query: isTursoConfigured() ? tursoQuery : undefined,
+      })
+    : [];
+  const activeCodes = new Set(problems.map(p => p.code));
+  const inserted = await insertDiagnostics(problems);
+  let resolved = 0;
+  if (isTursoConfigured()) {
+    const allCodes = await tursoQuery('SELECT DISTINCT code FROM ps_diagnostics WHERE resolved = 0');
+    const codesToResolve = (allCodes.rows || [])
+      .map(r => r.code)
+      .filter(code => !activeCodes.has(code));
+    resolved = await resolveDiagnostics(codesToResolve);
+  }
+  return { ok: true, checkedAt: now, problemsFound: problems.length, inserted, resolved, codes: [...activeCodes] };
+}
+
 async function syncTursoMirror(db) {
   if (!isTursoConfigured()) return false;
   await tursoEnsure();
@@ -1191,6 +1324,78 @@ app.get('/api/diag', authMiddleware, async (req, res) => {
     out.error = e.message;
   }
   res.json(out);
+});
+
+// ---------- Diagnostics & agent-facing problem feed ----------
+const _reportIssueBuckets = new Map(); // ip -> { count, resetAt }
+function reportIssueRateLimit(ip) {
+  const now = nowMs();
+  let b = _reportIssueBuckets.get(ip);
+  if (!b || b.resetAt < now) { b = { count: 0, resetAt: now + 15 * 60 * 1000 }; _reportIssueBuckets.set(ip, b); }
+  b.count++;
+  return b.count <= 10;
+}
+app.post('/api/report-issue', async (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+  if (!reportIssueRateLimit(ip)) return res.status(429).json({ error: 'Rate limit exceeded' });
+  const body = req.body || {};
+  const title = String(body.title || 'User reported issue').slice(0, 120);
+  const description = String(body.description || '').slice(0, 2000);
+  const category = String(body.category || 'user_report').slice(0, 40);
+  if (!description && !body.data) return res.status(400).json({ error: 'Description or data required' });
+  const lib = await getDiagnosticsLib();
+  const SEVERITIES = lib ? lib.SEVERITIES : { WARNING: 'warning' };
+  const problem = {
+    severity: SEVERITIES.WARNING,
+    category: category || 'system',
+    code: 'user_report',
+    title,
+    description,
+    data: { reporterIp: ip, ...(body.data || {}) },
+  };
+  await insertDiagnostics([problem], { kind: 'user_report' });
+  res.json({ ok: true, message: 'Issue reported' });
+});
+app.post('/api/diagnostics/run', authMiddleware, async (req, res) => {
+  const dbAuth = await fetchDatabase();
+  const adminUser = dbAuth.users.find(u => u.id === req.userId);
+  if (!isAdminUser(adminUser)) return res.status(403).json({ error: 'Admin only' });
+  try {
+    const result = await runAndStoreDiagnostics();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+app.get('/api/diagnostics', authMiddleware, async (req, res) => {
+  const dbAuth = await fetchDatabase();
+  const adminUser = dbAuth.users.find(u => u.id === req.userId);
+  if (!isAdminUser(adminUser)) return res.status(403).json({ error: 'Admin only' });
+  try {
+    const severity = req.query.severity || 'all';
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
+    const problems = await fetchUnresolvedDiagnostics({ severity, limit });
+    res.json({ ok: true, count: problems.length, problems });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+app.post('/api/diagnostics/:id/resolve', authMiddleware, async (req, res) => {
+  const dbAuth = await fetchDatabase();
+  const adminUser = dbAuth.users.find(u => u.id === req.userId);
+  if (!isAdminUser(adminUser)) return res.status(403).json({ error: 'Admin only' });
+  try {
+    const id = req.params.id;
+    if (!isTursoConfigured()) return res.status(503).json({ error: 'Turso not configured' });
+    await tursoEnsure();
+    const rs = await tursoClient().execute({
+      sql: 'UPDATE ps_diagnostics SET resolved = 1, resolved_at = ?, updated_at = ? WHERE id = ?',
+      args: [nowMs(), nowMs(), id],
+    });
+    res.json({ ok: true, resolved: Number(rs.rowsAffected || 0) > 0 });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // ---------- Auth Routes ----------

@@ -12,3 +12,5 @@ backups/turso_before_neon_replacement_*.json
 test_results.json
 backups/db-wipe-*.json
 dist/
+data/diagnostics.json
+!data/.gitkeep
