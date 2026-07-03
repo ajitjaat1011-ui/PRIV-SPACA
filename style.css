@@ -250,51 +250,6 @@ img{user-select:none;-webkit-user-drag:none}
   padding:0 16px;background:var(--bg-2);border-bottom:1px solid var(--line);
   z-index:5;height:54px;position:relative;overflow:hidden;
 }
-.topbar-flowers-wrap{
-  /* Keep the flower garden inside the right-side banner strip only:
-     after the logo/username area and before the heart action. */
-  position:absolute;
-  top:0;bottom:0;
-  left:clamp(172px, 42vw, 300px);
-  right:68px;
-  pointer-events:none;z-index:1;overflow:hidden;
-  -webkit-mask-image:linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 10px), transparent 100%);
-  mask-image:linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 10px), transparent 100%);
-}
-.flower-container{
-  position:absolute;bottom:-4px;pointer-events:none;opacity:0;
-  transform:translateY(28px) scale(0.2) rotate(-8deg);
-  transition:opacity 0.95s cubic-bezier(0.34,1.56,0.64,1),
-             transform 0.95s cubic-bezier(0.34,1.56,0.64,1);
-  filter:hue-rotate(var(--fl-hue, 0deg)) drop-shadow(0 0 8px rgba(255,140,0,0.6));
-  transform-origin:bottom center;
-}
-.flower-container svg{display:block;transform-origin:bottom center}
-.flower-container.animate{
-  opacity:0.95;transform:translateY(0) scale(1) rotate(0deg);
-  animation:flowerSway calc(3.6s + (var(--fl-idx, 0) * 0.35s)) ease-in-out calc(0.95s + (var(--fl-idx, 0) * 0.08s)) infinite,
-            flowerGlow calc(2.8s + (var(--fl-idx, 0) * 0.22s)) ease-in-out calc(0.95s + (var(--fl-idx, 0) * 0.08s)) infinite;
-}
-@keyframes flowerSway{
-  0%,100%{transform:translateY(0) scale(1) rotate(calc(var(--fl-sway, 1) * -2.5deg));}
-  50%{transform:translateY(-3px) scale(1.03) rotate(calc(var(--fl-sway, 1) * 2.5deg));}
-}
-@keyframes flowerGlow{
-  0%,100%{filter:hue-rotate(var(--fl-hue, 0deg)) drop-shadow(0 0 6px rgba(255,140,0,0.45));}
-  50%{filter:hue-rotate(var(--fl-hue, 0deg)) drop-shadow(0 0 12px rgba(255,180,60,0.85));}
-}
-.flower-sparkle{
-  position:absolute;border-radius:50%;pointer-events:none;
-  opacity:0;animation:flowerSparkleTwinkle 2.4s ease-in-out infinite;
-}
-@keyframes flowerSparkleTwinkle{
-  0%,100%{opacity:0;transform:scale(0.4);}
-  50%{opacity:0.95;transform:scale(1.15);}
-}
-@media (prefers-reduced-motion: reduce){
-  .flower-container.animate{animation:none;}
-  .flower-sparkle{animation:none;opacity:0.7;}
-}
 .topbar-left-icon{justify-self:start}
 .topbar > .ghost-btn:last-child{justify-self:end}
 .brand-row{display:flex;align-items:center;gap:10px}
@@ -307,24 +262,66 @@ img{user-select:none;-webkit-user-drag:none}
 .ig-username-dot{width:8px;height:8px;border-radius:50%;background:#ff3040}
 .brand-wordmark.hidden{display:none !important}
 
-/* IG-style cursive wordmark, centered */
+/* IG-style cursive wordmark, centered — animated gradient flow + periodic shine sweep */
 .brand-wordmark{
   font-family:'Dancing Script', 'Playfair Display', cursive;
-  font-weight:700;font-size:32px;line-height:1;
+  font-weight:700;font-size:32px;line-height:1.1;
   color:var(--text);letter-spacing:0.4px;
   text-align:center;justify-self:center;position:relative;z-index:3;
-  background:linear-gradient(135deg, #fff3b0 0%, #ffbe0b 35%, #ff007f 75%, #9900ff 100%);
-  background-size:200% 200%;
+  background:linear-gradient(120deg, #ffd23f 0%, #ff8b3d 22%, #ff3d77 48%, #c33dff 72%, #3d8bff 100%);
+  background-size:260% 260%;
   -webkit-background-clip:text;background-clip:text;
   -webkit-text-fill-color:transparent;
-  filter:drop-shadow(0 2px 8px rgba(255,115,0,0.35));
-  animation:floralBrandShimmer 7s ease infinite;
+  filter:drop-shadow(0 2px 10px rgba(255,90,140,0.32));
+  animation:brandGradientFlow 8s ease-in-out infinite,
+            brandPopIn 0.65s cubic-bezier(0.22,1.4,0.42,1) both;
   user-select:none;padding:0 6px;cursor:pointer;
+  transition:transform .18s cubic-bezier(0.34,1.56,0.64,1), filter .18s ease;
+  -webkit-tap-highlight-color:transparent;
 }
-@keyframes floralBrandShimmer{
+.brand-wordmark::after{
+  content:attr(data-text);
+  position:absolute;inset:0;
+  padding:inherit;
+  font:inherit;letter-spacing:inherit;line-height:inherit;
+  text-align:inherit;
+  pointer-events:none;
+  background:linear-gradient(100deg,
+    transparent 30%,
+    rgba(255,255,255,0.9) 46%,
+    rgba(255,255,255,0.95) 50%,
+    rgba(255,255,255,0.9) 54%,
+    transparent 70%);
+  background-size:300% 100%;
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+  opacity:0;
+  animation:brandShineSweep 5.5s ease-in-out infinite;
+  animation-delay:1.1s;
+}
+@keyframes brandGradientFlow{
   0%{background-position:0% 50%}
   50%{background-position:100% 50%}
   100%{background-position:0% 50%}
+}
+@keyframes brandShineSweep{
+  0%, 62%{background-position:180% 0;opacity:0}
+  70%{opacity:.95}
+  84%{background-position:-80% 0;opacity:.95}
+  92%, 100%{background-position:-80% 0;opacity:0}
+}
+@keyframes brandPopIn{
+  0%{opacity:0;transform:scale(0.72) translateY(6px);filter:blur(4px)}
+  60%{opacity:1;transform:scale(1.05) translateY(0);filter:blur(0)}
+  100%{opacity:1;transform:scale(1) translateY(0)}
+}
+.brand-wordmark:active{
+  transform:scale(0.94);
+  filter:drop-shadow(0 1px 6px rgba(255,90,140,0.45)) brightness(1.08);
+}
+@media (prefers-reduced-motion: reduce){
+  .brand-wordmark{animation:brandPopIn 0.4s ease both;background-position:0% 50%}
+  .brand-wordmark::after{animation:none;opacity:0}
 }
 .ig-username-header,.topbar .ghost-btn{position:relative;z-index:3}
 .topbar .ghost-btn{padding:8px;color:var(--text)}
@@ -2220,7 +2217,6 @@ img{user-select:none;-webkit-user-drag:none}
   .back-btn{display:inline-flex}
   .chat-header{padding:12px 14px}
   .topbar{padding:0 14px}
-  .topbar-flowers-wrap{left:clamp(150px, 43vw, 230px);right:58px}
   .voice-note{width:min(286px,78vw)}
   .message .bubble.voice-only{min-width:min(286px,78vw)}
   .pin-input input{width:48px;height:56px;font-size:22px}
