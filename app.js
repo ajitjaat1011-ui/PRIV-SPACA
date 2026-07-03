@@ -3038,8 +3038,16 @@ async function loadPriv() {
     const data = await api('/priv');
     State.privSnaps = data.snaps || [];
     State.privStreaks = data.streaks || [];
+    updatePrivFabBadge();
     renderPrivStack();
   } catch (_) {}
+}
+function updatePrivFabBadge() {
+  const badge = $('#privFabBadge');
+  if (!badge) return;
+  const count = (State.privSnaps || []).length;
+  badge.textContent = String(Math.min(99, count));
+  badge.classList.toggle('hidden', count === 0);
 }
 function renderPrivStack() {
   const root = $('#privStack');
@@ -3054,23 +3062,26 @@ function renderPrivStack() {
   const ids = snaps.map(s => s.id).join('|');
   if (_privStackOrder.join('|') !== ids) _privStackOrder = snaps.map(s => s.id);
   const stack = document.createElement('div');
-  stack.className = 'priv-stack-container';
+  stack.className = 'stack-container priv-stack-container';
   const ordered = _privStackOrder.map(id => snaps.find(s => s.id === id)).filter(Boolean);
   ordered.forEach((snap, index) => {
     const depth = ordered.length - index - 1;
     const card = document.createElement('button');
     card.type = 'button';
-    card.className = 'priv-stack-card';
+    card.className = 'card-rotate-disabled priv-stack-rotate';
+    const inner = document.createElement('div');
+    inner.className = 'card priv-stack-card';
     card.style.zIndex = String(index + 1);
     card.style.transform = `translate(${Math.min(depth * 7, 24)}px, ${Math.min(depth * 5, 18)}px) rotate(${((depth % 5) - 2) * 2.2}deg) scale(${1 - Math.min(depth * .045, .16)})`;
     const author = snap.author || {};
     const count = Number(snap.streak && snap.streak.count) || 0;
-    card.innerHTML = `
-      <img src="${escapeHtml(snap.imageUrl)}" alt="PRIV" loading="lazy" />
+    inner.innerHTML = `
+      <img class="card-image" src="${escapeHtml(snap.imageUrl)}" alt="PRIV" loading="lazy" />
       <div class="priv-card-shade"></div>
       <div class="priv-card-meta"><span class="avatar sm"></span><strong>${escapeHtml(author.displayName || author.username || 'Member')}</strong>${count ? `<em>🔥 ${count}</em>` : ''}</div>
       ${snap.caption ? `<div class="priv-card-caption">${escapeHtml(snap.caption)}</div>` : ''}
     `;
+    card.appendChild(inner);
     renderAvatar(card.querySelector('.avatar'), author);
     card.addEventListener('click', () => {
       if (index === ordered.length - 1) openPrivViewer(snap);
@@ -3117,6 +3128,7 @@ async function sendPrivFile(file) {
     const res = await api('/priv/send', { method: 'POST', body: { imageUrl: up.url, audience } });
     toast('PRIV sent to ' + (res.recipients || 0) + ' friends', 'success');
     closePrivCamera();
+    $('#privPanel')?.classList.remove('hidden');
     await loadPriv();
   } catch (err) { toast(err.message || 'PRIV send failed', 'error'); }
   finally { if (btn) btn.disabled = false; }
@@ -3173,7 +3185,11 @@ async function capturePrivCamera() {
 }
 function bindPriv() {
   const fab = $('#privChatFab');
-  if (fab) fab.addEventListener('click', openPrivCamera);
+  const panel = $('#privPanel');
+  if (fab && panel) fab.addEventListener('click', () => {
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) loadPriv();
+  });
   const btn = $('#privCaptureBtn');
   if (btn) btn.addEventListener('click', openPrivCamera);
   $('#privCameraClose')?.addEventListener('click', () => closePrivCamera(true));
