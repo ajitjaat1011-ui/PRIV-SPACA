@@ -1645,7 +1645,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       if (isTursoConfigured()) {
         const turso = tursoClient();
         const r = await turso.execute({
-          sql: "SELECT data_json FROM ps_users WHERE LOWER(username) = ? OR LOWER(email) = ? LIMIT 1",
+          sql: "SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1",
           args: [idLower, idLower]
         });
         if (r.rows && r.rows.length > 0) {
@@ -1720,7 +1720,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       if (isTursoConfigured()) {
         const turso = tursoClient();
         const r = await turso.execute({
-          sql: "SELECT data_json FROM ps_users WHERE LOWER(username) = ? OR LOWER(email) = ? LIMIT 1",
+          sql: "SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1",
           args: [idLower, idLower]
         });
         if (r.rows && r.rows.length > 0) {
