@@ -5,16 +5,23 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v54-fix-blank-load';
-const STATIC_CACHE = 'priv-spaca-static-' + SW_VERSION;
-const RUNTIME_CACHE = 'priv-spaca-runtime-' + SW_VERSION;
+const SW_VERSION = 'priv-spaca-v55-icons-wired';
+const STATIC_CACHE = 'priv-spaca-static-v55-icons-wired';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v55-icons-wired';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=54-fix-blank-load',
-  '/app.js?v=54-fix-blank-load',
+  '/style.css?v=55-icons-wired',
+  '/app.js?v=55-icons-wired',
   '/manifest.json',
+  '/favicon.ico',
+  '/favicon-16x16.png',
+  '/favicon-32x32.png',
+  '/apple-touch-icon.png',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (event) => {
