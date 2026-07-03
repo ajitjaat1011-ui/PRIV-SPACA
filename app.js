@@ -7476,8 +7476,36 @@ function renderSearch(query) {
   if (shown.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'search-empty';
-    empty.textContent = q ? `No members match "${escapeHtml(q)}"` : 'No other members yet.';
-    list.appendChild(empty);
+    if (q) {
+      empty.textContent = `No members match "${escapeHtml(q)}"`;
+      list.appendChild(empty);
+      return;
+    }
+    // Empty state with a 'Refresh app' button so the user can self-heal
+    // from a stale SW / broken cache without having to clear site data
+    // manually. Common after deploys.
+    const refreshBtn = document.createElement('button');
+    refreshBtn.className = 'btn-secondary';
+    refreshBtn.style.cssText = 'margin-top:14px;padding:10px 18px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.04);color:inherit;font:600 13px/1 inherit;cursor:pointer';
+    refreshBtn.textContent = 'Refresh app';
+    refreshBtn.addEventListener('click', () => {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          for (const r of regs) r.unregister();
+          if (window.caches && caches.keys) {
+            caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
+          }
+          setTimeout(() => { try { window.location.reload(true); } catch (_) { window.location.reload(); } }, 400);
+        });
+      } else {
+        window.location.reload();
+      }
+    });
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px';
+    wrap.appendChild(empty);
+    wrap.appendChild(refreshBtn);
+    list.appendChild(wrap);
     return;
   }
   shown.forEach(u => {
@@ -7678,7 +7706,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=66-perf-batch').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=67-self-heal').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
@@ -7850,6 +7878,34 @@ installAudioPauseGuard();
 function boot() {
   const yr = $('#yr');
   if (yr) yr.textContent = String(new Date().getFullYear());
+
+  // v67: Self-heal broken app state. If a previous deploy left a stale SW
+  // or empty caches, the user sees a broken app (empty feed, no members,
+  // no messages). On boot, do a quick liveness check and force-recover
+  // by unregistering the SW + clearing all caches + hard reloading.
+  try {
+    const healFlag = sessionStorage.getItem('ps_heal_v67');
+    if (!healFlag) {
+      sessionStorage.setItem('ps_heal_v67', '1');
+      fetch('/api/health', { cache: 'no-store' }).then(r => {
+        if (r && r.ok) return; // health check passed, nothing to do
+        // Health failed despite us fetching — SW might be broken
+      }).catch(() => {
+        // Network failed entirely. If a SW is active, unregister it and
+        // hard-reload to recover from broken cache state.
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          console.warn('[heal] network failed with active SW; unregistering + reloading');
+          navigator.serviceWorker.getRegistrations().then(regs => {
+            for (const r of regs) r.unregister();
+          });
+          if (window.caches && caches.keys) {
+            caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
+          }
+          setTimeout(() => { try { window.location.reload(true); } catch (_) { window.location.reload(); } }, 800);
+        }
+      });
+    }
+  } catch (_) { /* don't block boot on heal logic */ }
 
   // Hard anti-stuck guard: if any startup/network/cache problem leaves the splash
   // visible, move to the login screen instead of showing an endless loader.
