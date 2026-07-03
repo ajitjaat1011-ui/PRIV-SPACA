@@ -1,0 +1,342 @@
+[
+  {
+    "name": "signup user 0 (tester_3bto9z)",
+    "ok": true,
+    "detail": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJudHhfaXk2YWNhbiIsInVzZXJuYW1lIjoidGVzdGVyXzNidG85eiIsInN2IjowLCJpYXQiOjE3ODMwNzMyMzksImV4cCI6MTc4MzY3ODAzOX0.qmGmWu6KyXL4tv3nL91yg"
+  },
+  {
+    "name": "signup user 1 (tester_dfa96y)",
+    "ok": true,
+    "detail": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJwcHVfdjR1a2I2aiIsInVzZXJuYW1lIjoidGVzdGVyX2RmYTk2eSIsInN2IjowLCJpYXQiOjE3ODMwNzMyNDEsImV4cCI6MTc4MzY3ODA0MX0.Q6nkVXrKERGpgl6tCSGFO"
+  },
+  {
+    "name": "signup user 2 (tester_6k5psg)",
+    "ok": true,
+    "detail": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJyaWNfcnUwMXRociIsInVzZXJuYW1lIjoidGVzdGVyXzZrNXBzZyIsInN2IjowLCJpYXQiOjE3ODMwNzMyNDQsImV4cCI6MTc4MzY3ODA0NH0.YHzkLgI9qIBKwYcwwJY0j"
+  },
+  {
+    "name": "signup user 3 (tester_y137xm)",
+    "ok": true,
+    "detail": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJ0bDlfYnlkdWhndCIsInVzZXJuYW1lIjoidGVzdGVyX3kxMzd4bSIsInN2IjowLCJpYXQiOjE3ODMwNzMyNDYsImV4cCI6MTc4MzY3ODA0Nn0.z6171migmQSmvm8kBkewQ"
+  },
+  {
+    "name": "signup user 4 (tester_pml415)",
+    "ok": true,
+    "detail": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJ2OTBfY28ya3RmcSIsInVzZXJuYW1lIjoidGVzdGVyX3BtbDQxNSIsInN2IjowLCJpYXQiOjE3ODMwNzMyNDgsImV4cCI6MTc4MzY3ODA0OH0.vr-rtTmo-4oWExda9AkaV"
+  },
+  {
+    "name": "signup user 5 (tester_q85a8f)",
+    "ok": true,
+    "detail": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJ3dmpfMW9zbzV2NyIsInVzZXJuYW1lIjoidGVzdGVyX3E4NWE4ZiIsInN2IjowLCJpYXQiOjE3ODMwNzMyNTAsImV4cCI6MTc4MzY3ODA1MH0.xhM9ZfJ3522aX_HcU5jj4"
+  },
+  {
+    "name": "mass signup overall",
+    "ok": true,
+    "detail": "6/6 succeeded"
+  },
+  {
+    "name": "duplicate email rejected",
+    "ok": true,
+    "detail": "{\"error\":\"Email already registered\"}"
+  },
+  {
+    "name": "duplicate username rejected",
+    "ok": true,
+    "detail": "{\"error\":\"Username already taken\"}"
+  },
+  {
+    "name": "mass login overall",
+    "ok": true,
+    "detail": "6/6"
+  },
+  {
+    "name": "login via email identifier",
+    "ok": true,
+    "detail": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJudHhfaXk2YWNhbiIsInVzZXJuYW1lIjoidGVzdGVyXzNidG85eiIsInN2IjowLCJpYXQiOjE3ODMwNzMyNjUsImV4cCI6MTc4MzY3ODA2NX0.HF6XbHA2Cguz2uLZG8jnm"
+  },
+  {
+    "name": "wrong password rejected",
+    "ok": true,
+    "detail": "{\"error\":\"Invalid username/email or password.\"}"
+  },
+  {
+    "name": "nonexistent user login rejected",
+    "ok": true,
+    "detail": "{\"error\":\"Invalid username/email or password.\"}"
+  },
+  {
+    "name": "GET /api/auth/me",
+    "ok": true,
+    "detail": "{\"user\":{\"id\":\"usr_mr4rrntx_iy6acan\",\"email\":\"tester_3bto9z@example.com\",\"username\":\"tester_3bto9z\",\"displayName\":\"Tester 0\",\"bio\":\"\",\"photoUrl\":\"\",\"createdAt\":1783073238117,\"publicKey\":null,\"verified"
+  },
+  {
+    "name": "auth/me without token rejected",
+    "ok": true,
+    "detail": "{\"error\":\"Missing or invalid token\"}"
+  },
+  {
+    "name": "GET /api/users",
+    "ok": true,
+    "detail": "{\"users\":[{\"id\":\"usr_mr1ncc1m_ct06etf\",\"email\":\"krishnajat292@gmail.com\",\"username\":\"Anushka_1011\",\"displayName\":\"ANUSHKA JAAT\",\"bio\":\"\",\"photoUrl\":\"\",\"createdAt\":1782884406010,\"publicKey\":\"BN9OsksigYR2mLxtPmlTlvqlg4QM6w24Emkq5_ITzn8GQrHue0lqDh8j4p6ldX01_nDiqIgIsZx-JylftahM15Y\",\"verified\":true,\"note"
+  },
+  {
+    "name": "profile update",
+    "ok": true,
+    "detail": "{\"user\":{\"id\":\"usr_mr4rrntx_iy6acan\",\"email\":\"tester_3bto9z@example.com\",\"username\":\"tester_3bto9z\",\"displayName\":\"Tester Zero Updated\",\"bio\":\"Hello from test suite!\",\"photoUrl\":\"\",\"createdAt\":1783073"
+  },
+  {
+    "name": "group message send (tester_3bto9z)",
+    "ok": true,
+    "detail": "{\"message\":{\"id\":\"msg_mr4rsiav_9ppse3j\",\"roomId\":\"general-group\",\"userId\":\"usr_mr4rrntx_iy6acan\",\"text\":\"Hello group from tester_3bto9z #0\",\"imageUrl\":null,\"replyTo\":null,\"authorSnapshot\":{\"id\":\"usr_m"
+  },
+  {
+    "name": "group message send (tester_dfa96y)",
+    "ok": true,
+    "detail": "{\"message\":{\"id\":\"msg_mr4rskju_gsbt3vb\",\"roomId\":\"general-group\",\"userId\":\"usr_mr4rrppu_v4ukb6j\",\"text\":\"Hello group from tester_dfa96y #1\",\"imageUrl\":null,\"replyTo\":null,\"authorSnapshot\":{\"id\":\"usr_m"
+  },
+  {
+    "name": "group message send (tester_6k5psg)",
+    "ok": true,
+    "detail": "{\"message\":{\"id\":\"msg_mr4rsn3p_s6624j5\",\"roomId\":\"general-group\",\"userId\":\"usr_mr4rrric_ru01thr\",\"text\":\"Hello group from tester_6k5psg #2\",\"imageUrl\":null,\"replyTo\":null,\"authorSnapshot\":{\"id\":\"usr_m"
+  },
+  {
+    "name": "group message retrieval",
+    "ok": true,
+    "detail": "got 12 msgs"
+  },
+  {
+    "name": "empty group message rejected",
+    "ok": true,
+    "detail": "{\"error\":\"Empty message\"}"
+  },
+  {
+    "name": "send DM",
+    "ok": true,
+    "detail": "{\"message\":{\"id\":\"msg_mr4rss0r_n9u8b3d\",\"roomId\":\"dm:usr_mr4rrntx_iy6acan:usr_mr4rrppu_v4ukb6j\",\"userId\":\"usr_mr4rrntx_iy6acan\",\"text\":\"Hey, this is a DM test\",\"imageUrl\":null,\"replyTo\":null,\"authorSn"
+  },
+  {
+    "name": "recipient can read DM",
+    "ok": true,
+    "detail": "{\"messages\":[{\"id\":\"msg_mr4rss0r_n9u8b3d\",\"roomId\":\"dm:usr_mr4rrntx_iy6acan:usr_mr4rrppu_v4ukb6j\",\"userId\":\"usr_mr4rrntx_iy6acan\",\"text\":\"Hey, this is a DM test\",\"imageUrl\":null,\"replyTo\":null,\"authorSnapshot\":{\"id\":\"usr_mr4rrntx_iy6acan\",\"username\":\"tester_3bto9z\",\"displayName\":\"Tester Zero Updated"
+  },
+  {
+    "name": "DM forbidden to 3rd party",
+    "ok": true,
+    "detail": "{\"error\":\"Forbidden\"}"
+  },
+  {
+    "name": "delete others' message forbidden",
+    "ok": true,
+    "detail": "{\"error\":\"Forbidden\"}"
+  },
+  {
+    "name": "delete own message",
+    "ok": true,
+    "detail": "{\"ok\":true,\"undoUntil\":1785665298987}"
+  },
+  {
+    "name": "restore own message",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "schedule message",
+    "ok": true,
+    "detail": "{\"scheduled\":{\"id\":\"sched_mr4rt3fj_16hu9mh\",\"roomId\":\"general-group\",\"userId\":\"usr_mr4rrntx_iy6acan\",\"text\":\"Scheduled hello\",\"imageUrl\":null,\"replyTo\":null,\"authorSnapshot\":{\"id\":\"usr_mr4rrntx_iy6aca"
+  },
+  {
+    "name": "list scheduled messages",
+    "ok": true,
+    "detail": "{\"scheduled\":[{\"id\":\"sched_mr4rt3fj_16hu9mh\",\"roomId\":\"general-group\",\"userId\":\"usr_mr4rrntx_iy6acan\",\"text\":\"Scheduled hello\",\"imageUrl\":null,\"replyTo\":null,\"authorSnapshot\":{\"id\":\"usr_mr4rrntx_iy6ac"
+  },
+  {
+    "name": "schedule reject deliverAt too soon",
+    "ok": true,
+    "detail": "{\"error\":\"deliverAt must be at least 5s in future\"}"
+  },
+  {
+    "name": "cancel scheduled message",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "heartbeat",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "send typing indicator",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "read typing indicator (other user sees it)",
+    "ok": true,
+    "detail": "{\"typing\":[{\"id\":\"usr_mr4rrntx_iy6acan\",\"username\":\"tester_3bto9z\",\"displayName\":\"Tester Zero Updated\"}]}"
+  },
+  {
+    "name": "follow user",
+    "ok": true,
+    "detail": "{\"ok\":true,\"following\":1,\"followers\":1,\"followingIds\":[\"usr_mr4rrppu_v4ukb6j\"],\"targetFollowerIds\":[\"usr_mr4rrntx_iy6acan\"]}"
+  },
+  {
+    "name": "profile shows relationship iFollow=True",
+    "ok": true,
+    "detail": "{\"user\":{\"id\":\"usr_mr4rrppu_v4ukb6j\",\"email\":\"tester_dfa96y@example.com\",\"username\":\"tester_dfa96y\",\"displayName\":\"Tester 1\",\"bio\":\"\",\"photoUrl\":\"\",\"createdAt\":1783073240562,\"publicKey\":null,\"verified\":false,\"note\":null,\"followers\":1,\"following\":0,\"followerIds\":[\"usr_mr4rrntx_iy6acan\"],\"followingIds"
+  },
+  {
+    "name": "unfollow user",
+    "ok": true,
+    "detail": "{\"ok\":true,\"following\":0,\"followers\":0,\"followingIds\":[],\"targetFollowerIds\":[]}"
+  },
+  {
+    "name": "block user",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "blocked user hidden from list",
+    "ok": true,
+    "detail": "visible=['usr_mr1ncc1m_ct06etf', 'usr_mr1ngure_4ouuzfn', 'usr_mr1p9tls_xj3xdw1', 'usr_mr215z7d_fwcmx5u', 'usr_mr2x5o2n_bvp4q6w', 'usr_mr30jna9_2q7b2jx', 'usr_mr3hf492_akpy5vw', 'usr_mr4mln9e_5i7vhne', 'usr_mr4p4ykj_lc35vcy', 'usr_mr4p5gg3_doo1yx4', 'usr_mr4p725c_zd7dggp', 'usr_mr4p8alm_zrwtayd', 'usr_mr4p8cl8_fehtdi2', 'usr_mr4p8clp_5sf03nb', 'usr_mr4p8cly_ot03k9y', 'usr_mr4p8cm1_9qrgtps', 'usr_mr4p8cpr_sb4096b', 'usr_mr4p8cqb_p0h8s53', 'usr_mr4p8cqm_wkyzv6r', 'usr_mr4p8crg_ciwdcgj', 'usr_mr4p8csg_3ytpo59', 'usr_mr4p8csh_hyhgrbl', 'usr_mr4p8t8i_28rml3w', 'usr_mr4pn64t_v68bfnj', 'usr_mr4pna17_63cjmyk', 'usr_mr4pna20_wwc9tnm', 'usr_mr4pnb4y_ynmfjyc', 'usr_mr4pnblh_qx78k7g', 'usr_mr4po508_p59851u', 'usr_mr4po6q1_96dcst1', 'usr_mr4po8en_re38jsj', 'usr_mr4poinj_gho7nh2', 'usr_mr4pomkw_12qmhfs', 'usr_mr4pomp1_45x3wa2', 'usr_mr4pompm_ktdbxuu', 'usr_mr4pompo_htkenq3', 'usr_mr4pompq_9inig4l', 'usr_mr4pomql_7q83cbn', 'usr_mr4pons0_4h6z73q', 'usr_mr4pontb_qohalex', 'usr_mr4ponyv_qjyxh4f', 'usr_mr4poo16_kgsus76', 'usr_mr4pqxr2_jkiovfx', 'usr_mr4pr1jp_lojni3a', 'usr_mr4pr1kb_dw4tqio', 'usr_mr4pr1kb_7rrm5rd', 'usr_mr4pr1l1_lrhbjq7', 'usr_mr4pr1l5_wiq45bk', 'usr_mr4pr1p2_jj2y69o', 'usr_mr4ptzhc_oylang8', 'usr_mr4pu5gk_6knbhr9', 'usr_mr4pu5i7_a0ubjpz', 'usr_mr4pu5lg_6w7l9f2', 'usr_mr4pu5ro_2zzubu1', 'usr_mr4pu5vz_objjbkm', 'usr_mr4pv172_yttmdzy', 'usr_mr4pv4tw_i0snphl', 'usr_mr4pv4uo_0cd9cfe', 'usr_mr4pv4uq_e7xffxi', 'usr_mr4pv6hj_dd7i0uz', 'usr_mr4qp15l_3ounv7v', 'usr_mr4qp3n0_m5i8y4v', 'usr_mr4qp52h_urzojz2', 'usr_mr4qp7id_ns1q2k8', 'usr_mr4qp9kk_izgfn9w', 'usr_mr4qpc59_u3m1mmi', 'usr_mr4rbmph_4scjyvn', 'usr_mr4rboyq_l9blgtz', 'usr_mr4rbqlc_cs8rdtp', 'usr_mr4rbs1s_cj8lfhx', 'usr_mr4rbu4y_w237msd', 'usr_mr4rbw9j_ekdysab', 'usr_mr4revj1_ilbwsde', 'usr_mr4rfaf5_c6awwuo', 'usr_mr4rfimj_el4hh4x', 'usr_mr4rfmw0_42056m5', 'usr_mr4rfr5h_93g7qg4', 'usr_mr4rhudz_paxn2t2', 'usr_mr4rjblz_dh8sz78', 'usr_mr4rpwhx_18l5nzj', 'usr_mr4rrntx_iy6acan', 'usr_mr4rrppu_v4ukb6j', 'usr_mr4rrtl9_byduhgt', 'usr_mr4rrv90_co2ktfq', 'usr_mr4rrwvj_1oso5v7']"
+  },
+  {
+    "name": "unblock user",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "create post",
+    "ok": true,
+    "detail": "{\"post\":{\"id\":\"post_mr4rtsjt_fy05adc\",\"userId\":\"usr_mr4rrntx_iy6acan\",\"text\":\"My first test post!\",\"imageUrl\":null,\"images\":[],\"videoUrl\":null,\"music\":null,\"style\":null,\"story\":false,\"storyExpiresAt\":null,\"audience\":null,\"isScratch\":false,\"likes\":[],\"comments\":[],\"authorSnapshot\":{\"id\":\"usr_mr4rrntx"
+  },
+  {
+    "name": "list posts",
+    "ok": true,
+    "detail": "12 posts, resp={\"posts\":[{\"id\":\"post_mr4rtsjt_fy05adc\",\"userId\":\"usr_mr4rrntx_iy6acan\",\"text\":\"My first test post!\",\"imageUrl\":null,\"images\":[],\"videoUrl\":null,\"music\":null,\"style\":null,\"story\":false,\"storyExpiresAt"
+  },
+  {
+    "name": "like post",
+    "ok": true,
+    "detail": "{\"liked\":true,\"likeCount\":1}"
+  },
+  {
+    "name": "unlike post (toggle)",
+    "ok": true,
+    "detail": "{\"liked\":false,\"likeCount\":0}"
+  },
+  {
+    "name": "comment on post",
+    "ok": true,
+    "detail": "{\"comment\":{\"id\":\"cmt_mr4ru0pp_a5b6qc0\",\"userId\":\"usr_mr4rrppu_v4ukb6j\",\"text\":\"Nice post!\",\"authorSnapshot\":{\"id\":\"usr_mr4rrppu_v4ukb6j\",\"username\":\"tester_dfa96y\",\"displayName\":\"Tester 1\",\"photoUrl\""
+  },
+  {
+    "name": "delete others' post forbidden",
+    "ok": true,
+    "detail": "{\"error\":\"Forbidden\"}"
+  },
+  {
+    "name": "delete own post",
+    "ok": true,
+    "detail": "{\"ok\":true,\"undoUntil\":1785665353097}"
+  },
+  {
+    "name": "restore own post",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "get notifications",
+    "ok": true,
+    "detail": "{\"notifications\":[{\"id\":\"ntf_mr4rss0r_8oucmq1\",\"userId\":\"usr_mr4rrppu_v4ukb6j\",\"kind\":\"message\",\"fromUserId\":\"usr_mr4rrntx_iy6acan\",\"fromSnapshot\":{\"id\":\"usr_mr4rrntx_iy6acan\",\"username\":\"tester_3bto9z\",\"displayName\":\"Tester Zero Updated\",\"photoUrl\":\"\"},\"postId\":null,\"commentId\":null,\"text\":\"Hey, th"
+  },
+  {
+    "name": "mark notifications seen",
+    "ok": true,
+    "detail": "{\"ok\":true,\"updated\":2}"
+  },
+  {
+    "name": "clear notifications",
+    "ok": true,
+    "detail": "{\"ok\":true,\"removed\":2}"
+  },
+  {
+    "name": "upload public key",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "fetch public key",
+    "ok": true,
+    "detail": "{\"userId\":\"usr_mr4rrntx_iy6acan\",\"publicKey\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}"
+  },
+  {
+    "name": "upload avatar photo",
+    "ok": true,
+    "detail": "{\"url\":\"https://res.cloudinary.com/ra1wkpqq/image/upload/v1783073370/priv-spaca/avatars/usr_mr4rrntx_iy6acan.png\",\"persisted\":true}"
+  },
+  {
+    "name": "reject invalid photo dataUrl",
+    "ok": true,
+    "detail": "{\"error\":\"Send a data URL: data:image/... , data:audio/... or data:video/...\"}"
+  },
+  {
+    "name": "send rtc signal",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "receive rtc signal",
+    "ok": true,
+    "detail": "{\"signals\":[{\"id\":\"rtc_mr4rukb1_m0wvrh6\",\"createdAt\":1783073373517,\"fromId\":\"usr_mr4rrntx_iy6acan\",\"author\":{\"id\":\"usr_mr4rrntx_iy6acan\",\"username\":\"tester_3bto9z\",\"displayName\":\"Tester Zero Updated\",\"photoUrl\":\"\"},\"signal\":{\"type\":\"offer\",\"sdp\":\"fake-sdp\"}}],\"now\":1783073376298}"
+  },
+  {
+    "name": "reset password via PIN",
+    "ok": true,
+    "detail": "{\"ok\":true,\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJ0bDlfYnlkdWhndCIsInVzZXJuYW1lIjoidGVzdGVyX3kxMzd4bSIsInN2IjoxLCJpYXQiOjE3ODMwNzMzNzgsImV4cCI6MTc4MzY3ODE3OH0.HO70fA5Gnzl36p6I9AR7qZDHhhBM51bwwMhJMAhwYmY\",\"user\":{\"id\":\"usr_mr4rrtl9_byduhgt\",\"email\":\"tester_y137xm@example"
+  },
+  {
+    "name": "login with new password after reset",
+    "ok": true,
+    "detail": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3JfbXI0cnJ0bDlfYnlkdWhndCIsInVzZXJuYW1lIjoidGVzdGVyX3kxMzd4bSIsInN2IjoxLCJpYXQiOjE3ODMwNzMzODAsImV4cCI6MTc4MzY3ODE4MH0.XdXoBNxqEQiX5sFlmcDNr"
+  },
+  {
+    "name": "reset with wrong PIN rejected",
+    "ok": true,
+    "detail": "{\"error\":\"Invalid reset details.\"}"
+  },
+  {
+    "name": "get vapid public key",
+    "ok": true,
+    "detail": "{\"key\":\"BG5msm1YiW_5l5N2ZNAvz5CkzQDGchg99ZSpkXVhXb4mm70X8vPPZs_7lrsaDXtvPns7QloRkh40vY4J5O0pqlI\"}"
+  },
+  {
+    "name": "push subscribe",
+    "ok": true,
+    "detail": "{\"ok\":true,\"devices\":1}"
+  },
+  {
+    "name": "push unsubscribe",
+    "ok": true,
+    "detail": "{\"ok\":true}"
+  },
+  {
+    "name": "health endpoint",
+    "ok": true,
+    "detail": "{\"ok\":true,\"name\":\"PRIV SPACA\",\"persistence\":\"turso-libsql-primary\",\"secondaryPersistence\":\"turso-structured-social\",\"runtime\":\"cloudflare-workers\",\"time\":1783073388272,\"version\":\"phase2-turso-json-pr"
+  },
+  {
+    "name": "unknown API route -> 404",
+    "ok": true,
+    "detail": "{\"error\":\"Route not found\",\"path\":\"/api/nonexistent-route-xyz\"}"
+  },
+  {
+    "name": "static homepage loads",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "admin panel removed / disabled",
+    "ok": true,
+    "detail": "{\"error\":\"Admin panel removed\"}"
+  }
+]
