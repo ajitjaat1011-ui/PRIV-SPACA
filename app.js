@@ -7487,19 +7487,22 @@ function renderSearch(query) {
     const refreshBtn = document.createElement('button');
     refreshBtn.className = 'btn-secondary';
     refreshBtn.style.cssText = 'margin-top:14px;padding:10px 18px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.04);color:inherit;font:600 13px/1 inherit;cursor:pointer';
-    refreshBtn.textContent = 'Refresh app';
-    refreshBtn.addEventListener('click', () => {
-      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
-        navigator.serviceWorker.getRegistrations().then(regs => {
-          for (const r of regs) r.unregister();
-          if (window.caches && caches.keys) {
-            caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
-          }
-          setTimeout(() => { try { window.location.reload(true); } catch (_) { window.location.reload(); } }, 400);
-        });
-      } else {
-        window.location.reload();
-      }
+    refreshBtn.textContent = '🔄 Refresh app';
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.disabled = true; refreshBtn.textContent = 'Refreshing…';
+      try {
+        if (navigator.serviceWorker) {
+          const regs = await navigator.serviceWorker.getRegistrations().catch(() => []);
+          await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+        }
+        if (window.caches && caches.keys) {
+          const keys = await caches.keys().catch(() => []);
+          await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
+        }
+      } catch (_) {}
+      const url = new URL(location.href);
+      url.searchParams.set('heal', 'v68');
+      location.replace(url.toString());
     });
     const wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px';
@@ -7706,7 +7709,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=67-self-heal').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=68-self-heal').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
@@ -7918,6 +7921,53 @@ function boot() {
       toast('Startup was slow. Showing login screen now.', 'info');
     }
   }, 5000);
+
+  // v68-self-heal: if the previous service worker is stuck serving an old
+  // app.js, /api/health will still respond (it's never cached) but our
+  // network-first JS+CSS will keep returning the old version. Detect this
+  // mismatch once at boot, then unregister all SWs, wipe every Cache
+  // Storage, and hard-reload so the new app ships.
+  // Runs unconditionally, but only DOES the destructive cleanup when the
+  // health probe fails (i.e. we can't even reach our own API). That's
+  // a strong signal the SW is wedged (correctly: /api/* is never cached
+  // by our SW).
+  (function selfHealOnce() {
+    if (sessionStorage.getItem('ps_selfHeal_v68_attempted') === '1') return;
+    sessionStorage.setItem('ps_selfHeal_v68_attempted', '1');
+    let didHeal = false;
+    const onHealthy = () => {
+      if (didHeal) return;
+      didHeal = true;
+      // Stash a flag so post-boot flows know we self-healed in this session
+      sessionStorage.setItem('ps_selfHeal_v68_clean', '1');
+    };
+    const onBroken = async () => {
+      if (didHeal) return;
+      didHeal = true;
+      console.warn('[self-heal] /api/health unreachable, wiping SW + caches');
+      try {
+        if (navigator.serviceWorker) {
+          const regs = await navigator.serviceWorker.getRegistrations().catch(() => []);
+          await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+        }
+        if (window.caches && caches.keys) {
+          const keys = await caches.keys().catch(() => []);
+          await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
+        }
+      } catch (_) {}
+      // Hard-reload bypassing HTTP cache
+      try { sessionStorage.setItem('ps_selfHeal_v68_clean', '1'); } catch (_) {}
+      const url = new URL(location.href);
+      url.searchParams.set('heal', 'v68');
+      location.replace(url.toString());
+    };
+    // Hard cap: 4s. If health doesn't respond in time, assume SW is wedged.
+    const timer = setTimeout(() => { onBroken(); }, 4000);
+    fetch('/api/health', { cache: 'no-store' })
+      .then(r => { clearTimeout(timer); if (r && r.ok) onHealthy(); else onBroken(); })
+      .catch(() => { clearTimeout(timer); onBroken(); });
+  })();
+
   bindAuth();
   // Wrap each UI-binding step so a bug in any single one (e.g. a missing
   // handler function) can't crash the whole boot sequence and silently skip
