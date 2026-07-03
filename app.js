@@ -21,8 +21,6 @@ const State = {
   members: [],
   messages: [],
   posts: [],
-  privSnaps: [],
-  privStreaks: [],
   scheduled: [],
   typingUsers: [],
   closeFriends: safeJsonParse(safeLocalGet('ps_closeFriends', '[]'), []),
@@ -60,7 +58,7 @@ async function api(path, options = {}) {
   // cache. In particular, caching /rtc/signals makes call pickup/ICE candidate
   // delivery lag by up to API_CACHE_TTL_MS and can break WebRTC negotiation.
   let cacheKey = isGet ? path : null;
-  if (cacheKey && (cacheKey.startsWith('/rtc/signals') || cacheKey.startsWith('/priv'))) cacheKey = null;
+  if (cacheKey && cacheKey.startsWith('/rtc/signals')) cacheKey = null;
   if (cacheKey) {
     const cached = _apiCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < API_CACHE_TTL_MS) return cached.data;
@@ -98,8 +96,6 @@ async function api(path, options = {}) {
         _apiCache.delete('/users'); _apiCache.delete('/auth/me');
         // Follow/unfollow changes the feed — bust it
         if (path.includes('/follow') || path.includes('/unfollow')) _apiCache.delete('/feed');
-      } else if (path.startsWith('/priv')) {
-        for (const k of [..._apiCache.keys()]) if (k.startsWith('/priv')) _apiCache.delete(k);
       }
     }
     return data;
@@ -2625,7 +2621,6 @@ function startPolls() {
   loadMembers();
   pollTyping();
   pollNotifications();
-  loadPriv();
   pollRTCSignals();
   State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
   State.pollTimers.members = setInterval(() => {
@@ -2657,7 +2652,6 @@ function startPolls() {
     if ((now - _lastFeedPollAt) < minGap) return;
     _lastFeedPollAt = now;
     loadFeed();
-    loadPriv();
   }, 1500);
   // NOTIFICATIONS: same dynamic fast-poll behavior as the feed.
   State.pollTimers.notif = setInterval(() => {
@@ -3031,228 +3025,6 @@ function getFeedPosts() {
 // "Stories" are kept separate from the main feed.
 let _storiesRendered = false;
 let _lastStoriesSig = '';
-
-// ===== PRIV Instants (Instagram Instants + Snap streaks) =====
-let _privStackOrder = [];
-async function loadPriv() {
-  if (!State.token) return;
-  try {
-    const data = await api('/priv');
-    State.privSnaps = data.snaps || [];
-    State.privStreaks = data.streaks || [];
-    updatePrivFabBadge();
-    renderPrivStack();
-  } catch (_) {}
-}
-function updatePrivFabBadge() {
-  const badge = $('#privFabBadge');
-  if (!badge) return;
-  const count = (State.privSnaps || []).length;
-  badge.textContent = String(Math.min(99, count));
-  badge.classList.toggle('hidden', count === 0);
-}
-function renderPrivStack() {
-  const root = $('#privStack');
-  if (!root) return;
-  const snaps = State.privSnaps || [];
-  root.innerHTML = '';
-  if (!snaps.length) {
-    root.innerHTML = '<div class="priv-empty"><i data-lucide="sparkles"></i><strong>No PRIV yet</strong><span>Send an instant to close friends and build streaks 🔥</span></div>';
-    refreshIcons();
-    return;
-  }
-  const ids = snaps.map(s => s.id).join('|');
-  if (_privStackOrder.join('|') !== ids) _privStackOrder = snaps.map(s => s.id);
-  const stack = document.createElement('div');
-  stack.className = 'stack-container priv-stack-container';
-  const ordered = _privStackOrder.map(id => snaps.find(s => s.id === id)).filter(Boolean);
-  ordered.forEach((snap, index) => {
-    const depth = ordered.length - index - 1;
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'card-rotate-disabled priv-stack-rotate';
-    const inner = document.createElement('div');
-    inner.className = 'card priv-stack-card';
-    card.style.zIndex = String(index + 1);
-    card.style.transform = `translate(${Math.min(depth * 7, 24)}px, ${Math.min(depth * 5, 18)}px) rotate(${((depth % 5) - 2) * 2.2}deg) scale(${1 - Math.min(depth * .045, .16)})`;
-    const author = snap.author || {};
-    const count = Number(snap.streak && snap.streak.count) || 0;
-    inner.innerHTML = `
-      <img class="card-image" src="${escapeHtml(snap.imageUrl)}" alt="PRIV" loading="lazy" />
-      <div class="priv-card-shade"></div>
-      <div class="priv-card-meta"><span class="avatar sm"></span><strong>${escapeHtml(author.displayName || author.username || 'Member')}</strong>${count ? `<em>🔥 ${count}</em>` : ''}</div>
-      ${snap.caption ? `<div class="priv-card-caption">${escapeHtml(snap.caption)}</div>` : ''}
-    `;
-    card.appendChild(inner);
-    renderAvatar(card.querySelector('.avatar'), author);
-    let sx = 0, sy = 0, dragged = false;
-    const sendBack = () => { _privStackOrder = _privStackOrder.filter(id => id !== snap.id); _privStackOrder.unshift(snap.id); renderPrivStack(); };
-    card.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; dragged = false; });
-    card.addEventListener('pointerup', (e) => {
-      const dx = e.clientX - sx, dy = e.clientY - sy;
-      if (Math.abs(dx) > 70 || Math.abs(dy) > 70) { dragged = true; sendBack(); }
-    });
-    card.addEventListener('click', () => {
-      if (dragged) return;
-      if (index === ordered.length - 1) openPrivViewer(snap);
-      else { _privStackOrder = _privStackOrder.filter(id => id !== snap.id).concat(snap.id); renderPrivStack(); }
-    });
-    stack.appendChild(card);
-  });
-  root.appendChild(stack);
-  refreshIcons();
-}
-let _privViewerItems = [];
-let _privViewerIndex = 0;
-let _privViewerOpened = new Set();
-function openPrivViewer(snap) {
-  const items = (State.privSnaps || []).slice();
-  _privViewerItems = items.length ? items : [snap];
-  _privViewerIndex = Math.max(0, _privViewerItems.findIndex(x => x.id === snap.id));
-  _privViewerOpened = new Set();
-  showPrivViewerAt(_privViewerIndex);
-}
-function showPrivViewerAt(index) {
-  if (!_privViewerItems.length) return;
-  if (index < 0) index = _privViewerItems.length - 1;
-  if (index >= _privViewerItems.length) index = 0;
-  _privViewerIndex = index;
-  const snap = _privViewerItems[_privViewerIndex];
-  if (!snap) return;
-  const existing = $('#privViewer'); if (existing) existing.remove();
-  const v = document.createElement('div');
-  v.id = 'privViewer';
-  v.className = 'priv-viewer';
-  const author = snap.author || {};
-  const pos = _privViewerItems.length > 1 ? `${_privViewerIndex + 1}/${_privViewerItems.length}` : 'PRIV';
-  v.innerHTML = `
-    <div class="priv-viewer-bg"></div>
-    <button class="priv-viewer-close" aria-label="Close"><i data-lucide="x"></i></button>
-    <button class="priv-viewer-nav prev" aria-label="Previous PRIV"><i data-lucide="chevron-left"></i></button>
-    <button class="priv-viewer-nav next" aria-label="Next PRIV"><i data-lucide="chevron-right"></i></button>
-    <div class="priv-viewer-card">
-      <img src="${escapeHtml(snap.imageUrl)}" alt="PRIV instant" />
-      <div class="priv-viewer-top"><span class="avatar md"></span><strong>${escapeHtml(author.displayName || author.username || 'Member')}</strong><b>${escapeHtml(pos)}</b></div>
-      ${snap.caption ? `<div class="priv-viewer-caption">${escapeHtml(snap.caption)}</div>` : ''}
-      <div class="priv-viewer-hint">${snap.userId === (State.user && State.user.id) ? 'Your PRIV · expires in 24h' : 'Viewed once · disappears after open'} · tap sides for next</div>
-    </div>`;
-  document.body.appendChild(v);
-  renderAvatar(v.querySelector('.avatar'), author);
-  const close = async () => { v.remove(); await loadPriv(); };
-  const go = (delta) => showPrivViewerAt(_privViewerIndex + delta);
-  v.querySelector('.priv-viewer-close').addEventListener('click', close);
-  v.querySelector('.priv-viewer-nav.prev').addEventListener('click', (e) => { e.stopPropagation(); go(-1); });
-  v.querySelector('.priv-viewer-nav.next').addEventListener('click', (e) => { e.stopPropagation(); go(1); });
-  v.querySelector('.priv-viewer-card').addEventListener('click', (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    go(e.clientX < rect.left + rect.width / 2 ? -1 : 1);
-  });
-  v.addEventListener('click', e => { if (e.target === v || e.target.classList.contains('priv-viewer-bg')) close(); });
-  markPrivOpened(snap);
-  refreshIcons();
-}
-function markPrivOpened(snap) {
-  if (!snap || _privViewerOpened.has(snap.id)) return;
-  _privViewerOpened.add(snap.id);
-  // One-time for everyone, including the sender: remove locally immediately.
-  State.privSnaps = (State.privSnaps || []).filter(s => s.id !== snap.id);
-  _privViewerItems = (_privViewerItems || []).filter(s => s.id !== snap.id);
-  updatePrivFabBadge();
-  api('/priv/open', { method: 'POST', body: { snapId: snap.id }}).catch(() => {});
-}
-
-let _privCameraStream = null;
-let _privFacingMode = 'user';
-let _privFlashOn = false;
-async function sendPrivFile(file) {
-  if (!file) return;
-  if (!file.type.startsWith('image/')) { toast('Choose a photo', 'error'); return; }
-  const btn = $('#privCaptureBtn'); if (btn) btn.disabled = true;
-  try {
-    toast('Sending PRIV...', 'info');
-    // PRIV is instant-first: send a compact inline image to avoid CDN/GitHub
-    // upload delays and failures. Backend caps and validates this data URL.
-    const imageUrl = await resizeImageToDataUrl(file, 540, .66);
-    const audience = ($('#privAudience') && $('#privAudience').value) || 'all';
-    const res = await api('/priv/send', { method: 'POST', body: { imageUrl, audience } });
-    toast('PRIV sent to ' + (res.recipients || 0) + ' friends', 'success');
-    closePrivCamera();
-    $('#privPanel')?.classList.remove('hidden');
-    await loadPriv();
-  } catch (err) { toast(err.message || 'PRIV send failed', 'error'); }
-  finally { if (btn) btn.disabled = false; }
-}
-async function openPrivCamera() {
-  const modal = $('#privCameraModal');
-  const video = $('#privCameraVideo');
-  const fallback = $('#privCameraFallback');
-  if (!modal || !video) return;
-  modal.classList.remove('hidden');
-  fallback?.classList.add('hidden');
-  try {
-    closePrivCamera(false);
-    _privCameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: _privFacingMode, width: { ideal: 720 }, height: { ideal: 960 } }, audio: false });
-    video.classList.toggle('mirrored', _privFacingMode === 'user');
-    video.srcObject = _privCameraStream;
-    await video.play().catch(() => {});
-  } catch (e) {
-    console.warn('[PRIV camera]', e && e.message);
-    fallback?.classList.remove('hidden');
-  }
-  refreshIcons();
-}
-function closePrivCamera(hide = true) {
-  if (_privCameraStream) {
-    _privCameraStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
-    _privCameraStream = null;
-  }
-  const video = $('#privCameraVideo'); if (video) video.srcObject = null;
-  if (hide) $('#privCameraModal')?.classList.add('hidden');
-}
-async function capturePrivCamera() {
-  const video = $('#privCameraVideo');
-  const canvas = $('#privCameraCanvas');
-  if (!video || !canvas || !video.videoWidth) { $('#privFileInput')?.click(); return; }
-  const maxSide = 1280;
-  const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
-  const ctx = canvas.getContext('2d');
-  if (_privFacingMode === 'user') {
-    ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
-    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
-  } else {
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  }
-  if (_privFlashOn) {
-    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore();
-  }
-  canvas.toBlob(async blob => {
-    if (!blob) { toast('Capture failed', 'error'); return; }
-    await sendPrivFile(new File([blob], 'priv-instant.jpg', { type: 'image/jpeg' }));
-  }, 'image/jpeg', 0.88);
-}
-function bindPriv() {
-  const fab = $('#privChatFab');
-  const panel = $('#privPanel');
-  if (fab && panel) fab.addEventListener('click', () => {
-    panel.classList.toggle('hidden');
-    if (!panel.classList.contains('hidden')) loadPriv();
-  });
-  const btn = $('#privCaptureBtn');
-  if (btn) btn.addEventListener('click', openPrivCamera);
-  $('#privCameraClose')?.addEventListener('click', () => closePrivCamera(true));
-  $('#privShutterBtn')?.addEventListener('click', capturePrivCamera);
-  $('#privFlipBtn')?.addEventListener('click', async () => { _privFacingMode = _privFacingMode === 'user' ? 'environment' : 'user'; await openPrivCamera(); });
-  $('#privFlashBtn')?.addEventListener('click', () => { _privFlashOn = !_privFlashOn; const i = $('#privFlashBtn i'); if (i) i.setAttribute('data-lucide', _privFlashOn ? 'zap' : 'zap-off'); refreshIcons(); });
-  $('#privFallbackPick')?.addEventListener('click', () => $('#privFileInput')?.click());
-  const input = $('#privFileInput');
-  if (input) input.addEventListener('change', async e => {
-    const file = e.target.files && e.target.files[0]; e.target.value = '';
-    await sendPrivFile(file);
-  });
-}
-
 function renderStoriesRail() {
   const rail = $('#storiesRail');
   if (!rail || !State.user) return;
@@ -7986,7 +7758,7 @@ function boot() {
   // handler function) can't crash the whole boot sequence and silently skip
   // session restore below — that was causing "logged out on every refresh".
   const bindSteps = [
-    bindTabs, bindScrollMemory, bindRooms, bindInboxSegment, bindNotes, bindComposer, bindFeedComposer, bindPriv, bindProfile,
+    bindTabs, bindScrollMemory, bindRooms, bindInboxSegment, bindNotes, bindComposer, bindFeedComposer, bindProfile,
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
     bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
