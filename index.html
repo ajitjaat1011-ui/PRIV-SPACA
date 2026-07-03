@@ -222,6 +222,7 @@
         </div>
       </div>
       <span id="memberCount" class="hidden">0</span>
+      <button id="privChatFab" type="button" class="priv-chat-fab" aria-label="New PRIV instant"><span>+</span><b>PRIV</b></button>
     </aside>
 
     <section class="chat-pane">
@@ -263,21 +264,6 @@
         </div>
       </div>
       <div id="secretBanner" class="hidden" style="display:none;"></div>
-
-      <button id="privChatFab" type="button" class="priv-chat-fab" aria-label="Open PRIV"><span>+</span><b>PRIV</b></button>
-      <section id="privPanel" class="priv-panel priv-chat-panel hidden" aria-label="PRIV instants">
-        <div class="priv-panel-head">
-          <div><strong>PRIV</strong><span>Instant snaps · streaks</span></div>
-          <div class="priv-actions">
-            <select id="privAudience" class="priv-audience" aria-label="PRIV audience">
-              <option value="close_friends">Close friends</option>
-              <option value="mutuals">Mutuals</option>
-            </select>
-            <button id="privCaptureBtn" type="button" class="priv-capture-btn"><i data-lucide="camera"></i><span>New</span></button>
-          </div>
-        </div>
-        <div id="privStack" class="priv-stack-wrap"></div>
-      </section>
 
       <div id="messagesScroll" class="messages-scroll">
         <div id="messagesList" class="messages-list"></div>
@@ -639,6 +625,13 @@
     <button id="privCameraGrid" type="button" class="priv-camera-icon" aria-label="Grid"><i data-lucide="grid-2x2"></i></button>
   </div>
   <div class="priv-camera-caption">Caught them “INSTANTLY”</div>
+  <div class="priv-camera-audience-row">
+    <span>Share to</span>
+    <select id="privAudience" class="priv-audience camera-audience" aria-label="PRIV audience">
+      <option value="all">All</option>
+      <option value="mutuals">Follow back</option>
+    </select>
+  </div>
   <div class="priv-camera-preview-wrap">
     <video id="privCameraVideo" class="priv-camera-video" autoplay playsinline muted></video>
     <canvas id="privCameraCanvas" class="hidden"></canvas>

@@ -3112,12 +3112,11 @@ async function sendPrivFile(file) {
   const btn = $('#privCaptureBtn'); if (btn) btn.disabled = true;
   try {
     toast('Sending PRIV...', 'info');
-    const up = await uploadPermanentImage(file, { kind: 'post', maxDim: 1280, quality: .86 });
-    const audience = ($('#privAudience') && $('#privAudience').value) || 'close_friends';
+    const up = await uploadPermanentImage(file, { kind: 'post', maxDim: 900, quality: .78 });
+    const audience = ($('#privAudience') && $('#privAudience').value) || 'all';
     const res = await api('/priv/send', { method: 'POST', body: { imageUrl: up.url, audience } });
     toast('PRIV sent to ' + (res.recipients || 0) + ' friends', 'success');
     closePrivCamera();
-    $('#privPanel')?.classList.remove('hidden');
     await loadPriv();
   } catch (err) { toast(err.message || 'PRIV send failed', 'error'); }
   finally { if (btn) btn.disabled = false; }
@@ -3174,8 +3173,7 @@ async function capturePrivCamera() {
 }
 function bindPriv() {
   const fab = $('#privChatFab');
-  const panel = $('#privPanel');
-  if (fab && panel) fab.addEventListener('click', () => { panel.classList.toggle('hidden'); if (!panel.classList.contains('hidden')) loadPriv(); });
+  if (fab) fab.addEventListener('click', openPrivCamera);
   const btn = $('#privCaptureBtn');
   if (btn) btn.addEventListener('click', openPrivCamera);
   $('#privCameraClose')?.addEventListener('click', () => closePrivCamera(true));
