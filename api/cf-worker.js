@@ -2854,6 +2854,7 @@ app.get('/api/feed', requireAuth, async (c) => {
     const me = (db.users || []).find(u => u.id === myId);
     const following = (me && Array.isArray(me.following)) ? me.following : [];
     const allFollowing = [...following, myId];
+    const usersById = new Map((db.users || []).map(u => [u.id, u]));
     const posts = (db.posts || [])
       .filter(p => allFollowing.includes(p.userId) && !p.story)
       .sort((a,b) => {
@@ -2861,7 +2862,12 @@ app.get('/api/feed', requireAuth, async (c) => {
         const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
         return ((b.createdAt||0) * 0.7 + engB * 0.3) - ((a.createdAt||0) * 0.7 + engA * 0.3);
       })
-      .slice(0, limit);
+      .slice(0, limit)
+      .map(p => {
+        const liveUser = usersById.get(p.userId);
+        const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
+        return { ...p, author: authorObj };
+      });
     return c.json({ posts, source: 'full-db-fallback' });
   }
 
@@ -2902,9 +2908,22 @@ app.get('/api/feed', requireAuth, async (c) => {
     args: finalPostIds
   }).catch(() => ({ rows: [] }));
 
+  // Enrich with a live `author` object the same way /api/posts does — raw
+  // ps_posts rows only ever carry `authorSnapshot` (frozen at creation
+  // time), never `author`. Without this, the frontend's resolveAuthor()
+  // fallback chain could bottom out on a synthetic "member_xxx" label
+  // whenever /api/feed's Turso path is the source of a post, instead of
+  // showing the poster's real name. Prefer the live user record (so a
+  // display-name/photo change shows up immediately) and fall back to the
+  // frozen snapshot if the user record is unavailable for any reason.
+  const usersById = new Map((db.users || []).map(u => [u.id, u]));
   const posts = postData.rows?.map(r => {
     try { return JSON.parse(r.data_json); } catch { return null; }
-  }).filter(Boolean).sort((a,b) => {
+  }).filter(Boolean).map(p => {
+    const liveUser = usersById.get(p.userId);
+    const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
+    return { ...p, author: authorObj };
+  }).sort((a,b) => {
     // Engagement-weighted ranking: recency (70%) + engagement (30%)
     // Likes × 3 + comments × 5 = engagement score
     const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
