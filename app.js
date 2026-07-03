@@ -7017,6 +7017,44 @@ function isSafeUrlForCss(url) {
   return typeof url === 'string' && (/^https?:\/\//i.test(url) || /^data:image\//i.test(url));
 }
 
+function buildProfileCardTile(profileData = null, fallbackUser = null) {
+  const data = profileCardFromUser(fallbackUser || (profileData && profileData.user) || State.user, profileData);
+  const u = data.user || {};
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'profile-card-tile';
+  if (!data.canView) tile.classList.add('is-private');
+  tile.setAttribute('aria-label', data.canView ? 'Open profile card' : 'Profile card is private');
+  const display = u.displayName || u.username || 'Member';
+  tile.innerHTML = `
+    <div class="profile-card-tile-glow"></div>
+    <div class="profile-card-tile-top">
+      <span class="avatar lg profile-card-tile-avatar"></span>
+      <div class="profile-card-tile-meta">
+        <strong>${escapeHtml(display)}</strong>
+        <span>${data.canView ? 'Tap to reveal profile card' : 'Private profile card'}</span>
+      </div>
+      <i data-lucide="contact" class="profile-card-tile-icon"></i>
+    </div>
+    <div class="profile-card-tile-stats">
+      <span><b>${data.postsCount}</b> posts</span>
+      <span><b>${data.followers}</b> followers</span>
+      <span><b>${data.following}</b> following</span>
+    </div>
+    <div class="profile-card-tile-dob"><i data-lucide="calendar-days"></i> DOB · ${escapeHtml(data.canView ? formatProfileDob(data.dateOfBirth) : 'Hidden')}</div>
+  `;
+  renderAvatar(tile.querySelector('.profile-card-tile-avatar'), u);
+  tile.addEventListener('click', () => openProfileCard(profileData, u));
+  return tile;
+}
+function renderProfileCardGrid(profileData = null, fallbackUser = null) {
+  const grid = $('#profilePostsGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  grid.appendChild(buildProfileCardTile(profileData, fallbackUser || State.user));
+  refreshIcons();
+}
+
 // ===== Own profile view (IG-style) — render + edit toggle
 // ============================================================
 let _profileTab = 'posts';
@@ -7064,6 +7102,7 @@ function mergeProfilePosts(primary, fallback, user = State.user) {
 
 function renderOwnProfileFromCache() {
   if (!State.user || State.currentTab !== 'profile') return;
+  if (_profileTab === 'card') return;
   const grid = $('#profilePostsGrid');
   if (!grid) return;
   const cached = mergeProfilePosts([], State.posts || [], State.user);
@@ -7088,6 +7127,7 @@ async function renderOwnProfile() {
   // so the grid does not feel slow or blank while /users and /posts load.
   loadMembers().then(() => updateOwnProfileStatCounts(State.user)).catch(() => {});
   loadPosts().then(() => { if (State.currentTab === 'profile') renderOwnProfileFromCache(); }).catch(() => {});
+  if (_profileTab === 'card') renderProfileCardGrid(null, State.user);
   // Fetch fresh data (own profile uses same endpoint)
   try {
     const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
@@ -7115,6 +7155,11 @@ async function renderOwnProfile() {
     // Grid
     const grid = $('#profilePostsGrid');
     grid.innerHTML = '';
+    if (_profileTab === 'card') {
+      updateOwnProfileStatCounts({ ...u, postsCount: u.postsCount || ((data.posts || []).length) });
+      renderProfileCardGrid(data, u);
+      return;
+    }
     let postsToShow = mergeProfilePosts(data.posts || [], State.posts || [], State.user);
     if (_profileTab === 'saved') {
       // Use the bookmark localStorage to filter ALL posts
@@ -7335,10 +7380,6 @@ function bindProfileView() {
   // Grid / card tabs
   $$('.ig-tab').forEach(t => t.addEventListener('click', () => {
     $$('.ig-tab').forEach(x => x.classList.toggle('active', x === t));
-    if (t.dataset.grid === 'card') {
-      openProfileCard(null, State.user);
-      return;
-    }
     _profileTab = t.dataset.grid;
     renderOwnProfile();
   }));
