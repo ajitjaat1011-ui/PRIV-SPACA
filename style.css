@@ -160,17 +160,17 @@ img{user-select:none;-webkit-user-drag:none}
 .logo-pulse{animation:logo-pulse 2.4s ease-in-out infinite}
 .plane-anim{animation:plane-anim .7s cubic-bezier(.2,.8,.2,1) both}
 
-/* ===== Auth Shell — Instagram-style, liquid glass accents ===== */
+/* ===== Auth Shell — Instagram-style with LIQUID GLASS on top ===== */
 .auth-shell{
   position:fixed;inset:0;
   display:flex;flex-direction:column;
-  /* Soft pastel background, like the Instagram login screen but with our
-     blue→purple→pink gradient. The glass card will subtly reflect this. */
+  /* A more dramatic iridescent backdrop so the glass elements have
+     something to refract. The cards float over this. */
   background:
-    radial-gradient(1200px 700px at 80% -10%, rgba(0,162,255,.18), transparent 60%),
-    radial-gradient(1000px 600px at -10% 110%, rgba(195,75,255,.14), transparent 60%),
-    radial-gradient(600px 400px at 90% 90%, rgba(255,120,200,.10), transparent 60%),
-    linear-gradient(160deg, #d6e4ff 0%, #e8d6ff 50%, #ffd6e8 100%);
+    radial-gradient(1200px 800px at 78% -8%, rgba(0,162,255,.32), transparent 60%),
+    radial-gradient(1100px 700px at -10% 110%, rgba(195,75,255,.28), transparent 60%),
+    radial-gradient(700px 500px at 95% 90%, rgba(255,120,200,.22), transparent 60%),
+    linear-gradient(160deg, #b8d0ff 0%, #d4b8ff 50%, #ffb8d8 100%);
   animation:fade-in .4s ease;
   overflow-y:auto;
   overflow-x:hidden;
@@ -179,14 +179,14 @@ img{user-select:none;-webkit-user-drag:none}
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]) .auth-shell{
     background:
-      radial-gradient(1200px 700px at 80% -10%, rgba(0,162,255,.18), transparent 60%),
-      radial-gradient(1000px 600px at -10% 110%, rgba(195,75,255,.14), transparent 60%),
-      radial-gradient(600px 400px at 90% 90%, rgba(255,120,200,.10), transparent 60%),
-      linear-gradient(160deg, #0d1828 0%, #14172a 50%, #1a1224 100%);
+      radial-gradient(1200px 800px at 78% -8%, rgba(0,162,255,.25), transparent 60%),
+      radial-gradient(1100px 700px at -10% 110%, rgba(195,75,255,.22), transparent 60%),
+      radial-gradient(700px 500px at 95% 90%, rgba(255,120,200,.18), transparent 60%),
+      linear-gradient(160deg, #0a1224 0%, #161230 50%, #1f0e28 100%);
   }
 }
 
-/* Top bar: just a back arrow on the left, no card around it (IG-style) */
+/* Top bar: just a back arrow in a glass capsule */
 .auth-topbar{
   display:flex;align-items:center;
   padding:14px 16px;
@@ -195,59 +195,93 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .auth-top-back{
   display:inline-flex;align-items:center;justify-content:center;
-  background:transparent;border:0;cursor:pointer;
+  background:linear-gradient(135deg,rgba(255,255,255,0.55) 0%,rgba(255,255,255,0.25) 100%);
+  -webkit-backdrop-filter:blur(18px) saturate(180%);
+  backdrop-filter:blur(18px) saturate(180%);
+  border:1px solid rgba(255,255,255,0.55);
   color:var(--text);
-  width:44px;height:44px;border-radius:50%;
-  transition:background .15s, transform .15s;
+  cursor:pointer;
+  width:46px;height:46px;border-radius:50%;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 6px 18px -4px rgba(120,80,200,0.25);
+  transition:transform .15s ease, box-shadow .2s ease, background .2s ease;
 }
 .auth-top-back:hover{
-  background:rgba(255,255,255,0.45);
   transform:translateX(-2px);
+  background:linear-gradient(135deg,rgba(255,255,255,0.75) 0%,rgba(255,255,255,0.40) 100%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.95) inset,
+    0 8px 22px -4px rgba(120,80,200,0.40);
 }
 .auth-top-back:active{transform:translateX(-3px) scale(0.96)}
 [data-theme="dark"] .auth-top-back,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .auth-top-back{color:#f5f8fb}
-  :root:not([data-theme="light"]) .auth-top-back:hover{background:rgba(255,255,255,0.08)}
+  :root:not([data-theme="light"]) .auth-top-back{
+    background:linear-gradient(135deg,rgba(255,255,255,0.10) 0%,rgba(255,255,255,0.04) 100%);
+    border:1px solid rgba(255,255,255,0.12);
+    color:#f5f8fb;
+  }
+  :root:not([data-theme="light"]) .auth-top-back:hover{
+    background:linear-gradient(135deg,rgba(255,255,255,0.18) 0%,rgba(255,255,255,0.08) 100%);
+  }
 }
 
 /* Main content area */
 .auth-main{
   flex:1;
   display:flex;flex-direction:column;align-items:center;
-  padding:0 24px;
+  padding:0 22px 20px;
   max-width:440px;
   width:100%;
   margin:0 auto;
+  position:relative;
+  z-index:1;
 }
 
-/* App icon: large, centered, with a liquid-glass ring */
+/* App icon: large, centered, with a strong liquid-glass ring */
 .auth-icon-wrap{
   display:flex;flex-direction:column;align-items:center;gap:18px;
-  margin:24px 0 36px;
+  margin:18px 0 32px;
 }
 .logo-badge{
-  width:96px;height:96px;border-radius:24px;
+  width:96px;height:96px;border-radius:26px;
   /* Iridescent conic-gradient ring (the glass "border") */
   position:relative;
   display:flex;align-items:center;justify-content:center;
-  padding:3px;
+  padding:3.5px;
   background:
     conic-gradient(from 220deg,
       #ff7ab8 0%,#ffa86a 18%,#ffd23f 30%,#7ee0a8 48%,
       #5b8bff 66%,#c33dff 84%,#ff5e9c 100%);
   box-shadow:
-    0 0 0 1px rgba(255,255,255,0.4),
-    0 16px 40px -8px rgba(195,75,255,0.55);
+    0 0 0 1.5px rgba(255,255,255,0.55),
+    0 20px 50px -8px rgba(195,75,255,0.65),
+    0 0 60px -10px rgba(255,120,200,0.45);
   animation:logo-pulse 2.4s ease-in-out infinite;
 }
 .logo-badge::before{
   /* The actual icon face — glassy fill so the ring reads as a bezel */
-  content:"";position:absolute;inset:3px;border-radius:21px;
-  background:linear-gradient(160deg,rgba(255,255,255,0.65) 0%,rgba(255,255,255,0.25) 100%);
-  -webkit-backdrop-filter:blur(14px) saturate(200%);
-  backdrop-filter:blur(14px) saturate(200%);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.85);
+  content:"";position:absolute;inset:3.5px;border-radius:22.5px;
+  background:linear-gradient(160deg,rgba(255,255,255,0.72) 0%,rgba(255,255,255,0.30) 100%);
+  -webkit-backdrop-filter:blur(18px) saturate(200%);
+  backdrop-filter:blur(18px) saturate(200%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    inset 0 -1px 0 rgba(120,80,160,0.10);
+  z-index:0;
+}
+.logo-badge::after{
+  /* Sheen that sweeps across the glass face */
+  content:"";position:absolute;inset:3.5px;border-radius:22.5px;
+  background:linear-gradient(115deg,
+    rgba(255,255,255,0) 35%,
+    rgba(255,255,255,0.55) 50%,
+    rgba(255,180,220,0.20) 65%,
+    rgba(255,255,255,0) 80%);
+  mix-blend-mode:overlay;
+  opacity:.6;
+  pointer-events:none;
   z-index:0;
 }
 .logo-badge > *{position:relative;z-index:1}
@@ -259,7 +293,8 @@ img{user-select:none;-webkit-user-drag:none}
   -webkit-background-clip:text;background-clip:text;
   -webkit-text-fill-color:transparent;
   animation:brandShift 6s ease-in-out infinite;
-  filter:drop-shadow(0 2px 8px rgba(195,75,255,0.25));
+  filter:drop-shadow(0 2px 10px rgba(195,75,255,0.40))
+         drop-shadow(0 0 22px rgba(255,120,200,0.20));
 }
 @keyframes brandShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
 .brand-tag{display:none} /* we don't show the tagline on the IG-style screen */
@@ -267,33 +302,100 @@ img{user-select:none;-webkit-user-drag:none}
 
 /* Panel container (one form visible at a time) */
 .auth-panels{width:100%}
+
+/* The login panel stays clean and IG-style. The signup/reset panels get
+   wrapped in a glass card so they stand out from the background. */
 .auth-panel{
   display:flex;flex-direction:column;
   animation:text-anim .35s cubic-bezier(.2,.8,.2,1) both;
   width:100%;
 }
 
-/* In-panel back arrow (only on signup / reset) */
+/* The signup + reset panels need extra padding inside a glass card. */
+.auth-panel[data-auth-panel="signup"],
+.auth-panel[data-auth-panel="reset"]{
+  background:linear-gradient(160deg,
+    rgba(255,255,255,0.62) 0%,
+    rgba(255,255,255,0.42) 60%,
+    rgba(245,235,255,0.50) 100%);
+  -webkit-backdrop-filter:saturate(180%) blur(28px) brightness(1.05);
+  backdrop-filter:saturate(180%) blur(28px) brightness(1.05);
+  border:1px solid rgba(255,255,255,0.55);
+  border-radius:24px;
+  padding:18px 20px 22px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.9) inset,
+    0 -1px 0 rgba(120,80,160,0.08) inset,
+    0 18px 50px -12px rgba(120,80,200,0.30),
+    0 4px 14px rgba(20,30,40,0.05);
+  position:relative;
+  overflow:hidden;
+}
+.auth-panel[data-auth-panel="signup"]::before,
+.auth-panel[data-auth-panel="reset"]::before{
+  /* Iridescent sheen across the glass card */
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(120deg,
+    rgba(255,255,255,0) 30%,
+    rgba(255,255,255,0.40) 50%,
+    rgba(255,180,220,0.20) 70%,
+    rgba(255,255,255,0) 100%);
+  mix-blend-mode:overlay;
+  opacity:.55;
+  z-index:0;
+}
+.auth-panel[data-auth-panel="signup"] > *,
+.auth-panel[data-auth-panel="reset"] > *{position:relative;z-index:1}
+[data-theme="dark"] .auth-panel[data-auth-panel="signup"],
+[data-theme="dark"] .auth-panel[data-auth-panel="reset"],
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .auth-panel[data-auth-panel="signup"],
+  :root:not([data-theme="light"]) .auth-panel[data-auth-panel="reset"]{
+    background:linear-gradient(160deg,
+      rgba(40,46,68,0.65) 0%,
+      rgba(25,30,50,0.50) 60%,
+      rgba(50,28,60,0.55) 100%);
+    border:1px solid rgba(255,255,255,0.10);
+  }
+}
+
+/* In-panel back arrow (only on signup / reset) — now sits in a glass capsule */
 .ig-back{
   display:inline-flex;align-items:center;justify-content:center;
   align-self:flex-start;
-  background:transparent;border:0;cursor:pointer;
+  background:linear-gradient(135deg,rgba(255,255,255,0.55) 0%,rgba(255,255,255,0.25) 100%);
+  -webkit-backdrop-filter:blur(14px) saturate(180%);
+  backdrop-filter:blur(14px) saturate(180%);
+  border:1px solid rgba(255,255,255,0.55);
   color:var(--text);
-  width:40px;height:40px;border-radius:50%;
-  margin:0 0 8px -4px;
-  transition:background .15s, transform .15s;
+  cursor:pointer;
+  width:42px;height:42px;border-radius:50%;
+  margin:0 0 10px -4px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 4px 12px -3px rgba(120,80,200,0.25);
+  transition:transform .15s ease, background .2s, box-shadow .2s;
 }
-.ig-back:hover{background:rgba(255,255,255,0.45);transform:translateX(-2px)}
+.ig-back:hover{
+  background:linear-gradient(135deg,rgba(255,255,255,0.75) 0%,rgba(255,255,255,0.40) 100%);
+  transform:translateX(-2px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.95) inset,
+    0 6px 16px -3px rgba(120,80,200,0.40);
+}
 .ig-back:active{transform:translateX(-3px) scale(0.96)}
 [data-theme="dark"] .ig-back,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .ig-back{color:#f5f8fb}
-  :root:not([data-theme="light"]) .ig-back:hover{background:rgba(255,255,255,0.08)}
+  :root:not([data-theme="light"]) .ig-back{
+    background:linear-gradient(135deg,rgba(255,255,255,0.10) 0%,rgba(255,255,255,0.04) 100%);
+    border:1px solid rgba(255,255,255,0.12);
+    color:#f5f8fb;
+  }
 }
 
 .auth-eyebrow{
   text-align:center;color:var(--muted);font-size:13.5px;line-height:1.5;
-  margin:0 0 22px;font-weight:500;
+  margin:0 0 18px;font-weight:500;
 }
 [data-theme="dark"] .auth-eyebrow,
 @media (prefers-color-scheme: dark){
@@ -301,97 +403,115 @@ img{user-select:none;-webkit-user-drag:none}
 }
 
 /* === Form === */
-.auth-form{display:flex;flex-direction:column;gap:12px;width:100%}
+.auth-form{display:flex;flex-direction:column;gap:10px;width:100%}
 .field{display:flex;flex-direction:column;gap:6px}
 .field>span{display:none} /* IG-style hides the label */
 .ig-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 
-/* The pill input — IG style: tall, fully rounded, light grey fill,
-   dark border on focus. We add a subtle frosted highlight on the
-   inner top edge so it has a glass feel. */
+/* The pill input — glassy frosted look. Slight tint, blurred backdrop,
+   soft inner highlight. The background is a soft pastel so the glass
+   reads clearly. */
 .field input, .field textarea{
   width:100%;
-  border:1px solid #dde5ec;
-  background:#fafafa;
+  border:1px solid rgba(255,255,255,0.55);
+  background:linear-gradient(180deg,rgba(255,255,255,0.55) 0%,rgba(255,255,255,0.32) 100%);
+  -webkit-backdrop-filter:blur(14px) saturate(180%);
+  backdrop-filter:blur(14px) saturate(180%);
   color:var(--text);
   font-family:inherit;
   outline:none;
   font-size:14px;
-  /* default — but the .ig-pill override below is what most inputs use */
-  padding:12px 14px;border-radius:10px;
+  padding:12px 14px;border-radius:12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.65),
+    0 1px 2px rgba(20,30,40,0.04);
   transition:border-color .15s, box-shadow .15s, background .15s;
-}
-.field input:focus, .field textarea:focus{
-  border-color:#1a2733;
-  background:#fff;
 }
 .field input::placeholder, .field textarea::placeholder{color:#8696a3;font-size:14px}
 
-/* IG-style pill: tall, fully rounded, light fill */
+/* IG-style pill override — for the login screen, slightly more solid */
 .ig-pill input{
-  border:1px solid #dbdbdb;
-  background:#fafafa;
+  border:1px solid rgba(255,255,255,0.55);
+  background:linear-gradient(180deg,rgba(255,255,255,0.62) 0%,rgba(255,255,255,0.38) 100%);
   padding:15px 14px;
   border-radius:12px;
   font-size:14px;
 }
 .ig-pill input:focus{
-  border-color:#1a2733;
-  background:#fff;
+  border-color:#5b8bff;
+  background:linear-gradient(180deg,rgba(255,255,255,0.95) 0%,rgba(255,255,255,0.80) 100%);
+  box-shadow:0 0 0 4px rgba(91,139,255,0.18),
+             inset 0 1px 0 rgba(255,255,255,0.85);
 }
-[data-theme="dark"] .ig-pill input,
-[data-theme="dark"] .ig-pill textarea,
+.field input:focus, .field textarea:focus{
+  border-color:#5b8bff;
+  background:linear-gradient(180deg,rgba(255,255,255,0.95) 0%,rgba(255,255,255,0.80) 100%);
+  box-shadow:0 0 0 4px rgba(91,139,255,0.18),
+             inset 0 1px 0 rgba(255,255,255,0.85);
+}
+[data-theme="dark"] .field input,
+[data-theme="dark"] .field textarea,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .ig-pill input{
-    background:#1c1c1c;
-    border:1px solid #363636;
+  :root:not([data-theme="light"]) .field input,
+  :root:not([data-theme="light"]) .field textarea{
+    background:linear-gradient(180deg,rgba(255,255,255,0.10) 0%,rgba(255,255,255,0.04) 100%);
+    border:1px solid rgba(255,255,255,0.12);
     color:#f5f8fb;
   }
-  :root:not([data-theme="light"]) .ig-pill input:focus{
-    background:#252525;
+  :root:not([data-theme="light"]) .field input:focus,
+  :root:not([data-theme="light"]) .field textarea:focus{
+    background:linear-gradient(180deg,rgba(255,255,255,0.18) 0%,rgba(255,255,255,0.10) 100%);
     border-color:#5b8bff;
   }
 }
 
-/* Solid primary "Log in" button — IG-style, no gradient, no glass */
+/* Solid primary "Log in" button — IG-style blue, with a glassy highlight */
 .ig-primary{
-  background:#0095f6;
+  background:linear-gradient(180deg,#1aa6ff 0%,#0095f6 100%);
   color:#fff;border:0;
   padding:14px 18px;border-radius:12px;
   font-weight:700;font-size:14.5px;letter-spacing:.2px;
   cursor:pointer;
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
   margin-top:6px;
-  box-shadow:0 2px 0 rgba(0,0,0,0.04);
-  transition:background .15s, transform .1s;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.45),
+    inset 0 -1px 0 rgba(0,0,0,0.10),
+    0 6px 20px rgba(0,149,246,0.40),
+    0 0 0 1px rgba(255,255,255,0.10) inset;
+  text-shadow:0 1px 1px rgba(0,40,90,0.25);
+  transition:background .15s, transform .1s, box-shadow .2s;
 }
-.ig-primary:hover{background:#1877f2}
+.ig-primary:hover{
+  background:linear-gradient(180deg,#2eb6ff 0%,#1877f2 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.55),
+    inset 0 -1px 0 rgba(0,0,0,0.10),
+    0 10px 26px rgba(0,149,246,0.55),
+    0 0 0 1px rgba(255,255,255,0.15) inset;
+}
 .ig-primary:active{transform:scale(0.99)}
 .ig-primary:disabled{opacity:.5;cursor:not-allowed}
 .ig-primary .spinner{
   width:14px;height:14px;border:2px solid rgba(255,255,255,.4);
   border-top-color:#fff;border-radius:50%;animation:spinner .6s linear infinite;
 }
-[data-theme="dark"] .ig-primary{
-  background:#0095f6;
-}
-[data-theme="dark"] .ig-primary:hover{
-  background:#1877f2;
-}
 
-/* "Forgotten password?" link — center, plain text */
+/* "Forgotten password?" link — center, plain text, glassy hover */
 .ig-link{
   background:transparent;border:0;cursor:pointer;
-  color:#00376b;font-size:13.5px;font-weight:600;
+  color:#1a4a8a;font-size:13.5px;font-weight:600;
   text-align:center;
   padding:14px 0 4px;margin:0;
   align-self:center;
+  transition:color .15s, transform .15s;
 }
-.ig-link:hover{color:#0095f6}
+.ig-link:hover{color:#0095f6;transform:translateY(-1px)}
+.ig-link:active{transform:translateY(0)}
 [data-theme="dark"] .ig-link,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .ig-link{color:#e0f1ff}
-  :root:not([data-theme="light"]) .ig-link:hover{color:#ffffff}
+  :root:not([data-theme="light"]) .ig-link{color:#9ec5ff}
+  :root:not([data-theme="light"]) .ig-link:hover{color:#e0f1ff}
 }
 
 /* PIN block (signup / reset) */
@@ -409,11 +529,36 @@ img{user-select:none;-webkit-user-drag:none}
 
 .row-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
-/* Terms & conditions row */
-.terms-row{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted);margin:6px 0 0;line-height:1.45;cursor:pointer}
-.terms-row input[type=checkbox]{width:16px;height:16px;margin-top:2px;flex-shrink:0;accent-color:var(--accent);cursor:pointer}
-.terms-link{background:transparent;border:0;padding:0;color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline;font-size:12.5px}
-.terms-link:hover{color:var(--accent-2)}
+/* Terms & conditions row — glass checkbox */
+.terms-row{
+  display:flex;align-items:flex-start;gap:8px;
+  font-size:12.5px;color:var(--muted);margin:8px 0 0;line-height:1.45;cursor:pointer;
+  padding:10px 12px;border-radius:12px;
+  background:rgba(255,255,255,0.40);
+  -webkit-backdrop-filter:blur(8px);
+  backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,0.40);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.50);
+}
+.terms-row input[type=checkbox]{
+  width:18px;height:18px;margin-top:1px;flex-shrink:0;
+  accent-color:#5b8bff;cursor:pointer;
+}
+.terms-link{
+  background:transparent;border:0;padding:0;
+  color:#5b8bff;font-weight:600;cursor:pointer;
+  text-decoration:underline;font-size:12.5px;
+}
+.terms-link:hover{color:#3a5cbf}
+[data-theme="dark"] .terms-row,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .terms-row{
+    background:rgba(255,255,255,0.06);
+    border:1px solid rgba(255,255,255,0.10);
+    color:#c3ccd6;
+  }
+  :root:not([data-theme="light"]) .terms-link{color:#9ec5ff}
+}
 
 /* Error / hint text */
 .auth-hint{font-size:12px;color:var(--muted);margin:0;text-align:center;line-height:1.5}
@@ -423,24 +568,25 @@ img{user-select:none;-webkit-user-drag:none}
   :root:not([data-theme="light"]) .auth-hint{color:#9aa8b6}
 }
 
-/* === Bottom: "Don't have an account? [Create new account]" (IG-style) === */
+/* === Bottom: "Don't have an account? [Create new account]" === */
 .auth-bottom{
   flex-shrink:0;
   margin-top:auto;
   padding:18px 16px 28px;
   display:flex;flex-direction:column;align-items:center;gap:14px;
-  /* Subtle frosted separator at the top */
   position:relative;
   z-index:1;
 }
 .auth-bottom::before{
-  content:"";position:absolute;left:0;right:0;top:0;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(20,30,40,0.12),transparent);
+  /* Subtle glass separator at the top of the bottom CTA */
+  content:"";position:absolute;left:8px;right:8px;top:0;height:1.5px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,0.55),transparent);
+  border-radius:1px;
 }
 [data-theme="dark"] .auth-bottom::before,
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]) .auth-bottom::before{
-    background:linear-gradient(90deg,transparent,rgba(255,255,255,0.12),transparent);
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,0.18),transparent);
   }
 }
 .auth-bottom-text{
@@ -451,30 +597,39 @@ img{user-select:none;-webkit-user-drag:none}
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]) .auth-bottom-text{color:#9aa8b6}
 }
-.auth-bottom-text a,
-.auth-bottom-text button.ig-link{color:#00376b;font-weight:600;background:transparent;border:0;padding:0;cursor:pointer;font-size:inherit;text-decoration:none}
-.auth-bottom-text a:hover,
-.auth-bottom-text button.ig-link:hover{color:#0095f6}
 
-/* "Create new account" outlined button (IG-style) */
+/* "Create new account" outlined button — IG-style with glassy hover */
 .ig-outline{
-  background:transparent;
+  background:linear-gradient(180deg,rgba(255,255,255,0.50) 0%,rgba(255,255,255,0.30) 100%);
+  -webkit-backdrop-filter:blur(12px) saturate(180%);
+  backdrop-filter:blur(12px) saturate(180%);
   color:#0095f6;
   border:1.5px solid #0095f6;
   padding:11px 22px;
   border-radius:10px;
   font-weight:700;font-size:14px;letter-spacing:.2px;
   cursor:pointer;
-  transition:background .15s, color .15s, transform .1s;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.55),
+    0 4px 12px -2px rgba(0,149,246,0.20);
+  transition:background .15s, color .15s, transform .1s, box-shadow .2s;
 }
 .ig-outline:hover{
-  background:rgba(0,149,246,0.08);
+  background:linear-gradient(180deg,rgba(0,149,246,0.10) 0%,rgba(0,149,246,0.05) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.75),
+    0 6px 18px -2px rgba(0,149,246,0.35);
 }
 .ig-outline:active{transform:scale(0.99)}
 [data-theme="dark"] .ig-outline,
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) .ig-outline{color:#e0f1ff;border-color:#e0f1ff}
-  :root:not([data-theme="light"]) .ig-outline:hover{background:rgba(255,255,255,0.06)}
+  :root:not([data-theme="light"]) .ig-outline{
+    background:linear-gradient(180deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.04) 100%);
+    color:#9ec5ff;border-color:#9ec5ff;
+  }
+  :root:not([data-theme="light"]) .ig-outline:hover{
+    background:linear-gradient(180deg,rgba(255,255,255,0.14) 0%,rgba(255,255,255,0.08) 100%);
+  }
 }
 
 /* PIN segmented input */
@@ -483,30 +638,38 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .pin-input input{
   width:54px;height:60px;text-align:center;font-size:22px;font-weight:700;
-  border:1.5px solid #dbdbdb;border-radius:10px;
-  background:#fafafa;color:#1a2733;
+  border:1.5px solid rgba(255,255,255,0.55);border-radius:12px;
+  background:linear-gradient(180deg,rgba(255,255,255,0.55) 0%,rgba(255,255,255,0.32) 100%);
+  -webkit-backdrop-filter:blur(14px) saturate(180%);
+  backdrop-filter:blur(14px) saturate(180%);
+  color:#1a2733;
   font-family:inherit;transition:all .15s;letter-spacing:0;
   outline:none;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.65),
+    0 1px 2px rgba(20,30,40,0.04);
 }
 .pin-input input:focus{
-  border-color:#1a2733;
-  background:#fff;
+  border-color:#5b8bff;
+  background:linear-gradient(180deg,rgba(255,255,255,0.95) 0%,rgba(255,255,255,0.80) 100%);
+  box-shadow:0 0 0 4px rgba(91,139,255,0.18),
+             inset 0 1px 0 rgba(255,255,255,0.85);
   transform:scale(1.04);
 }
 .pin-input input.filled{
-  border-color:#1a2733;
-  background:#fff;
+  border-color:#5b8bff;
+  background:linear-gradient(180deg,rgba(255,255,255,0.95) 0%,rgba(255,255,255,0.80) 100%);
 }
 [data-theme="dark"] .pin-input input,
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]) .pin-input input{
-    background:#1c1c1c;
-    border:1.5px solid #363636;
+    background:linear-gradient(180deg,rgba(255,255,255,0.10) 0%,rgba(255,255,255,0.04) 100%);
+    border:1.5px solid rgba(255,255,255,0.12);
     color:#f5f8fb;
   }
   :root:not([data-theme="light"]) .pin-input input:focus,
   :root:not([data-theme="light"]) .pin-input input.filled{
-    background:#252525;
+    background:linear-gradient(180deg,rgba(255,255,255,0.18) 0%,rgba(255,255,255,0.10) 100%);
     border-color:#5b8bff;
   }
 }
