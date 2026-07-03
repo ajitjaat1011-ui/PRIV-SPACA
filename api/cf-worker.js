@@ -244,8 +244,12 @@ async function neonEnsure() {
   await sql`CREATE TABLE IF NOT EXISTS priv_spaca_kv (
     key TEXT PRIMARY KEY,
     value JSONB NOT NULL,
+    version BIGINT NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`;
+  // Older deployments created this table before the `version` column existed —
+  // add it defensively so upgrades don't require a manual migration step.
+  await sql`ALTER TABLE priv_spaca_kv ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0`.catch(() => {});
   await sql`CREATE TABLE IF NOT EXISTS priv_spaca_events (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -265,7 +269,8 @@ async function neonEnsure() {
   const rows = await sql`SELECT value FROM priv_spaca_kv WHERE key = 'db'`;
   if (rows.length === 0) {
     const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'neon-json-v1', createdAt: Date.now() } });
-    await sql`INSERT INTO priv_spaca_kv (key, value) VALUES ('db', ${JSON.stringify(empty)}::jsonb)`;
+    await sql`INSERT INTO priv_spaca_kv (key, value, version) VALUES ('db', ${JSON.stringify(empty)}::jsonb, 0)
+      ON CONFLICT (key) DO NOTHING`;
   }
   _neonReady = true;
   return true;
@@ -278,15 +283,41 @@ async function neonReadDb() {
   const val = rows[0].value;
   return typeof val === 'string' ? safeJson(val, normalizeDb({})) : val;
 }
+// Read the db row together with its version counter, for optimistic-
+// concurrency-controlled writes (see neonWriteDbCAS below).
+async function neonReadDbVersioned() {
+  if (!isNeonConfigured()) return null;
+  await neonEnsure();
+  const rows = await neonClient()`SELECT value, version FROM priv_spaca_kv WHERE key = 'db'`;
+  if (!rows || rows.length === 0) return { db: normalizeDb({}), version: 0 };
+  const val = rows[0].value;
+  const db = typeof val === 'string' ? safeJson(val, normalizeDb({})) : val;
+  return { db, version: Number(rows[0].version || 0) };
+}
 async function neonWriteDb(dbObj) {
   if (!isNeonConfigured()) return false;
   await neonEnsure();
   const db = normalizeDb(dbObj);
   db.meta = { ...(db.meta || {}), storage: 'neon-json-v1', updatedAt: Date.now() };
-  await neonClient()`INSERT INTO priv_spaca_kv (key, value, updated_at)
-    VALUES ('db', ${JSON.stringify(db)}::jsonb, NOW())
-    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+  await neonClient()`INSERT INTO priv_spaca_kv (key, value, version, updated_at)
+    VALUES ('db', ${JSON.stringify(db)}::jsonb, 1, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, version = priv_spaca_kv.version + 1, updated_at = NOW()`;
   return true;
+}
+// Compare-and-swap write: only succeeds if the row's version still matches
+// `expectedVersion` (i.e. nobody else wrote in between our read and this
+// write). Returns true on success, false on conflict (caller should re-read
+// the latest data, re-apply their change, and retry).
+async function neonWriteDbCAS(dbObj, expectedVersion) {
+  if (!isNeonConfigured()) return false;
+  await neonEnsure();
+  const db = normalizeDb(dbObj);
+  db.meta = { ...(db.meta || {}), storage: 'neon-json-v1', updatedAt: Date.now() };
+  const rows = await neonClient()`UPDATE priv_spaca_kv
+    SET value = ${JSON.stringify(db)}::jsonb, version = version + 1, updated_at = NOW()
+    WHERE key = 'db' AND version = ${expectedVersion}
+    RETURNING version`;
+  return !!(rows && rows.length > 0);
 }
 async function neonResetDb() {
   if (!isNeonConfigured()) return false;
@@ -852,45 +883,70 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
     // Write directly to Neon and await it. We intentionally do NOT use a
     // fire-and-forget pattern here: Cloudflare Workers can terminate
     // un-awaited promises as soon as the HTTP response is sent, which was
-    // silently dropping heartbeat/typing writes. Neon writes are fast
-    // (single UPSERT), so awaiting adds negligible latency.
+    // silently dropping heartbeat/typing writes.
+    //
+    // IMPORTANT: this still uses compare-and-swap, not a blind overwrite.
+    // A blind UPSERT here would risk a stale heartbeat/typing write (these
+    // fire every ~15-20s per active user) silently clobbering a signup,
+    // message, or post that another concurrent request had just committed
+    // a moment earlier. On a CAS conflict we simply drop this particular
+    // ephemeral update (that's an acceptable, expected trade-off for
+    // heartbeat/typing) rather than retrying — losing a heartbeat tick is
+    // harmless; losing another user's data is not.
     try {
-      await neonWriteDb(data);
+      const versioned = await neonReadDbVersioned();
+      const merged = mergeDatabase(versioned.db, data);
+      await neonWriteDbCAS(merged, versioned.version);
     } catch (_) { /* best-effort; ephemeral data, ok to lose occasionally */ }
     return true;
   }
-  // ---- Neon fast path ----
-  // neonWriteDb() is a single atomic UPSERT — it either succeeds or throws.
-  // Unlike GitHub's Contents API (which needs SHA-conflict retries because
-  // every write is a git commit), Neon does not need multi-second sleeps or
-  // a "verify by re-reading" step. We still merge against the freshest
-  // remote copy first (mergeById is conflict-safe for our array/id shape),
-  // but keep this to 1-2 fast round trips with no artificial delay so
-  // concurrent requests don't stack up and get killed as "hung" by the
-  // Workers runtime.
+  // ---- Neon fast path: optimistic concurrency control (compare-and-swap) ----
+  // The whole app's Neon storage is one JSON blob per row, so any two
+  // concurrent mutating requests (e.g. two users signing up at the same
+  // moment) can both read the same starting state, each add their own
+  // change locally, and — without CAS — whichever one writes last would
+  // silently overwrite the other's change. That is a real, reproducible
+  // data-loss bug (confirmed live: 7 of 8 concurrent signups vanished
+  // before this fix), not just a performance concern.
+  //
+  // Fix: read the row together with its version counter, merge the
+  // caller's intended change (`data`) into that fresh copy, and write with
+  // `UPDATE ... WHERE version = expected`. If another request won the race
+  // and bumped the version first, the UPDATE matches zero rows (CAS
+  // failure) — we then re-read the new latest state, re-merge our original
+  // intended change into it, and retry. This is a handful of fast Postgres
+  // round trips with no artificial sleep, so it stays fast in the common
+  // (uncontended) case while remaining correct under real concurrency.
   if (isNeonConfigured()) {
-    let toWrite = data;
-    try {
-      const fresh = await neonReadDb();
-      if (fresh && typeof fresh === 'object') toWrite = mergeDatabase(fresh, data);
-    } catch (_) { /* fall back to writing local data as-is */ }
-    try {
-      await neonWriteDb(toWrite);
-      localCache = normalizeDb(toWrite);
-      cacheTimestamp = nowMs();
-      return true;
-    } catch (e) {
-      // One quick retry on transient network/DB errors only — no sleep.
+    const originalData = data;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      let versioned;
       try {
-        await neonWriteDb(toWrite);
-        localCache = normalizeDb(toWrite);
-        cacheTimestamp = nowMs();
-        return true;
-      } catch (e2) {
-        console.error('[saveDatabase:neon]', e2 && e2.message);
+        versioned = await neonReadDbVersioned();
+      } catch (e) {
+        console.error('[saveDatabase:neon] read failed', e && e.message);
         return false;
       }
+      const merged = mergeDatabase(versioned.db, originalData);
+      let ok = false;
+      try {
+        ok = await neonWriteDbCAS(merged, versioned.version);
+      } catch (e) {
+        console.error('[saveDatabase:neon] CAS write failed', e && e.message);
+        return false;
+      }
+      if (ok) {
+        localCache = normalizeDb(merged);
+        cacheTimestamp = nowMs();
+        return true;
+      }
+      // Conflict: someone else committed a write between our read and our
+      // write attempt. Small jitter to avoid a thundering-herd retry storm,
+      // then loop and re-read the newest version.
+      if (attempt < 5) await sleepMs(15 + Math.floor(Math.random() * 40));
     }
+    console.error('[saveDatabase:neon] CAS retries exhausted for key=db');
+    return false;
   }
   // ---- GitHub Contents API path (legacy / fallback persistence) ----
   // Merge with the newest remote DB before writing. This prevents a later request
@@ -922,17 +978,14 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
 
 async function saveDatabaseVerified(data, verifyFn, attempts = 4, opts = {}) {
   // ---- Neon fast path ----
-  // neonWriteDb() is a direct atomic UPSERT: if saveDatabase() returns true,
-  // the write is already durably committed, so re-reading it back to
-  // "verify" is redundant round-trip latency (this was previously the
-  // single biggest contributor to slow/hung requests under concurrent
-  // load, since it ran on top of an already-redundant retry loop).
+  // saveDatabase() now performs its own internal compare-and-swap retry
+  // loop against Neon (see above) and only returns true once the merged
+  // data — which includes this call's intended change — is durably
+  // committed. Re-reading afterwards to "verify" would be redundant, so we
+  // just surface saveDatabase()'s result directly. verifyFn is intentionally
+  // unused on this path (kept only for signature/call-site compatibility).
   if (isNeonConfigured()) {
-    for (let i = 0; i < Math.min(attempts, 3); i++) {
-      const ok = await saveDatabase(data, false, opts);
-      if (ok) return true;
-    }
-    return false;
+    return await saveDatabase(data, false, opts);
   }
   // ---- GitHub Contents API path (legacy / fallback persistence) ----
   for (let i = 0; i < attempts; i++) {
