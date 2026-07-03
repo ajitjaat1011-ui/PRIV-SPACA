@@ -49,21 +49,21 @@ async function api(path, opts = {}) {
   // ====== Scenario 3: "Follower/following count error" ======
   // Make sure unfollow works correctly and counts decrement
   const profBefore = await api('/user/' + u1.id + '/profile', { headers: { 'Authorization': 'Bearer ' + t1 } });
-  const followersBefore = (profBefore.data?.user?.followerIds || []).length;
+  const followingBefore = (profBefore.data?.user?.followingIds || []).length;
   // owner follows user2
   const f1 = await api('/user/follow', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t1 }, body: JSON.stringify({ targetId: u2.id }) });
   record('Owner can follow user2', f1.status === 200, JSON.stringify(f1.data || {}).slice(0, 100));
   // Check counts updated
   const profAfter = await api('/user/' + u1.id + '/profile', { headers: { 'Authorization': 'Bearer ' + t1 } });
   const prof2After = await api('/user/' + u2.id + '/profile', { headers: { 'Authorization': 'Bearer ' + t1 } });
-  record('Owner following count incremented', (profAfter.data?.user?.followingIds || []).length > followersBefore);
+  record('Owner following count incremented', (profAfter.data?.user?.followingIds || []).length > followingBefore);
   record('User2 follower count incremented', (prof2After.data?.user?.followerIds || []).length > 0);
   // Unfollow and verify counts decrement
   const f2 = await api('/user/unfollow', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t1 }, body: JSON.stringify({ targetId: u2.id }) });
   record('Owner can unfollow user2', f2.status === 200);
   const profFinal = await api('/user/' + u1.id + '/profile', { headers: { 'Authorization': 'Bearer ' + t1 } });
   const prof2Final = await api('/user/' + u2.id + '/profile', { headers: { 'Authorization': 'Bearer ' + t1 } });
-  record('Owner following count back to baseline', (profFinal.data?.user?.followingIds || []).length === followersBefore);
+  record('Owner following count back to baseline', (profFinal.data?.user?.followingIds || []).length === followingBefore);
   record('User2 follower count back to baseline', (prof2Final.data?.user?.followerIds || []).length === 0);
 
   // ====== Scenario 4: "Crashing" — check no endpoint throws 500 ======
@@ -87,13 +87,13 @@ async function api(path, opts = {}) {
   // ====== Bonus: signup creates valid user that can log in ======
   const ts = Date.now();
   const su = await api('/auth/signup', { method: 'POST', body: JSON.stringify({
-    username: 'scenariotest_' + ts, email: 'scenariotest_' + ts + '@example.com',
+    username: 'st_' + ts, email: 'st_' + ts + '@x.com',
     displayName: 'Scenario', password: 'TestPass123!', pin: '4729',
     termsAccepted: true, termsVersion: '1.0'
   }) });
   record('Signup works', su.status === 200, `status=${su.status}`);
   if (su.status === 200) {
-    const li = await api('/auth/login', { method: 'POST', body: JSON.stringify({ identifier: 'scenariotest_' + ts, password: 'TestPass123!' }) });
+    const li = await api('/auth/login', { method: 'POST', body: JSON.stringify({ identifier: 'st_' + ts, password: 'TestPass123!' }) });
     record('Newly-signed-up user can log in', li.status === 200);
   }
 

@@ -2375,7 +2375,12 @@ function bindComposer() {
       lastMessagesSignature = '';
       renderMessages(true);
     } catch (err) {
-      toast(err.message || 'Send failed', 'error');
+      // Translate generic 500s into something the user understands
+      let msg = err.message || 'Send failed';
+      if (err && err.status === 500) msg = 'Server error — message not sent. Please try again.';
+      else if (msg === 'Network error' || msg === 'Network timeout') msg = 'No connection — message not sent';
+      toast(msg, 'error');
+      // Restore the composer with the text the user just typed
       input.value = text;
       State.attach = sentAttach;
       State.replyTo = sentReply;
@@ -7673,7 +7678,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=64-reels-removed').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=65-auth-sync-fix').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
@@ -8160,7 +8165,7 @@ function rejectOrEndCall() {
 function sendRTCSignal(targetId, signal) {
   api('/rtc/signal', { method: 'POST', body: { targetId, signal } }).catch(e => {
     console.error('Signal error', e);
-    toast('Call signal failed: ' + (e.message || ''), 'error');
+    console.warn('[rtc] signal failed (non-fatal):', e && e.message);
   });
 }
 

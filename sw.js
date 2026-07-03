@@ -5,9 +5,9 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v64-reels-removed';
-const STATIC_CACHE = 'priv-spaca-static-v64-reels-removed';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v64-reels-removed';
+const SW_VERSION = 'priv-spaca-v65-auth-sync-fix';
+const STATIC_CACHE = 'priv-spaca-static-v65-auth-sync-fix';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v65-auth-sync-fix';
 
 const APP_SHELL = [
   '/',
@@ -53,6 +53,24 @@ self.addEventListener('fetch', (event) => {
   // Only GET caching
   if (req.method !== 'GET') return;
 
+  // HTML / JS / CSS: always network-first (no cache) so deploys ship fast
+  // and users always see the latest code. Only fall back to cache when
+  // the network fails (e.g. offline).
+  if (url.pathname === '/' || url.pathname === '/index.html' ||
+      /\/(app|style)\.js(\?|$)/i.test(url.pathname) ||
+      /\/style\.css(\?|$)/i.test(url.pathname) ||
+      url.pathname === '/sw.js' || /\/sw\.js(\?|$)/i.test(url.pathname)) {
+    event.respondWith(
+      fetch(req).then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(STATIC_CACHE).then((c) => c.put(req, copy));
+        }
+        return res;
+      }).catch(() => caches.match(req))
+    );
+    return;
+  }
   // Images / fonts — cache-first
   if (req.destination === 'image' || req.destination === 'font' ||
       /\.(png|jpe?g|webp|gif|svg|woff2?)$/i.test(url.pathname)) {
