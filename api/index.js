@@ -2231,8 +2231,15 @@ app.post('/api/priv/send', authMiddleware, async (req, res) => {
     const recipients = privRecipientsFor(me, db, audience);
     const recipientsWithSelf = Array.from(new Set([me.id, ...recipients]));
     db.privSnaps = Array.isArray(db.privSnaps) ? db.privSnaps : [];
-    // One active PRIV per user: replace any previous active instant from me.
-    db.privSnaps = db.privSnaps.filter(s => s.userId !== me.id);
+    // One active PRIV per user: tombstone previous active instants from me so
+    // merge-write cannot resurrect them from a remote snapshot.
+    for (const oldSnap of db.privSnaps) {
+      if (oldSnap && oldSnap.userId === me.id && !oldSnap.deletedAt) {
+        oldSnap.deletedAt = nowMs();
+        oldSnap.expiresAt = nowMs() - 1;
+        oldSnap.recipients = [];
+      }
+    }
     const snap = { id: uid('priv'), userId: me.id, imageUrl, caption, audience, recipients: recipientsWithSelf, openedBy: [], createdAt: nowMs(), expiresAt: null };
     db.privSnaps.push(snap);
     updatePrivStreaks(db, me.id, recipients);
