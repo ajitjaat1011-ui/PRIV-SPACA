@@ -3103,24 +3103,90 @@ function openPrivViewer(snap) {
   if (snap.userId !== (State.user && State.user.id)) api('/priv/open', { method: 'POST', body: { snapId: snap.id }}).catch(() => {});
   refreshIcons();
 }
+let _privCameraStream = null;
+let _privFacingMode = 'user';
+let _privFlashOn = false;
+async function sendPrivFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { toast('Choose a photo', 'error'); return; }
+  const btn = $('#privCaptureBtn'); if (btn) btn.disabled = true;
+  try {
+    toast('Sending PRIV...', 'info');
+    const up = await uploadPermanentImage(file, { kind: 'post', maxDim: 1280, quality: .86 });
+    const audience = ($('#privAudience') && $('#privAudience').value) || 'close_friends';
+    const res = await api('/priv/send', { method: 'POST', body: { imageUrl: up.url, audience } });
+    toast('PRIV sent to ' + (res.recipients || 0) + ' friends', 'success');
+    closePrivCamera();
+    $('#privPanel')?.classList.remove('hidden');
+    await loadPriv();
+  } catch (err) { toast(err.message || 'PRIV send failed', 'error'); }
+  finally { if (btn) btn.disabled = false; }
+}
+async function openPrivCamera() {
+  const modal = $('#privCameraModal');
+  const video = $('#privCameraVideo');
+  const fallback = $('#privCameraFallback');
+  if (!modal || !video) return;
+  modal.classList.remove('hidden');
+  fallback?.classList.add('hidden');
+  try {
+    closePrivCamera(false);
+    _privCameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: _privFacingMode, width: { ideal: 720 }, height: { ideal: 960 } }, audio: false });
+    video.classList.toggle('mirrored', _privFacingMode === 'user');
+    video.srcObject = _privCameraStream;
+    await video.play().catch(() => {});
+  } catch (e) {
+    console.warn('[PRIV camera]', e && e.message);
+    fallback?.classList.remove('hidden');
+  }
+  refreshIcons();
+}
+function closePrivCamera(hide = true) {
+  if (_privCameraStream) {
+    _privCameraStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+    _privCameraStream = null;
+  }
+  const video = $('#privCameraVideo'); if (video) video.srcObject = null;
+  if (hide) $('#privCameraModal')?.classList.add('hidden');
+}
+async function capturePrivCamera() {
+  const video = $('#privCameraVideo');
+  const canvas = $('#privCameraCanvas');
+  if (!video || !canvas || !video.videoWidth) { $('#privFileInput')?.click(); return; }
+  const maxSide = 1280;
+  const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+  const ctx = canvas.getContext('2d');
+  if (_privFacingMode === 'user') {
+    ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
+    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+  } else {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  }
+  if (_privFlashOn) {
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore();
+  }
+  canvas.toBlob(async blob => {
+    if (!blob) { toast('Capture failed', 'error'); return; }
+    await sendPrivFile(new File([blob], 'priv-instant.jpg', { type: 'image/jpeg' }));
+  }, 'image/jpeg', 0.88);
+}
 function bindPriv() {
+  const fab = $('#privChatFab');
+  const panel = $('#privPanel');
+  if (fab && panel) fab.addEventListener('click', () => { panel.classList.toggle('hidden'); if (!panel.classList.contains('hidden')) loadPriv(); });
   const btn = $('#privCaptureBtn');
+  if (btn) btn.addEventListener('click', openPrivCamera);
+  $('#privCameraClose')?.addEventListener('click', () => closePrivCamera(true));
+  $('#privShutterBtn')?.addEventListener('click', capturePrivCamera);
+  $('#privFlipBtn')?.addEventListener('click', async () => { _privFacingMode = _privFacingMode === 'user' ? 'environment' : 'user'; await openPrivCamera(); });
+  $('#privFlashBtn')?.addEventListener('click', () => { _privFlashOn = !_privFlashOn; const i = $('#privFlashBtn i'); if (i) i.setAttribute('data-lucide', _privFlashOn ? 'zap' : 'zap-off'); refreshIcons(); });
+  $('#privFallbackPick')?.addEventListener('click', () => $('#privFileInput')?.click());
   const input = $('#privFileInput');
-  if (btn && input) btn.addEventListener('click', () => input.click());
   if (input) input.addEventListener('change', async e => {
     const file = e.target.files && e.target.files[0]; e.target.value = '';
-    if (!file) return;
-    if (!file.type.startsWith('image/')) { toast('Choose a photo', 'error'); return; }
-    const btn = $('#privCaptureBtn'); if (btn) btn.disabled = true;
-    try {
-      toast('Sending PRIV...', 'info');
-      const up = await uploadPermanentImage(file, { kind: 'post', maxDim: 1280, quality: .86 });
-      const audience = ($('#privAudience') && $('#privAudience').value) || 'close_friends';
-      const res = await api('/priv/send', { method: 'POST', body: { imageUrl: up.url, audience } });
-      toast('PRIV sent to ' + (res.recipients || 0) + ' friends', 'success');
-      await loadPriv();
-    } catch (err) { toast(err.message || 'PRIV send failed', 'error'); }
-    finally { if (btn) btn.disabled = false; }
+    await sendPrivFile(file);
   });
 }
 

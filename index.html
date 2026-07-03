@@ -264,6 +264,21 @@
       </div>
       <div id="secretBanner" class="hidden" style="display:none;"></div>
 
+      <button id="privChatFab" type="button" class="priv-chat-fab" aria-label="Open PRIV"><span>+</span><b>PRIV</b></button>
+      <section id="privPanel" class="priv-panel priv-chat-panel hidden" aria-label="PRIV instants">
+        <div class="priv-panel-head">
+          <div><strong>PRIV</strong><span>Instant snaps · streaks</span></div>
+          <div class="priv-actions">
+            <select id="privAudience" class="priv-audience" aria-label="PRIV audience">
+              <option value="close_friends">Close friends</option>
+              <option value="mutuals">Mutuals</option>
+            </select>
+            <button id="privCaptureBtn" type="button" class="priv-capture-btn"><i data-lucide="camera"></i><span>New</span></button>
+          </div>
+        </div>
+        <div id="privStack" class="priv-stack-wrap"></div>
+      </section>
+
       <div id="messagesScroll" class="messages-scroll">
         <div id="messagesList" class="messages-list"></div>
         <button id="scrollBottomBtn" class="scroll-bottom-btn hidden"><i data-lucide="arrow-down"></i> New</button>
@@ -322,21 +337,6 @@
       <div class="stories-rail" id="storiesRail">
         <!-- Populated by JS -->
       </div>
-
-      <section id="privPanel" class="priv-panel" aria-label="PRIV instants">
-        <div class="priv-panel-head">
-          <div><strong>PRIV</strong><span>Instant snaps · streaks</span></div>
-          <div class="priv-actions">
-            <select id="privAudience" class="priv-audience" aria-label="PRIV audience">
-              <option value="close_friends">Close friends</option>
-              <option value="mutuals">Mutuals</option>
-            </select>
-            <button id="privCaptureBtn" type="button" class="priv-capture-btn"><i data-lucide="camera"></i><span>Send</span></button>
-            <input id="privFileInput" type="file" accept="image/*" capture="environment" hidden />
-          </div>
-        </div>
-        <div id="privStack" class="priv-stack-wrap"></div>
-      </section>
 
       <!-- Composer (opened by + button) -->
       <div id="inlineComposerCard" class="composer-card ig-compose-inline hidden">
@@ -627,6 +627,32 @@
   <div class="profile-card-stage">
     <button type="button" class="profile-card-close" data-close-profile-card aria-label="Close"><i data-lucide="x"></i></button>
     <div id="profileCardMount"></div>
+  </div>
+</div>
+
+
+<!-- ====== PRIV IN-APP CAMERA ====== -->
+<div id="privCameraModal" class="priv-camera-modal hidden" role="dialog" aria-modal="true">
+  <div class="priv-camera-top">
+    <button id="privCameraClose" type="button" class="priv-camera-icon" aria-label="Close"><i data-lucide="x"></i></button>
+    <strong>New instant</strong>
+    <button id="privCameraGrid" type="button" class="priv-camera-icon" aria-label="Grid"><i data-lucide="grid-2x2"></i></button>
+  </div>
+  <div class="priv-camera-caption">Caught them “INSTANTLY”</div>
+  <div class="priv-camera-preview-wrap">
+    <video id="privCameraVideo" class="priv-camera-video" autoplay playsinline muted></video>
+    <canvas id="privCameraCanvas" class="hidden"></canvas>
+    <div id="privCameraFallback" class="priv-camera-fallback hidden">
+      <i data-lucide="camera-off"></i>
+      <span>Camera unavailable. Pick a photo instead.</span>
+      <input id="privFileInput" type="file" accept="image/*" hidden />
+      <button id="privFallbackPick" type="button">Choose photo</button>
+    </div>
+  </div>
+  <div class="priv-camera-controls">
+    <button id="privFlashBtn" type="button" class="priv-round-btn" aria-label="Flash"><i data-lucide="zap-off"></i></button>
+    <button id="privShutterBtn" type="button" class="priv-shutter" aria-label="Capture"></button>
+    <button id="privFlipBtn" type="button" class="priv-round-btn" aria-label="Flip camera"><i data-lucide="refresh-cw"></i></button>
   </div>
 </div>
 
