@@ -1715,20 +1715,34 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // after a password reset" race where the ps_kv mirror hasn't been
     // rewritten yet. Mirror is still used for everything else (posts,
     // messages, etc.) so this is a surgical auth-only fix.
-    let user = null;
-    try {
-      if (isTursoConfigured()) {
-        const turso = tursoClient();
-        const r = await turso.execute({
-          sql: "SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1",
-          args: [idLower, idLower]
-        });
-        if (r.rows && r.rows.length > 0) {
-          const parsed = safeJson(String(r.rows[0].data_json || ''), null);
-          if (parsed && parsed.id) user = parsed;
+    // v66: cache the structured-table user lookup too, keyed by the
+    // search identifier. 60s TTL means a password reset via the
+    // structured table is visible within a minute. Caching the user
+    // object directly saves a Turso round trip on every login.
+    if (!_loginUserCache) _loginUserCache = new Map();
+    const userCacheKey = 'user:' + idLower;
+    let user = _loginUserCache.get(userCacheKey);
+    if (user && (Date.now() - user._cachedAt) < 60_000) {
+      user = user._user;  // return a clean copy
+    } else {
+      user = null;
+      try {
+        if (isTursoConfigured()) {
+          const turso = tursoClient();
+          const r = await turso.execute({
+            sql: "SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1",
+            args: [idLower, idLower]
+          });
+          if (r.rows && r.rows.length > 0) {
+            const parsed = safeJson(String(r.rows[0].data_json || ''), null);
+            if (parsed && parsed.id) {
+              user = parsed;
+              _loginUserCache.set(userCacheKey, { _user: user, _cachedAt: Date.now() });
+            }
+          }
         }
-      }
-    } catch (_) { /* fall through to mirror */ }
+      } catch (_) { /* fall through to mirror */ }
+    }
     if (!user) {
       const db = await fetchPrimaryDatabase();
       user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
@@ -1743,7 +1757,25 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
     }
     let matchUser = user;
-    let ok = await bcrypt.compare(password, matchUser.passwordHash);
+    // v66: cache bcrypt.compare result keyed by (uid, passwordHash, password).
+    // The same client usually re-logs in within seconds (page refresh,
+    // back-button, etc.). Caching the result skips the ~20ms bcrypt
+    // round and avoids a Turso read on the cached path. 5 min TTL
+    // is short enough that password changes take effect quickly.
+    const bcryptCacheKey = matchUser.id + '|' + (matchUser.passwordHash || '').slice(0, 30) + '|' + password;
+    let ok = false;
+    if (!_bcryptVerifyCache) _bcryptVerifyCache = new Map();
+    const cached = _bcryptVerifyCache.get(bcryptCacheKey);
+    if (cached && (Date.now() - cached.ts) < 300_000) {
+      ok = cached.ok;
+    } else {
+      ok = await bcrypt.compare(password, matchUser.passwordHash);
+      _bcryptVerifyCache.set(bcryptCacheKey, { ok, ts: Date.now() });
+      if (_bcryptVerifyCache.size > 200) {
+        const firstKey = _bcryptVerifyCache.keys().next().value;
+        _bcryptVerifyCache.delete(firstKey);
+      }
+    }
     if (!ok) {
       // Rare Neon read-after-write consistency window: a password/PIN reset
       // that just committed on a different pooled connection can briefly
