@@ -3337,3 +3337,9 @@ body{
 .profile-card-sheet:not(.hidden) .reflective-video{filter:saturate(.62) contrast(112%) brightness(106%) blur(7px)!important;transform:scale(1.06)!important}
 .profile-card-sheet:not(.hidden) .reflective-noise{opacity:.20!important}.profile-card-sheet:not(.hidden) .reflective-sheen{opacity:.72!important}
 @media(max-height:680px){.fast-reflective-preview-card{height:340px}.fast-card-stats{margin-top:54px}.fast-card-bg{filter:blur(9px) saturate(.85) brightness(.9)}}
+
+/* Ultra-light profile card reveal animation: fade only, no blur/spring jank */
+.profile-card-sheet:not(.hidden){animation:profileSheetFadeOnly .14s ease-out both!important}
+.profile-card-sheet:not(.hidden) .reflective-card-container{animation:profileCardFadeOnly .16s ease-out both!important;will-change:opacity,transform}
+@keyframes profileSheetFadeOnly{from{opacity:0}to{opacity:1}}
+@keyframes profileCardFadeOnly{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:scale(1)}}
