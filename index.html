@@ -26,7 +26,7 @@
 <script defer src="https://unpkg.com/lucide@1.23.0/dist/umd/lucide.js"></script>
 <!-- Motion One v10 - lightweight (~3 KB gz) Framer-Motion-style animations for vanilla JS -->
 <script defer src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.min.js"></script>
-<link rel="stylesheet" href="style.css?v=62-pause-audio-on-leave" />
+<link rel="stylesheet" href="style.css?v=63-reels-tab" />
 <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
@@ -519,7 +519,99 @@
     </div>
   </main>
 
-  <!-- ====== BOTTOM NAV (INSTAGRAM / WHATSAPP PILL + CIRCULAR ACTION BTN) ====== -->
+  <main id="reelsView" class="view reels-view">
+    <!-- Header bar -->
+    <div class="reels-header">
+      <div class="reels-title">Reels</div>
+      <button type="button" id="reelsAddBtn" class="reels-add-btn" aria-label="Add reel">
+        <i data-lucide="plus-circle"></i>
+      </button>
+    </div>
+
+    <!-- Tab strip: For You / Mine -->
+    <div class="reels-tabs">
+      <button type="button" class="reels-tab active" data-reels-tab="all">For You</button>
+      <button type="button" class="reels-tab" data-reels-tab="mine">My Reels</button>
+    </div>
+
+    <!-- 9:16 vertical reel list -->
+    <div id="reelsList" class="reels-list">
+      <div class="reels-empty" id="reelsEmpty">
+        <div class="ico"><i data-lucide="film"></i></div>
+        <div class="t">No reels yet</div>
+        <div class="s">Tap <strong>+</strong> to upload your first short video, or paste an Instagram reel link.</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ====== ADD REEL SHEET (video upload + Instagram URL) ====== -->
+  <div id="addReelSheet" class="sheet add-reel-sheet hidden" aria-hidden="true">
+    <div class="sheet-backdrop" data-close-add-reel></div>
+    <div class="sheet-card add-reel-card">
+      <div class="sheet-handle"></div>
+      <div class="add-reel-head">
+        <strong>New Reel</strong>
+        <button type="button" class="ghost-btn" data-close-add-reel aria-label="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="add-reel-tabs">
+        <button type="button" class="add-reel-tab active" data-add-reel-tab="upload">
+          <i data-lucide="upload-cloud"></i> Upload Video
+        </button>
+        <button type="button" class="add-reel-tab" data-add-reel-tab="instagram">
+          <i data-lucide="link"></i> Instagram URL
+        </button>
+      </div>
+
+      <!-- Upload tab -->
+      <div class="add-reel-pane" data-add-reel-pane="upload">
+        <div class="add-reel-drop" id="addReelDrop">
+          <input type="file" id="addReelFile" accept="video/mp4,video/webm,video/quicktime,video/*" style="display:none" />
+          <div class="add-reel-drop-inner" id="addReelDropInner">
+            <i data-lucide="film"></i>
+            <strong>Tap to pick a video</strong>
+            <span>Up to 10 MB · MP4 / WebM / MOV</span>
+          </div>
+          <video id="addReelPreview" class="add-reel-preview hidden" muted playsinline></video>
+          <div id="addReelUploadStatus" class="add-reel-status hidden"></div>
+        </div>
+        <input type="text" id="addReelCaption" class="add-reel-caption" placeholder="Add a caption (optional)" maxlength="200" />
+      </div>
+
+      <!-- Instagram tab -->
+      <div class="add-reel-pane hidden" data-add-reel-pane="instagram">
+        <div class="add-reel-ig-help">
+          <i data-lucide="info"></i>
+          <span>Instagram doesn't let us play their videos in-app. We'll save the reel card here, and tapping it will open the reel on Instagram.</span>
+        </div>
+        <input type="url" id="addReelIgUrl" class="add-reel-caption" placeholder="https://www.instagram.com/reel/..." />
+        <div id="addReelIgPreview" class="add-reel-ig-preview hidden">
+          <img id="addReelIgThumb" alt="" />
+          <div class="ig-meta">
+            <strong id="addReelIgAuthor"></strong>
+            <span id="addReelIgTitle"></span>
+          </div>
+        </div>
+        <div id="addReelIgError" class="add-reel-error hidden"></div>
+      </div>
+
+      <div class="add-reel-actions">
+        <button type="button" class="btn-secondary" data-close-add-reel>Cancel</button>
+        <button type="button" id="addReelSubmitBtn" class="btn-primary" disabled>Post Reel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== REEL VIEWER (TikTok-style full-screen vertical scroll) ====== -->
+  <div id="reelViewer" class="reel-viewer hidden" aria-hidden="true">
+    <button type="button" class="reel-viewer-close" id="reelViewerClose" aria-label="Close">
+      <i data-lucide="x"></i>
+    </button>
+    <div class="reel-viewer-track" id="reelViewerTrack">
+      <!-- Slides injected by renderReelViewer() -->
+    </div>
+  </div>
+
+ (INSTAGRAM / WHATSAPP PILL + CIRCULAR ACTION BTN) ====== -->
   <nav class="bottom-nav-wrap" role="navigation">
     <div class="bottom-nav-pill">
       <button data-tab="feed" class="bn-btn active" aria-label="Home">
@@ -532,6 +624,12 @@
         <i data-lucide="search" class="i-outline"></i>
         <i data-lucide="search" class="i-filled"></i>
         <span class="bn-label">Search</span>
+      </button>
+      <button data-tab="reels" class="bn-btn" aria-label="Reels">
+        <i data-lucide="film" class="i-outline"></i>
+        <i data-lucide="film" class="i-filled"></i>
+        <span class="bn-label">Reels</span>
+        <span class="dot hidden" data-dot="reels"></span>
       </button>
       <button data-tab="chat" class="bn-btn" aria-label="Direct Messages">
         <i data-lucide="send" class="i-outline"></i>
@@ -1263,6 +1361,6 @@ window.__privSpacaLoaderFallback = setTimeout(function () {
   });
 })();
 </script>
-<script src="app.js?v=62-pause-audio-on-leave"></script>
+<script src="app.js?v=63-reels-tab"></script>
 </body>
 </html>
