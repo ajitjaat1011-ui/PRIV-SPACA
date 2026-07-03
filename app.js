@@ -565,17 +565,15 @@ function bindAuth() {
   const tm = $('#termsModal');
   if (tm) tm.addEventListener('click', (e) => { if (e.target === tm) tm.classList.add('hidden'); });
 
-  // New auth flow: 3 options (login / signup / reset) that swap in just one panel each.
-  const authOptions = $('[data-auth-options]');
+  // New auth flow: default = sign-in panel. Two secondary buttons
+  // (Create account, Forgot password) swap the panel. The top back
+  // button (#authTopBack) hides the auth and reveals the splash.
   const authPanels = document.querySelectorAll('[data-auth-panel]');
-  function showAuthOptions() {
-    if (authOptions) authOptions.hidden = false;
-    authPanels.forEach(p => p.hidden = true);
-    $$('.auth-error').forEach(el => el.textContent = '');
-  }
+  const authSecondary = $('[data-auth-secondary]');
   function showAuthPanel(name) {
-    if (authOptions) authOptions.hidden = true;
     authPanels.forEach(p => p.hidden = (p.dataset.authPanel !== name));
+    // Show secondary action row only on the sign-in panel
+    if (authSecondary) authSecondary.hidden = (name !== 'login');
     // Focus the first input of the active panel
     const active = document.querySelector('[data-auth-panel="' + name + '"]');
     if (active) {
@@ -585,14 +583,26 @@ function bindAuth() {
     $$('.auth-error').forEach(el => el.textContent = '');
     try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) {}
   }
-  // Option buttons: tap one to expand its panel
+  // Secondary action buttons (and any future [data-auth-step] buttons) swap panels
   document.querySelectorAll('[data-auth-step]').forEach(btn => {
     btn.addEventListener('click', () => showAuthPanel(btn.dataset.authStep));
   });
-  // Back buttons: tap one to return to the options list
+  // In-panel back buttons return to sign-in
   document.querySelectorAll('[data-auth-back]').forEach(btn => {
-    btn.addEventListener('click', () => showAuthOptions());
+    btn.addEventListener('click', () => showAuthPanel('login'));
   });
+  // Top back button: hide the auth card and reveal the splash/landing
+  const topBack = $('#authTopBack');
+  if (topBack) {
+    topBack.addEventListener('click', () => {
+      const splash = $('#splash');
+      const auth = $('#authShell');
+      const app = $('#appShell');
+      if (auth) auth.classList.add('hidden');
+      if (app) app.classList.add('hidden');
+      if (splash) splash.classList.remove('hidden');
+    });
+  }
 
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -676,7 +686,7 @@ function bindAuth() {
         setTimeout(() => {
           errEl.style.color = ''; errEl.textContent = '';
           // default to options list — user picks login/signup/reset themselves
-  showAuthOptions();
+  showAuthPanel('login');
           $('#loginForm input[name=identifier]').value = String(fd.get('identifier') || '').trim();
           $('#loginForm input[name=password]').focus();
         }, 900);
