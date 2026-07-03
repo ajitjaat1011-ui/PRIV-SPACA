@@ -1548,23 +1548,6 @@ app.get('/api/health', (c) => c.json({
   time: nowMs(), version: 'phase2-turso-json-primary',
 }));
 
-app.get('/api/diag/cloudinary', async (c) => {
-  // TEMP DEBUG: confirm Cloudinary env vars are reaching the worker
-  return c.json({
-    isCloudinaryConfigured: isCloudinaryConfigured(),
-    cloudNameSet: !!CLOUDINARY_CLOUD_NAME,
-    cloudName: CLOUDINARY_CLOUD_NAME || null,
-    apiKeySet: !!CLOUDINARY_API_KEY,
-    apiKeyLength: CLOUDINARY_API_KEY ? CLOUDINARY_API_KEY.length : 0,
-    apiSecretSet: !!CLOUDINARY_API_SECRET,
-    apiSecretLength: CLOUDINARY_API_SECRET ? CLOUDINARY_API_SECRET.length : 0,
-    folder: CLOUDINARY_FOLDER,
-    // Also check what c.env has (sanitized)
-    envCloudName: c.env.CLOUDINARY_CLOUD_NAME ? '[set]' : null,
-    envApiKey: c.env.CLOUDINARY_API_KEY ? '[set]' : null,
-    envApiSecret: c.env.CLOUDINARY_API_SECRET ? '[set]' : null,
-  });
-});
 app.get('/api/diag', requireAdmin, async (c) => {
   const out = {
     persistence: primaryPersistenceName(),
