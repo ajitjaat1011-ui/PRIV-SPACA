@@ -1634,8 +1634,30 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
     }
-    const db = await fetchPrimaryDatabase();
-    const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
+    // v65: Try the structured ps_users table FIRST (always-fresh read), and
+    // fall back to the mirror only if the structured table is empty or the
+    // user isn't there. This fixes the "login says account not found right
+    // after a password reset" race where the ps_kv mirror hasn't been
+    // rewritten yet. Mirror is still used for everything else (posts,
+    // messages, etc.) so this is a surgical auth-only fix.
+    let user = null;
+    try {
+      if (isTursoConfigured()) {
+        const turso = tursoClient();
+        const r = await turso.execute({
+          sql: "SELECT data_json FROM ps_users WHERE LOWER(username) = ? OR LOWER(email) = ? LIMIT 1",
+          args: [idLower, idLower]
+        });
+        if (r.rows && r.rows.length > 0) {
+          const parsed = safeJson(String(r.rows[0].data_json || ''), null);
+          if (parsed && parsed.id) user = parsed;
+        }
+      }
+    } catch (_) { /* fall through to mirror */ }
+    if (!user) {
+      const db = await fetchPrimaryDatabase();
+      user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
+    }
     if (!user) {
       await authFailureDelay();
       return c.json({ error: AUTH_GENERIC_ERROR }, 404);
@@ -1692,8 +1714,25 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return c.json({ error: 'Too many reset attempts. Please wait and try again.' }, 429);
     }
-    const db = await fetchPrimaryDatabase();
-    const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
+    // v65: Try structured ps_users first (fresh), mirror as fallback
+    let user = null;
+    try {
+      if (isTursoConfigured()) {
+        const turso = tursoClient();
+        const r = await turso.execute({
+          sql: "SELECT data_json FROM ps_users WHERE LOWER(username) = ? OR LOWER(email) = ? LIMIT 1",
+          args: [idLower, idLower]
+        });
+        if (r.rows && r.rows.length > 0) {
+          const parsed = safeJson(String(r.rows[0].data_json || ''), null);
+          if (parsed && parsed.id) user = parsed;
+        }
+      }
+    } catch (_) { /* fall through to mirror */ }
+    if (!user) {
+      const db = await fetchPrimaryDatabase();
+      user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
+    }
     if (!user) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
     const pinOk = await bcrypt.compare(pin, user.pinHash);
     if (!pinOk) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
