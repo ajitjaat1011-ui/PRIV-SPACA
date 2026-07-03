@@ -21,6 +21,8 @@ const State = {
   members: [],
   messages: [],
   posts: [],
+  privSnaps: [],
+  privStreaks: [],
   scheduled: [],
   typingUsers: [],
   closeFriends: safeJsonParse(safeLocalGet('ps_closeFriends', '[]'), []),
@@ -2621,6 +2623,7 @@ function startPolls() {
   loadMembers();
   pollTyping();
   pollNotifications();
+  loadPriv();
   pollRTCSignals();
   State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
   State.pollTimers.members = setInterval(() => {
@@ -2652,6 +2655,7 @@ function startPolls() {
     if ((now - _lastFeedPollAt) < minGap) return;
     _lastFeedPollAt = now;
     loadFeed();
+    loadPriv();
   }, 1500);
   // NOTIFICATIONS: same dynamic fast-poll behavior as the feed.
   State.pollTimers.notif = setInterval(() => {
@@ -3025,6 +3029,101 @@ function getFeedPosts() {
 // "Stories" are kept separate from the main feed.
 let _storiesRendered = false;
 let _lastStoriesSig = '';
+
+// ===== PRIV Instants (Instagram Instants + Snap streaks) =====
+let _privStackOrder = [];
+async function loadPriv() {
+  if (!State.token) return;
+  try {
+    const data = await api('/priv');
+    State.privSnaps = data.snaps || [];
+    State.privStreaks = data.streaks || [];
+    renderPrivStack();
+  } catch (_) {}
+}
+function renderPrivStack() {
+  const root = $('#privStack');
+  if (!root) return;
+  const snaps = State.privSnaps || [];
+  root.innerHTML = '';
+  if (!snaps.length) {
+    root.innerHTML = '<div class="priv-empty"><i data-lucide="sparkles"></i><strong>No PRIV yet</strong><span>Send an instant to close friends and build streaks 🔥</span></div>';
+    refreshIcons();
+    return;
+  }
+  const ids = snaps.map(s => s.id).join('|');
+  if (_privStackOrder.join('|') !== ids) _privStackOrder = snaps.map(s => s.id);
+  const stack = document.createElement('div');
+  stack.className = 'priv-stack-container';
+  const ordered = _privStackOrder.map(id => snaps.find(s => s.id === id)).filter(Boolean);
+  ordered.forEach((snap, index) => {
+    const depth = ordered.length - index - 1;
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'priv-stack-card';
+    card.style.zIndex = String(index + 1);
+    card.style.transform = `translate(${Math.min(depth * 7, 24)}px, ${Math.min(depth * 5, 18)}px) rotate(${((depth % 5) - 2) * 2.2}deg) scale(${1 - Math.min(depth * .045, .16)})`;
+    const author = snap.author || {};
+    const count = Number(snap.streak && snap.streak.count) || 0;
+    card.innerHTML = `
+      <img src="${escapeHtml(snap.imageUrl)}" alt="PRIV" loading="lazy" />
+      <div class="priv-card-shade"></div>
+      <div class="priv-card-meta"><span class="avatar sm"></span><strong>${escapeHtml(author.displayName || author.username || 'Member')}</strong>${count ? `<em>🔥 ${count}</em>` : ''}</div>
+      ${snap.caption ? `<div class="priv-card-caption">${escapeHtml(snap.caption)}</div>` : ''}
+    `;
+    renderAvatar(card.querySelector('.avatar'), author);
+    card.addEventListener('click', () => {
+      if (index === ordered.length - 1) openPrivViewer(snap);
+      else { _privStackOrder = _privStackOrder.filter(id => id !== snap.id).concat(snap.id); renderPrivStack(); }
+    });
+    stack.appendChild(card);
+  });
+  root.appendChild(stack);
+  refreshIcons();
+}
+function openPrivViewer(snap) {
+  const existing = $('#privViewer'); if (existing) existing.remove();
+  const v = document.createElement('div');
+  v.id = 'privViewer';
+  v.className = 'priv-viewer';
+  const author = snap.author || {};
+  v.innerHTML = `
+    <div class="priv-viewer-bg"></div>
+    <button class="priv-viewer-close" aria-label="Close"><i data-lucide="x"></i></button>
+    <div class="priv-viewer-card">
+      <img src="${escapeHtml(snap.imageUrl)}" alt="PRIV instant" />
+      <div class="priv-viewer-top"><span class="avatar md"></span><strong>${escapeHtml(author.displayName || author.username || 'Member')}</strong><b>PRIV</b></div>
+      ${snap.caption ? `<div class="priv-viewer-caption">${escapeHtml(snap.caption)}</div>` : ''}
+      <div class="priv-viewer-hint">${snap.userId === (State.user && State.user.id) ? 'Your PRIV · expires in 24h' : 'Viewed once · disappears after open'}</div>
+    </div>`;
+  document.body.appendChild(v);
+  renderAvatar(v.querySelector('.avatar'), author);
+  v.querySelector('.priv-viewer-close').addEventListener('click', () => { v.remove(); loadPriv(); });
+  v.addEventListener('click', e => { if (e.target === v || e.target.classList.contains('priv-viewer-bg')) { v.remove(); loadPriv(); } });
+  if (snap.userId !== (State.user && State.user.id)) api('/priv/open', { method: 'POST', body: { snapId: snap.id }}).catch(() => {});
+  refreshIcons();
+}
+function bindPriv() {
+  const btn = $('#privCaptureBtn');
+  const input = $('#privFileInput');
+  if (btn && input) btn.addEventListener('click', () => input.click());
+  if (input) input.addEventListener('change', async e => {
+    const file = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast('Choose a photo', 'error'); return; }
+    const btn = $('#privCaptureBtn'); if (btn) btn.disabled = true;
+    try {
+      toast('Sending PRIV...', 'info');
+      const up = await uploadPermanentImage(file, { kind: 'post', maxDim: 1280, quality: .86 });
+      const audience = ($('#privAudience') && $('#privAudience').value) || 'close_friends';
+      const res = await api('/priv/send', { method: 'POST', body: { imageUrl: up.url, audience } });
+      toast('PRIV sent to ' + (res.recipients || 0) + ' friends', 'success');
+      await loadPriv();
+    } catch (err) { toast(err.message || 'PRIV send failed', 'error'); }
+    finally { if (btn) btn.disabled = false; }
+  });
+}
+
 function renderStoriesRail() {
   const rail = $('#storiesRail');
   if (!rail || !State.user) return;
@@ -7758,7 +7857,7 @@ function boot() {
   // handler function) can't crash the whole boot sequence and silently skip
   // session restore below — that was causing "logged out on every refresh".
   const bindSteps = [
-    bindTabs, bindScrollMemory, bindRooms, bindInboxSegment, bindNotes, bindComposer, bindFeedComposer, bindProfile,
+    bindTabs, bindScrollMemory, bindRooms, bindInboxSegment, bindNotes, bindComposer, bindFeedComposer, bindPriv, bindProfile,
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
     bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
