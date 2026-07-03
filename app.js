@@ -7661,7 +7661,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=55-icons-wired').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=62-pause-audio').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and offer reload
       reg.addEventListener('updatefound', () => {
@@ -7733,6 +7733,100 @@ window.addEventListener('unhandledrejection', () => {
     try { showAuth(); } catch (_) {}
   }
 });
+
+/**
+ * Global audio-pause guard.
+ *
+ * Whenever the user leaves the tab (switches tabs, minimises the browser,
+ * backgrounds the app on mobile) or navigates away from the page, EVERY
+ * audio/video source must stop immediately. Otherwise the music keeps
+ * playing in the background, which is jarring and burns battery/data.
+ *
+ * Wired to:
+ *   - `visibilitychange` -> tab/app backgrounded or foregrounded
+ *   - `pagehide`         -> user is navigating away / closing the tab
+ *   - `blur`             -> user switched to another window
+ *
+ * On return (visible) we do NOT auto-resume -- silence is the expected UX,
+ * matching Instagram/WhatsApp. The user can re-tap the music button to
+ * resume if they want it back.
+ */
+let _audioPauseGuardInstalled = false;
+function pauseAllAudioForHide() {
+  try {
+    // 1. Post music in the feed (main player)
+    if (typeof getPostMusicPlayer === 'function' && typeof isPostMusicPlaying === 'function' && isPostMusicPlaying()) {
+      const player = getPostMusicPlayer();
+      try { player.pause(); } catch (_) {}
+      try { player.currentTime = 0; } catch (_) {}
+      if (typeof _postMusicState !== 'undefined') {
+        _postMusicState.postId = null;
+        _postMusicState.src = '';
+        _postMusicState.title = '';
+        _postMusicState.artist = '';
+      }
+      if (typeof syncPostMusicUI === 'function') { try { syncPostMusicUI(); } catch (_) {} }
+    }
+  } catch (_) {}
+  try {
+    // 2. Note preview audio (top of profile / note editor)
+    if (typeof stopNotePreviewAudio === 'function') { try { stopNotePreviewAudio(); } catch (_) {} }
+  } catch (_) {}
+  try {
+    // 3. Story music preview in the editor (#storyBgAudioPlayer)
+    const storyBg = document.getElementById('storyBgAudioPlayer');
+    if (storyBg && !storyBg.paused) {
+      try { storyBg.pause(); } catch (_) {}
+      try { storyBg.currentTime = 0; } catch (_) {}
+    }
+  } catch (_) {}
+  try {
+    // 4. Inline <audio> elements (voice notes, #notePreviewAudio, etc.)
+    const audios = document.querySelectorAll('audio');
+    audios.forEach(a => {
+      try {
+        if (a && !a.paused) {
+          a.pause();
+          try { a.currentTime = 0; } catch (_) {}
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
+  try {
+    // 5. Reels + story playback <video> elements (they should also stop
+    //    playing audio when the tab is hidden).
+    const videos = document.querySelectorAll('video');
+    videos.forEach(v => {
+      try { if (v && !v.paused) { v.pause(); } } catch (_) {}
+    });
+  } catch (_) {}
+  try {
+    // 6. Incoming-call ringtone (WebAudio oscillator loop). It's an
+    //    intrusive alert that must stop the moment the tab is hidden.
+    if (typeof stopIncomingCallAlert === 'function') { try { stopIncomingCallAlert(); } catch (_) {} }
+  } catch (_) {}
+  try {
+    // 7. Story playback (already handled in its own visibilitychange
+    //    handler, but call again as a belt-and-braces).
+    if (typeof pauseStoryForHold === 'function' && typeof storyPlayback !== 'undefined' && storyPlayback && storyPlayback.user) {
+      try { pauseStoryForHold(); } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+function installAudioPauseGuard() {
+  if (_audioPauseGuardInstalled) return;
+  _audioPauseGuardInstalled = true;
+  const onHide = () => { if (document.hidden) pauseAllAudioForHide(); };
+  document.addEventListener('visibilitychange', onHide);
+  // pagehide fires on real navigations / tab close (more reliable than
+  // beforeunload in modern browsers and during bfcache eviction).
+  window.addEventListener('pagehide', pauseAllAudioForHide);
+  // When the user alt-tabs to another window on desktop, blur also fires.
+  window.addEventListener('blur', pauseAllAudioForHide);
+}
+// Install immediately so it covers any audio that starts before boot() runs.
+installAudioPauseGuard();
 
 function boot() {
   const yr = $('#yr');
