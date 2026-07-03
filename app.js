@@ -60,7 +60,7 @@ async function api(path, options = {}) {
   // cache. In particular, caching /rtc/signals makes call pickup/ICE candidate
   // delivery lag by up to API_CACHE_TTL_MS and can break WebRTC negotiation.
   let cacheKey = isGet ? path : null;
-  if (cacheKey && cacheKey.startsWith('/rtc/signals')) cacheKey = null;
+  if (cacheKey && (cacheKey.startsWith('/rtc/signals') || cacheKey.startsWith('/priv'))) cacheKey = null;
   if (cacheKey) {
     const cached = _apiCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < API_CACHE_TTL_MS) return cached.data;
@@ -98,6 +98,8 @@ async function api(path, options = {}) {
         _apiCache.delete('/users'); _apiCache.delete('/auth/me');
         // Follow/unfollow changes the feed — bust it
         if (path.includes('/follow') || path.includes('/unfollow')) _apiCache.delete('/feed');
+      } else if (path.startsWith('/priv')) {
+        for (const k of [..._apiCache.keys()]) if (k.startsWith('/priv')) _apiCache.delete(k);
       }
     }
     return data;
@@ -3083,7 +3085,15 @@ function renderPrivStack() {
     `;
     card.appendChild(inner);
     renderAvatar(card.querySelector('.avatar'), author);
+    let sx = 0, sy = 0, dragged = false;
+    const sendBack = () => { _privStackOrder = _privStackOrder.filter(id => id !== snap.id); _privStackOrder.unshift(snap.id); renderPrivStack(); };
+    card.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; dragged = false; });
+    card.addEventListener('pointerup', (e) => {
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (Math.abs(dx) > 70 || Math.abs(dy) > 70) { dragged = true; sendBack(); }
+    });
     card.addEventListener('click', () => {
+      if (dragged) return;
       if (index === ordered.length - 1) openPrivViewer(snap);
       else { _privStackOrder = _privStackOrder.filter(id => id !== snap.id).concat(snap.id); renderPrivStack(); }
     });
@@ -3161,7 +3171,7 @@ async function sendPrivFile(file) {
     toast('Sending PRIV...', 'info');
     // PRIV is instant-first: send a compact inline image to avoid CDN/GitHub
     // upload delays and failures. Backend caps and validates this data URL.
-    const imageUrl = await resizeImageToDataUrl(file, 720, .72);
+    const imageUrl = await resizeImageToDataUrl(file, 540, .66);
     const audience = ($('#privAudience') && $('#privAudience').value) || 'all';
     const res = await api('/priv/send', { method: 'POST', body: { imageUrl, audience } });
     toast('PRIV sent to ' + (res.recipients || 0) + ' friends', 'success');
