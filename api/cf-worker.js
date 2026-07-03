@@ -1548,7 +1548,7 @@ app.get('/api/health', (c) => c.json({
   time: nowMs(), version: 'phase2-turso-json-primary',
 }));
 
-app.get('/api/diag/cloudinary', requireAdmin, async (c) => {
+app.get('/api/diag/cloudinary', async (c) => {
   // TEMP DEBUG: confirm Cloudinary env vars are reaching the worker
   return c.json({
     isCloudinaryConfigured: isCloudinaryConfigured(),
