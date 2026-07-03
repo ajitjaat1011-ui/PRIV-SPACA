@@ -960,8 +960,8 @@ function privPairId(a, b) {
 }
 function canViewPrivSnap(snap, viewerId, db) {
   if (!snap || !viewerId) return false;
-  if (snap.userId === viewerId) return true;
   if (snap.expiresAt && snap.expiresAt <= nowMs()) return false;
+  if (snap.userId === viewerId) return true;
   if (Array.isArray(snap.openedBy) && snap.openedBy.includes(viewerId)) return false;
   if (Array.isArray(snap.recipients) && !snap.recipients.includes(viewerId)) return false;
   const author = (db.users || []).find(u => u.id === snap.userId);
@@ -2249,7 +2249,10 @@ app.post('/api/priv/open', authMiddleware, async (req, res) => {
     if (!snap.openedBy.includes(viewerId)) snap.openedBy.push(viewerId);
     snap.recipients = Array.isArray(snap.recipients) ? snap.recipients.filter(id => id !== viewerId) : [];
     if (snap.recipients.length === 0) {
-      db.privSnaps = (db.privSnaps || []).filter(s => s.id !== snap.id);
+      // Keep a tombstone through the merge-write path so the old row is not
+      // resurrected by mergeById(), then scheduler purges it on next read.
+      snap.deletedAt = nowMs();
+      snap.expiresAt = nowMs() - 1;
     }
     await saveDatabase(db, false);
   }
