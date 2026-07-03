@@ -1053,6 +1053,7 @@ async function mutateDatabaseAtomic(mutatorFn, { skipSecondarySync } = {}) {
     return { ...(result || {}), __persisted: persisted, __db: db };
   }
   const MAX_ATTEMPTS = 15;
+  const _dbgId = Math.random().toString(36).slice(2, 8);
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     let versioned;
     try {
@@ -1062,6 +1063,7 @@ async function mutateDatabaseAtomic(mutatorFn, { skipSecondarySync } = {}) {
       return { __error: true };
     }
     const db = versioned.db;
+    console.log(`[mutateAtomic ${_dbgId}] attempt=${attempt} readVersion=${versioned.version} postsLen=${(db.posts||[]).length}`);
     const result = mutatorFn(db);
     if (result && result.__notFound) return result;
     let ok = false;
@@ -1071,6 +1073,7 @@ async function mutateDatabaseAtomic(mutatorFn, { skipSecondarySync } = {}) {
       console.error('[mutateDatabaseAtomic] CAS write failed', e && e.message);
       return { __error: true };
     }
+    console.log(`[mutateAtomic ${_dbgId}] attempt=${attempt} casResult=${ok} expectedVersion=${versioned.version}`);
     if (ok) {
       localCache = normalizeDb(db);
       cacheTimestamp = nowMs();
