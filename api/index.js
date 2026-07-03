@@ -235,6 +235,11 @@ function isSafeMediaUrl(url, { allowData = true } = {}) {
   if (allowData && /^data:(image|audio|video)\/(jpeg|jpg|png|webp|gif|webm|mp3|mp4|quicktime|mov);base64,[a-z0-9+/=]+$/i.test(u)) return true;
   return false;
 }
+function isSafePrivImageUrl(url) {
+  if (isSafeImageUrl(url)) return true;
+  if (typeof url !== 'string' || url.length > 1500000) return false;
+  return /^data:image\/(jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(url.trim());
+}
 function isSafeImageUrl(url, { allowData = true } = {}) {
   if (typeof url !== 'string') return false;
   const u = url.trim();
@@ -961,7 +966,10 @@ function canViewPrivSnap(snap, viewerId, db) {
   const author = (db.users || []).find(u => u.id === snap.userId);
   const viewer = (db.users || []).find(u => u.id === viewerId);
   if (!author || !viewer) return false;
-  const aud = snap.audience || 'close_friends';
+  if (Array.isArray(author.blocked) && author.blocked.includes(viewerId)) return false;
+  if (Array.isArray(viewer.blocked) && viewer.blocked.includes(author.id)) return false;
+  const aud = snap.audience || 'all';
+  if (aud === 'all') return true;
   if (aud === 'close_friends') return Array.isArray(author.closeFriends) && author.closeFriends.includes(viewerId);
   if (aud === 'mutuals') return Array.isArray(author.following) && author.following.includes(viewerId) && Array.isArray(viewer.following) && viewer.following.includes(author.id);
   return false;
@@ -969,7 +977,14 @@ function canViewPrivSnap(snap, viewerId, db) {
 function privRecipientsFor(user, db, audience) {
   const ids = new Set();
   if (!user) return [];
-  if (audience === 'mutuals') {
+  if (audience === 'all') {
+    for (const u of db.users || []) {
+      if (u.id === user.id) continue;
+      if (Array.isArray(user.blocked) && user.blocked.includes(u.id)) continue;
+      if (Array.isArray(u.blocked) && u.blocked.includes(user.id)) continue;
+      ids.add(u.id);
+    }
+  } else if (audience === 'mutuals') {
     for (const u of db.users || []) {
       if (u.id !== user.id && Array.isArray(user.following) && user.following.includes(u.id) && Array.isArray(u.following) && u.following.includes(user.id)) ids.add(u.id);
     }
@@ -2206,9 +2221,9 @@ app.get('/api/priv', authMiddleware, async (req, res) => {
 app.post('/api/priv/send', authMiddleware, async (req, res) => {
   try {
     const imageUrl = String((req.body || {}).imageUrl || '').trim();
-    const audience = (req.body || {}).audience === 'mutuals' ? 'mutuals' : 'close_friends';
+    const audience = (req.body || {}).audience === 'mutuals' ? 'mutuals' : 'all';
     const caption = sanitizeText((req.body || {}).caption || '', 120).trim();
-    if (!isSafeImageUrl(imageUrl)) return res.status(400).json({ error: 'Valid image required' });
+    if (!isSafePrivImageUrl(imageUrl)) return res.status(400).json({ error: 'Valid image required' });
     const db = await fetchDatabase();
     const me = (db.users || []).find(u => u.id === req.userId);
     if (!me) return res.status(404).json({ error: 'Not found' });
