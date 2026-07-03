@@ -12,8 +12,8 @@ const RUNTIME_CACHE = 'priv-spaca-runtime-v64-reels-removed';
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=55-icons-wired',
-  '/app.js?v=55-icons-wired',
+  '/style.css?v=64-reels-removed',
+  '/app.js?v=64-reels-removed',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',
