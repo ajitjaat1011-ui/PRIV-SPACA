@@ -565,15 +565,17 @@ function bindAuth() {
   const tm = $('#termsModal');
   if (tm) tm.addEventListener('click', (e) => { if (e.target === tm) tm.classList.add('hidden'); });
 
-  // New auth flow: default = sign-in panel. Two secondary buttons
-  // (Create account, Forgot password) swap the panel. The top back
-  // button (#authTopBack) hides the auth and reveals the splash.
+  // New auth flow (Instagram-style):
+  //  - Default = sign-in panel, with the form + 'Forgotten password?' link inside
+  //  - Bottom 'Create new account' button + 'Forgotten password?' link swap panels
+  //  - Sign up / Reset panels have their own back arrow
+  //  - Top back arrow reveals the splash/landing
   const authPanels = document.querySelectorAll('[data-auth-panel]');
-  const authSecondary = $('[data-auth-secondary]');
+  const authBottom = $('[data-auth-secondary]'); // .auth-bottom with 'Create new account'
   function showAuthPanel(name) {
     authPanels.forEach(p => p.hidden = (p.dataset.authPanel !== name));
-    // Show secondary action row only on the sign-in panel
-    if (authSecondary) authSecondary.hidden = (name !== 'login');
+    // The bottom 'Create new account' CTA only shows on the sign-in panel
+    if (authBottom) authBottom.hidden = (name !== 'login');
     // Focus the first input of the active panel
     const active = document.querySelector('[data-auth-panel="' + name + '"]');
     if (active) {
@@ -583,15 +585,15 @@ function bindAuth() {
     $$('.auth-error').forEach(el => el.textContent = '');
     try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) {}
   }
-  // Secondary action buttons (and any future [data-auth-step] buttons) swap panels
+  // Any [data-auth-step] button (bottom 'Create new account', 'Forgotten password?' link) swaps panels
   document.querySelectorAll('[data-auth-step]').forEach(btn => {
     btn.addEventListener('click', () => showAuthPanel(btn.dataset.authStep));
   });
-  // In-panel back buttons return to sign-in
+  // In-panel back arrows (in sign-up / reset panels) return to sign-in
   document.querySelectorAll('[data-auth-back]').forEach(btn => {
     btn.addEventListener('click', () => showAuthPanel('login'));
   });
-  // Top back button: hide the auth card and reveal the splash/landing
+  // Top back arrow: hide the auth and reveal the splash/landing
   const topBack = $('#authTopBack');
   if (topBack) {
     topBack.addEventListener('click', () => {
