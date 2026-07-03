@@ -7022,28 +7022,60 @@ function buildProfileCardTile(profileData = null, fallbackUser = null) {
   const u = data.user || {};
   const tile = document.createElement('button');
   tile.type = 'button';
-  tile.className = 'profile-card-tile';
+  tile.className = 'profile-card-tile profile-card-preview-tile';
   if (!data.canView) tile.classList.add('is-private');
   tile.setAttribute('aria-label', data.canView ? 'Open profile card' : 'Profile card is private');
   const display = u.displayName || u.username || 'Member';
+  const username = u.username ? '@' + u.username : '';
+  const photo = u.photoUrl && isSafeUrlForCss(u.photoUrl) ? `style="background-image:url('${escapeHtml(u.photoUrl).replace(/'/g, '%27')}')"` : '';
   tile.innerHTML = `
-    <div class="profile-card-tile-glow"></div>
-    <div class="profile-card-tile-top">
-      <span class="avatar lg profile-card-tile-avatar"></span>
-      <div class="profile-card-tile-meta">
-        <strong>${escapeHtml(display)}</strong>
-        <span>${data.canView ? 'Tap to reveal profile card' : 'Private profile card'}</span>
+    <div class="reflective-card-container profile-card-preview-card" style="--blur-strength:15px;--metalness:.86;--roughness:.44;--overlay-color:rgba(0,0,0,.24);--text-color:#fff;--saturation:.42">
+      <svg class="reflective-svg-filters" aria-hidden="true" focusable="false">
+        <defs>
+          <filter id="metallic-displacement-preview" x="-20%" y="-20%" width="140%" height="140%">
+            <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="2" result="noise" />
+            <feColorMatrix in="noise" type="luminanceToAlpha" result="noiseAlpha" />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale="14" xChannelSelector="R" yChannelSelector="G" result="rippled" />
+            <feSpecularLighting in="noiseAlpha" surfaceScale="14" specularConstant="1.4" specularExponent="20" lightingColor="#ffffff" result="light"><fePointLight x="0" y="0" z="300" /></feSpecularLighting>
+            <feComposite in="light" in2="rippled" operator="in" result="light-effect" />
+            <feBlend in="light-effect" in2="rippled" mode="screen" result="metallic-result" />
+          </filter>
+        </defs>
+      </svg>
+      <div class="reflective-video reflective-card-photo" ${photo}></div>
+      <div class="reflective-noise"></div>
+      <div class="reflective-sheen"></div>
+      <div class="reflective-border"></div>
+      <div class="reflective-content">
+        <div class="card-header">
+          <div class="security-badge"><i data-lucide="lock"></i><span>PRIV CARD</span></div>
+          <i data-lucide="activity" class="status-icon"></i>
+        </div>
+        <div class="card-body">
+          <span class="avatar xl reflective-user-avatar profile-card-preview-avatar"></span>
+          <div class="user-info">
+            <h2 class="user-name">${escapeHtml(display)}</h2>
+            <p class="user-role">${escapeHtml(username || 'PRIVATE MEMBER')}</p>
+          </div>
+          <div class="reflective-stats">
+            <div><strong>${data.postsCount}</strong><span>posts</span></div>
+            <div><strong>${data.followers}</strong><span>followers</span></div>
+            <div><strong>${data.following}</strong><span>following</span></div>
+          </div>
+        </div>
+        <div class="card-footer">
+          <div class="id-section"><span class="label">DATE OF BIRTH</span><span class="value">${escapeHtml(data.canView ? formatProfileDob(data.dateOfBirth) : 'Hidden')}</span></div>
+          <div class="fingerprint-section"><i data-lucide="fingerprint" class="fingerprint-icon"></i></div>
+        </div>
       </div>
-      <i data-lucide="contact" class="profile-card-tile-icon"></i>
+      <div class="profile-card-preview-lock">
+        <i data-lucide="${data.canView ? 'sparkles' : 'lock'}"></i>
+        <strong>${data.canView ? 'Tap to reveal' : 'Private card'}</strong>
+        <span>${data.canView ? 'Reflective profile card' : 'Only allowed viewers can open it'}</span>
+      </div>
     </div>
-    <div class="profile-card-tile-stats">
-      <span><b>${data.postsCount}</b> posts</span>
-      <span><b>${data.followers}</b> followers</span>
-      <span><b>${data.following}</b> following</span>
-    </div>
-    <div class="profile-card-tile-dob"><i data-lucide="calendar-days"></i> DOB · ${escapeHtml(data.canView ? formatProfileDob(data.dateOfBirth) : 'Hidden')}</div>
   `;
-  renderAvatar(tile.querySelector('.profile-card-tile-avatar'), u);
+  renderAvatar(tile.querySelector('.profile-card-preview-avatar'), u);
   tile.addEventListener('click', () => openProfileCard(profileData, u));
   return tile;
 }
