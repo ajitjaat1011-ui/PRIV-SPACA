@@ -315,7 +315,7 @@ let localCache = {
   notifications: [],   // { id, userId (recipient), kind, fromUserId, postId?, commentId?, text?, createdAt, seenAt? }
   typing: {},          // { roomId: { userId: timestamp } }
   heartbeat: {},       // { userId: timestamp }
-  rtcSignals: [],      // { id, targetId, payload, createdAt, expiresAt } — WebRTC call signaling (SSE fallback poll)
+  rtcSignals: [], privSnaps: [], privStreaks: [],      // { id, targetId, payload, createdAt, expiresAt } — WebRTC call signaling (SSE fallback poll)
 };
 
 let cacheTimestamp = 0;
@@ -346,6 +346,8 @@ function normalizeDb(remote) {
     typing: r.typing && typeof r.typing === 'object' ? r.typing : {},
     heartbeat: r.heartbeat && typeof r.heartbeat === 'object' ? r.heartbeat : {},
     rtcSignals: Array.isArray(r.rtcSignals) ? r.rtcSignals : [],
+    privSnaps: Array.isArray(r.privSnaps) ? r.privSnaps : [],
+    privStreaks: Array.isArray(r.privStreaks) ? r.privStreaks : [],
     meta: r.meta && typeof r.meta === 'object' ? r.meta : {},
   };
 }
@@ -755,6 +757,8 @@ async function fetchDatabase({ includeTurso = true } = {}) {
       typing: remote.typing && typeof remote.typing === 'object' ? remote.typing : {},
       heartbeat: remote.heartbeat && typeof remote.heartbeat === 'object' ? remote.heartbeat : {},
       rtcSignals: Array.isArray(remote.rtcSignals) ? remote.rtcSignals : [],
+      privSnaps: Array.isArray(remote.privSnaps) ? remote.privSnaps : [],
+      privStreaks: Array.isArray(remote.privStreaks) ? remote.privStreaks : [],
     };
   }
   if (includeTurso && isTursoConfigured()) {
@@ -935,6 +939,73 @@ function isAdminUser(u) {
   if (!u) return false;
   const set = adminSet();
   return set.has(String(u.username || '').toLowerCase()) || set.has(String(u.email || '').toLowerCase()) || set.has(String(u.id || '').toLowerCase());
+}
+
+
+function dayKey(ts = nowMs()) {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+function previousDayKey(key) {
+  const d = new Date(key + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+function privPairId(a, b) {
+  return 'privstreak_' + [a, b].sort().join('_');
+}
+function canViewPrivSnap(snap, viewerId, db) {
+  if (!snap || !viewerId) return false;
+  if (snap.userId === viewerId) return true;
+  if (snap.expiresAt && snap.expiresAt <= nowMs()) return false;
+  if (Array.isArray(snap.openedBy) && snap.openedBy.includes(viewerId)) return false;
+  const author = (db.users || []).find(u => u.id === snap.userId);
+  const viewer = (db.users || []).find(u => u.id === viewerId);
+  if (!author || !viewer) return false;
+  const aud = snap.audience || 'close_friends';
+  if (aud === 'close_friends') return Array.isArray(author.closeFriends) && author.closeFriends.includes(viewerId);
+  if (aud === 'mutuals') return Array.isArray(author.following) && author.following.includes(viewerId) && Array.isArray(viewer.following) && viewer.following.includes(author.id);
+  return false;
+}
+function privRecipientsFor(user, db, audience) {
+  const ids = new Set();
+  if (!user) return [];
+  if (audience === 'mutuals') {
+    for (const u of db.users || []) {
+      if (u.id !== user.id && Array.isArray(user.following) && user.following.includes(u.id) && Array.isArray(u.following) && u.following.includes(user.id)) ids.add(u.id);
+    }
+  } else {
+    for (const id of (Array.isArray(user.closeFriends) ? user.closeFriends : [])) if (id !== user.id) ids.add(id);
+  }
+  return Array.from(ids).filter(id => (db.users || []).some(u => u.id === id));
+}
+function updatePrivStreaks(db, fromId, recipientIds) {
+  db.privStreaks = Array.isArray(db.privStreaks) ? db.privStreaks : [];
+  const today = dayKey();
+  const yesterday = previousDayKey(today);
+  for (const toId of recipientIds || []) {
+    if (!toId || toId === fromId) continue;
+    const id = privPairId(fromId, toId);
+    let row = db.privStreaks.find(s => s.id === id);
+    if (!row) {
+      row = { id, users: [fromId, toId].sort(), count: 0, lastDay: '', lastBy: {}, updatedAt: nowMs() };
+      db.privStreaks.push(row);
+    }
+    row.lastBy = row.lastBy && typeof row.lastBy === 'object' ? row.lastBy : {};
+    row.lastBy[fromId] = today;
+    const otherId = row.users.find(x => x !== fromId);
+    if (row.lastBy[otherId] === today && row.lastDay !== today) {
+      row.count = row.lastDay === yesterday ? Number(row.count || 0) + 1 : 1;
+      row.lastDay = today;
+    }
+    row.updatedAt = nowMs();
+  }
+}
+function streakForPair(db, a, b) {
+  const row = (db.privStreaks || []).find(s => s.id === privPairId(a, b));
+  if (!row) return { count: 0 };
+  const today = dayKey(), yesterday = previousDayKey(today);
+  const active = row.lastDay === today || row.lastDay === yesterday;
+  return { count: active ? Number(row.count || 0) : 0, lastDay: row.lastDay || '' };
 }
 
 function activeNote(u) {
@@ -2114,6 +2185,54 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
       iBlocked,
     }
   });
+});
+
+
+// ---------- PRIV Instants + Streaks ----------
+app.get('/api/priv', authMiddleware, async (req, res) => {
+  const myId = req.userId;
+  const db = await fetchDatabase();
+  const visible = (db.privSnaps || [])
+    .filter(s => canViewPrivSnap(s, myId, db))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, 30)
+    .map(s => {
+      const author = (db.users || []).find(u => u.id === s.userId);
+      return { ...s, author: sanitizeUser(author), openedByMe: Array.isArray(s.openedBy) && s.openedBy.includes(myId), streak: s.userId === myId ? { count: 0 } : streakForPair(db, myId, s.userId) };
+    });
+  const streaks = (db.privStreaks || []).filter(x => Array.isArray(x.users) && x.users.includes(myId)).map(x => ({ id: x.id, users: x.users, count: streakForPair(db, x.users[0], x.users[1]).count, lastDay: x.lastDay || '' }));
+  res.json({ snaps: visible, streaks, now: nowMs() });
+});
+app.post('/api/priv/send', authMiddleware, async (req, res) => {
+  try {
+    const imageUrl = String((req.body || {}).imageUrl || '').trim();
+    const audience = (req.body || {}).audience === 'mutuals' ? 'mutuals' : 'close_friends';
+    const caption = sanitizeText((req.body || {}).caption || '', 120).trim();
+    if (!isSafeImageUrl(imageUrl)) return res.status(400).json({ error: 'Valid image required' });
+    const db = await fetchDatabase();
+    const me = (db.users || []).find(u => u.id === req.userId);
+    if (!me) return res.status(404).json({ error: 'Not found' });
+    const recipients = privRecipientsFor(me, db, audience);
+    const snap = { id: uid('priv'), userId: me.id, imageUrl, caption, audience, recipients, openedBy: [], createdAt: nowMs(), expiresAt: nowMs() + 24 * 60 * 60 * 1000 };
+    db.privSnaps = Array.isArray(db.privSnaps) ? db.privSnaps : [];
+    db.privSnaps.push(snap);
+    updatePrivStreaks(db, me.id, recipients);
+    await saveDatabase(db, false);
+    res.json({ ok: true, snap, recipients: recipients.length });
+  } catch (e) { console.error('[priv/send]', e); res.status(500).json({ error: 'PRIV send failed' }); }
+});
+app.post('/api/priv/open', authMiddleware, async (req, res) => {
+  const { snapId } = req.body || {};
+  if (!snapId) return res.status(400).json({ error: 'snapId required' });
+  const db = await fetchDatabase();
+  const snap = (db.privSnaps || []).find(s => s.id === snapId);
+  if (!snap || !canViewPrivSnap(snap, req.userId, db)) return res.status(404).json({ error: 'Not found' });
+  if (snap.userId !== req.userId) {
+    snap.openedBy = Array.isArray(snap.openedBy) ? snap.openedBy : [];
+    if (!snap.openedBy.includes(req.userId)) snap.openedBy.push(req.userId);
+    await saveDatabase(db, false);
+  }
+  res.json({ ok: true });
 });
 
 // ---------- Social Feed / Posts ----------

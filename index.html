@@ -323,6 +323,21 @@
         <!-- Populated by JS -->
       </div>
 
+      <section id="privPanel" class="priv-panel" aria-label="PRIV instants">
+        <div class="priv-panel-head">
+          <div><strong>PRIV</strong><span>Instant snaps · streaks</span></div>
+          <div class="priv-actions">
+            <select id="privAudience" class="priv-audience" aria-label="PRIV audience">
+              <option value="close_friends">Close friends</option>
+              <option value="mutuals">Mutuals</option>
+            </select>
+            <button id="privCaptureBtn" type="button" class="priv-capture-btn"><i data-lucide="camera"></i><span>Send</span></button>
+            <input id="privFileInput" type="file" accept="image/*" capture="environment" hidden />
+          </div>
+        </div>
+        <div id="privStack" class="priv-stack-wrap"></div>
+      </section>
+
       <!-- Composer (opened by + button) -->
       <div id="inlineComposerCard" class="composer-card ig-compose-inline hidden">
         <div class="composer-card-head">
