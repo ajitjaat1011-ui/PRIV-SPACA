@@ -1105,10 +1105,12 @@ img{user-select:none;-webkit-user-drag:none}
   display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;flex:1;min-width:0;
 }
 .post-header-userline{
-  display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;
+  display:inline-flex;align-items:center;gap:2px;min-width:0;max-width:100%;
+  width:auto;align-self:flex-start;
 }
 .post-header-username{
   font-weight:800;font-size:15.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  flex:0 1 auto;min-width:0;
 }
 .post-music-inline{
   width:100%;display:flex;align-items:center;gap:6px;min-width:0;
@@ -1122,10 +1124,11 @@ img{user-select:none;-webkit-user-drag:none}
 .post-music-marquee-track span{white-space:nowrap;display:inline-block}
 @keyframes post-music-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-50% - 13px))}}
 .post-verified-badge{
-  color:#0084ff;display:inline-flex;align-items:center;flex-shrink:0;
+  color:#0084ff;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  margin-left:1px;line-height:1;transform:translateY(1px);
 }
 .post-verified-badge i,.post-verified-badge svg{
-  width:16px;height:16px;fill:#0084ff;color:#ffffff;
+  width:16px;height:16px;fill:#0084ff;color:#ffffff;margin-left:0!important;
 }
 .post-header-more{
   background:transparent;border:0;color:var(--text);cursor:pointer;padding:4px;
@@ -1143,16 +1146,26 @@ img{user-select:none;-webkit-user-drag:none}
   display:block;width:100%;max-height:75vh;object-fit:cover;cursor:pointer;
 }
 .post-music-toggle{
-  position:absolute;right:12px;top:50%;transform:translateY(-50%);
-  width:42px;height:42px;border-radius:50%;border:0;z-index:7;
-  background:rgba(15,23,42,.78);backdrop-filter:blur(10px);color:#fff;
-  display:flex;align-items:center;justify-content:center;cursor:pointer;
-  box-shadow:0 10px 24px rgba(15,23,42,.24);transition:transform .18s ease, background .18s ease, color .18s ease;
+  position:absolute;right:14px;bottom:14px;top:auto;transform:none;
+  width:52px;height:52px;border-radius:20px;border:1px solid rgba(255,255,255,.42);z-index:7;
+  background:linear-gradient(145deg,rgba(255,255,255,.32),rgba(255,255,255,.10) 42%,rgba(15,23,42,.30));
+  backdrop-filter:blur(18px) saturate(1.65);-webkit-backdrop-filter:blur(18px) saturate(1.65);
+  color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.55),inset 0 -10px 20px rgba(255,255,255,.08),0 12px 34px rgba(15,23,42,.26);
+  transition:transform .18s cubic-bezier(.2,.8,.2,1), background .18s ease, box-shadow .18s ease, border-color .18s ease;
 }
-.post-music-toggle:hover{transform:translateY(-50%) scale(1.06);background:rgba(15,23,42,.9)}
-.post-music-toggle:active{transform:translateY(-50%) scale(.94)}
-.post-music-toggle i,.post-music-toggle svg{width:20px;height:20px;stroke-width:2.2}
-.post-music-toggle.is-playing{background:rgba(236,72,153,.92);color:#fff}
+.post-music-toggle::before{
+  content:'';position:absolute;inset:5px 6px auto 6px;height:42%;border-radius:15px;
+  background:linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,0));pointer-events:none;
+}
+.post-music-toggle:hover{transform:scale(1.05);border-color:rgba(255,255,255,.62);box-shadow:inset 0 1px 1px rgba(255,255,255,.62),0 16px 38px rgba(15,23,42,.30)}
+.post-music-toggle:active{transform:scale(.94)}
+.post-music-toggle i,.post-music-toggle svg{width:23px;height:23px;stroke-width:2.4;filter:drop-shadow(0 2px 5px rgba(0,0,0,.28))}
+.post-music-toggle.is-playing{
+  background:linear-gradient(145deg,rgba(255,133,193,.92),rgba(236,72,153,.82) 52%,rgba(159,39,117,.74));
+  border-color:rgba(255,255,255,.50);color:#fff;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.60),0 14px 36px rgba(236,72,153,.34),0 0 0 5px rgba(255,255,255,.10);
+}
 .post-card.music-playing .post-music-inline{color:#ec4899}
 .post-card.music-playing .post-music-marquee-track{animation-duration:8s}
 
@@ -2495,14 +2508,15 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .owner-verified-badge{width:20px;height:20px;vertical-align:-4px;display:inline-block;overflow:visible;margin-left:5px;filter:drop-shadow(0 2px 5px rgba(80,60,180,.35))}
 .owner-verified-badge.title{width:25px;height:25px;margin-left:8px;vertical-align:-5px}
-.owner-verified-badge.mini{width:18px;height:18px;margin-left:4px;vertical-align:-4px}
+.owner-verified-badge.mini{width:18px;height:18px;margin-left:1px;vertical-align:-4px}
 .owner-verified-badge.inline{width:18px;height:18px;margin-left:5px;vertical-align:-4px}
 .owner-verified-badge .ovb-rim{animation:ownerBadgeSpin 4.4s linear infinite;transform-origin:32px 32px;filter:drop-shadow(0 0 3px rgba(236,72,153,.7)) drop-shadow(0 0 5px rgba(14,165,255,.55))}
 .owner-verified-badge .ovb-glass{filter:drop-shadow(0 0 7px rgba(83,63,255,.28))}
 .owner-verified-badge .ovb-ps{paint-order:stroke;stroke:rgba(7,9,31,.34);stroke-width:.7px;filter:drop-shadow(0 0 3px rgba(190,90,255,.65))}
 .owner-verified-badge .ovb-check{filter:drop-shadow(0 0 4px rgba(255,92,247,.85))}
 .owner-verified-badge .ovb-highlight{animation:ownerBadgeShine 2.8s ease-in-out infinite}
-.post-verified-badge{display:inline-flex;align-items:center;flex-shrink:0;line-height:1}
+.post-verified-badge{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1;margin-left:1px;transform:translateY(1px)}
+.post-verified-badge .owner-verified-badge{margin-left:0!important}
 @keyframes ownerBadgeSpin{to{transform:rotate(360deg)}}
 @keyframes ownerBadgeShine{0%,100%{opacity:.14;transform:translateX(-1px)}50%{opacity:.34;transform:translateX(2px)}}
 
