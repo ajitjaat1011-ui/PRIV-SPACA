@@ -1074,12 +1074,27 @@ async function requireAuth(c, next) {
   if (!p || !p.uid) return c.json({ error: 'Missing or invalid token' }, 401);
   // Auth/session validation must use the primary write store. Turso is a
   // structured read mirror and can lag briefly after password/PIN changes.
-  const authDb = await fetchPrimaryDatabase();
-  const u = (authDb.users || []).find(x => x.id === p.uid);
+  let authDb = await fetchPrimaryDatabase();
+  let u = (authDb.users || []).find(x => x.id === p.uid);
   if (!u) return c.json({ error: 'Missing or invalid token' }, 401);
   const tokenVersion = Number(p.sv || 0);
-  const userVersion = Number(u.tokenVersion || 0);
-  if (tokenVersion !== userVersion) return c.json({ error: 'Session expired. Please sign in again.' }, 401);
+  let userVersion = Number(u.tokenVersion || 0);
+  if (tokenVersion !== userVersion) {
+    // Same rare Neon read-after-write consistency window as login (see the
+    // matching comment in /api/auth/login): a password/PIN reset that just
+    // bumped tokenVersion on one connection can briefly not be visible yet
+    // on the next read. Without this retry, the very token that reset-by-pin
+    // just handed back to the client could get rejected on its first use a
+    // moment later. One forced-fresh re-read fixes it without weakening the
+    // real security property (a token whose version genuinely doesn't match
+    // — e.g. because of an actual later password change — still gets
+    // rejected after the retry).
+    cacheTimestamp = 0;
+    authDb = await fetchPrimaryDatabase();
+    u = (authDb.users || []).find(x => x.id === p.uid) || u;
+    userVersion = Number(u.tokenVersion || 0);
+    if (tokenVersion !== userVersion) return c.json({ error: 'Session expired. Please sign in again.' }, 401);
+  }
   c.set('userId', p.uid);
   c.set('username', u.username || p.username);
   c.set('authUser', u);
@@ -1628,15 +1643,32 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       c.header('Retry-After', String(Math.ceil(lock.remaining / 1000)));
       return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
     }
-    const ok = await bcrypt.compare(password, user.passwordHash);
+    let matchUser = user;
+    let ok = await bcrypt.compare(password, matchUser.passwordHash);
+    if (!ok) {
+      // Rare Neon read-after-write consistency window: a password/PIN reset
+      // that just committed on a different pooled connection can briefly
+      // (sub-second, occasionally ~1-2s) not be visible yet to the next
+      // read. Retrying once with a forced-fresh read costs nothing on the
+      // common (correct-password) path and only adds a single extra Neon
+      // round trip on an already-failing attempt, which already pays a
+      // deliberate ~250-500ms authFailureDelay() for timing-attack
+      // mitigation — so this is effectively free from a UX standpoint.
+      const freshDb = await fetchPrimaryDatabase();
+      const freshUser = freshDb.users.find(u => u.id === user.id);
+      if (freshUser && freshUser.passwordHash !== matchUser.passwordHash) {
+        matchUser = freshUser;
+        ok = await bcrypt.compare(password, matchUser.passwordHash);
+      }
+    }
     if (!ok) {
       recordLoginFail(user.id);
       await authFailureDelay();
       return c.json({ error: AUTH_GENERIC_ERROR }, 401);
     }
     clearLoginFails(user.id);
-    const token = await signToken(user);
-    return c.json({ token, user: sanitizeUser(user, true) });
+    const token = await signToken(matchUser);
+    return c.json({ token, user: sanitizeUser(matchUser, true) });
   } catch (e) {
     console.error('[login]', e);
     return c.json({ error: 'Login failed' }, 500);
