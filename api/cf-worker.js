@@ -1829,8 +1829,8 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     const token = await signToken(matchUser);
     return c.json({ token, user: sanitizeUser(matchUser, true) });
   } catch (e) {
-    console.error('[login]', e);
-    return c.json({ error: 'Login failed' }, 500);
+    console.error('[login] full error:', e && e.message, e && e.stack);
+    return c.json({ error: 'Login failed: ' + (e && e.message || 'unknown') }, 500);
   }
 });
 
