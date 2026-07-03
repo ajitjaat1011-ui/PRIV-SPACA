@@ -69,7 +69,7 @@
   console.log('GET /auth/me (no token):', none.status, '(expect 401)');
   if (none.status === 401) ok++; else fail++;
   // 12. Test: follow flow (the crash path)
-  const follow = await api('/user/follow', { method: 'POST', headers: { 'Authorization': 'Bearer ' + u2.id ? t1 : '' }, body: JSON.stringify({ targetId: u2.id }) });
+  const follow = await api('/user/follow', { method: 'POST', headers: { 'Authorization': 'Bearer ' + t1 }, body: JSON.stringify({ targetId: u2.id }) });
   console.log('POST /user/follow:', follow.status, '|', JSON.stringify(follow.data).slice(0, 150));
   if (follow.status === 200) ok++; else { fail++; }
   // 13. After follow, re-fetch own profile to check counts update

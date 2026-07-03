@@ -846,6 +846,25 @@ async function tursoRefreshDmIndexForOwners(db, ownerIds) {
 async function ensureOwnerAccount(db) { return false; }
 
 async function fetchPrimaryDatabase() {
+  // v65: when Turso is the primary persistence layer, the structured
+  // ps_users/ps_posts tables are the actual source of truth (ps_kv is a
+  // snapshot/mirror). Read both and let structured take precedence so
+  // that direct ps_users writes (e.g. password resets) are reflected
+  // immediately without waiting for the mirror to be rewritten.
+  if (isTursoConfigured() && isTursoPrimary()) {
+    try {
+      const tu = tursoClient();
+      const usersRs = await tu.execute('SELECT data_json FROM ps_users');
+      const users = usersRs.rows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
+      const postsRs = await tu.execute('SELECT data_json FROM ps_posts');
+      const posts = postsRs.rows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
+      if (users.length > 0 || posts.length > 0) {
+        return normalizeDb({ ...(localCache || {}), users, posts });
+      }
+    } catch (e) {
+      console.warn('[fetchPrimary] structured read failed, falling back:', e && e.message);
+    }
+  }
   const remote = await repoRead();
   if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
     return normalizeDb(remote);
@@ -864,11 +883,28 @@ async function fetchDatabase({ fresh = false, includeTurso = true } = {}) {
   if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
     localCache = normalizeDb(remote);
   }
-  if (includeTurso && isTursoConfigured() && !isTursoPrimary()) {
-    const mirror = await fetchTursoMirror(localCache);
-    if ((mirror.users || []).length > 0) localCache.users = mirror.users;
-    if ((mirror.posts || []).length > 0) localCache.posts = mirror.posts;
-    localCache.meta = { ...(localCache.meta || {}), secondaryPersistence: 'turso-users-posts' };
+  // v65: when Turso is the primary persistence layer, also pull user/post
+  // records from the structured tables so that direct ps_users/ps_posts
+  // writes (e.g. via admin scripts or future endpoints) become visible
+  // without waiting for the ps_kv mirror to be rewritten. This is the
+  // "structured overrides mirror" read pattern that keeps both layers
+  // consistent from the consumer's perspective.
+  if (includeTurso && isTursoConfigured()) {
+    try {
+      const tu = tursoClient();
+      const usersRs = await tu.execute('SELECT data_json FROM ps_users');
+      const users = usersRs.rows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
+      if (users.length > 0) localCache.users = users;
+      const postsRs = await tu.execute('SELECT data_json FROM ps_posts');
+      const posts = postsRs.rows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
+      if (posts.length > 0) localCache.posts = posts;
+      localCache.meta = { ...(localCache.meta || {}), secondaryPersistence: 'turso-structured' };
+    } catch (e) {
+      console.warn('[fetchDatabase] structured-merge failed, falling back to mirror:', e && e.message);
+      const mirror = await fetchTursoMirror(localCache);
+      if ((mirror.users || []).length > 0) localCache.users = mirror.users;
+      if ((mirror.posts || []).length > 0) localCache.posts = mirror.posts;
+    }
   }
   const ownerSeeded = await ensureOwnerAccount(localCache);
   cacheTimestamp = now;

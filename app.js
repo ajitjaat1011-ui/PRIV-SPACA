@@ -7895,13 +7895,31 @@ function boot() {
   initWebRTC();
 
   if (State.token && State.user) {
+    // We have a stored session — show the app immediately so the user
+    // doesn't see a flash of the login screen. Then validate the token
+    // in the background; only log out on a real 401 (token rejected),
+    // NOT on network errors (transient failures shouldn't kick the user out).
+    showApp();
     api('/auth/me').then(d => {
       if (d && d.user) {
         State.user = d.user;
         try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
-        showApp();
-      } else { showAuth(); }
-    }).catch(() => showAuth());
+        hydrateMeChips();
+      } else {
+        // Got a response but no user object -- treat as 401, kick out
+        logout(true);
+      }
+    }).catch((e) => {
+      // Network error / timeout: keep the user logged in with the cached
+      // session, just show a soft warning. They'll revalidate as soon as
+      // the next API call succeeds. This fixes the "any blip logs me out"
+      // bug.
+      if (e && e.status === 401) {
+        logout(true);
+      } else {
+        console.warn('[boot] /auth/me failed but session kept (will revalidate on next call):', e && e.message);
+      }
+    });
   } else {
     showAuth();
   }
