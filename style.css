@@ -310,6 +310,10 @@ img{user-select:none;-webkit-user-drag:none}
   animation:text-anim .35s cubic-bezier(.2,.8,.2,1) both;
   width:100%;
 }
+/* The [hidden] attribute must beat display:flex above. The browser's
+   default `[hidden] { display: none }` is overridden by our display:flex
+   because class selectors are more specific. Force it back with !important. */
+.auth-panel[hidden]{display:none !important}
 
 /* The signup + reset panels need extra padding inside a glass card. */
 .auth-panel[data-auth-panel="signup"],
@@ -404,6 +408,7 @@ img{user-select:none;-webkit-user-drag:none}
 
 /* === Form === */
 .auth-form{display:flex;flex-direction:column;gap:10px;width:100%}
+.auth-form[hidden]{display:none !important}
 .field{display:flex;flex-direction:column;gap:6px}
 .field>span{display:none} /* IG-style hides the label */
 .ig-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -577,6 +582,7 @@ img{user-select:none;-webkit-user-drag:none}
   position:relative;
   z-index:1;
 }
+.auth-bottom[hidden]{display:none !important}
 .auth-bottom::before{
   /* Subtle glass separator at the top of the bottom CTA */
   content:"";position:absolute;left:8px;right:8px;top:0;height:1.5px;
