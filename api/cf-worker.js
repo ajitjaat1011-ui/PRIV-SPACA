@@ -222,9 +222,9 @@ function privPairId(a, b) {
 function canViewPrivSnap(snap, viewerId, db) {
   if (!snap || !viewerId) return false;
   if (snap.expiresAt && snap.expiresAt <= nowMs()) return false;
-  if (snap.userId === viewerId) return true;
   if (Array.isArray(snap.openedBy) && snap.openedBy.includes(viewerId)) return false;
-  if (Array.isArray(snap.recipients) && !snap.recipients.includes(viewerId)) return false;
+  // One-time PRIV: every viewer, including the sender, must be in recipients.
+  if (!Array.isArray(snap.recipients) || !snap.recipients.includes(viewerId)) return false;
   const author = (db.users || []).find(u => u.id === snap.userId);
   const viewer = (db.users || []).find(u => u.id === viewerId);
   if (!author || !viewer) return false;
@@ -2644,8 +2644,11 @@ app.post('/api/priv/send', requireAuth, async (c) => {
     const me = (db.users || []).find(u => u.id === c.get('userId'));
     if (!me) return c.json({ error: 'Not found' }, 404);
     const recipients = privRecipientsFor(me, db, audience);
-    const snap = { id: uid('priv'), userId: me.id, imageUrl, caption, audience, recipients, openedBy: [], createdAt: nowMs(), expiresAt: nowMs() + 24 * 60 * 60 * 1000 };
+    const recipientsWithSelf = Array.from(new Set([me.id, ...recipients]));
     db.privSnaps = Array.isArray(db.privSnaps) ? db.privSnaps : [];
+    // One active PRIV per user: replace any previous active instant from me.
+    db.privSnaps = db.privSnaps.filter(s => s.userId !== me.id);
+    const snap = { id: uid('priv'), userId: me.id, imageUrl, caption, audience, recipients: recipientsWithSelf, openedBy: [], createdAt: nowMs(), expiresAt: null };
     db.privSnaps.push(snap);
     updatePrivStreaks(db, me.id, recipients);
     await saveDatabase(db, false);
@@ -2658,20 +2661,19 @@ app.post('/api/priv/open', requireAuth, async (c) => {
   const db = await fetchDatabase({ fresh: true });
   const snap = (db.privSnaps || []).find(s => s.id === snapId);
   if (!snap || !canViewPrivSnap(snap, c.get('userId'), db)) return c.json({ error: 'Not found' }, 404);
-  if (snap.userId !== c.get('userId')) {
-    const viewerId = c.get('userId');
-    snap.openedBy = Array.isArray(snap.openedBy) ? snap.openedBy : [];
-    if (!snap.openedBy.includes(viewerId)) snap.openedBy.push(viewerId);
-    snap.recipients = Array.isArray(snap.recipients) ? snap.recipients.filter(id => id !== viewerId) : [];
-    if (snap.recipients.length === 0) {
-      // Keep a tombstone through the merge-write path so the old row is not
-      // resurrected by mergeById(), then scheduler purges it on next read.
-      snap.deletedAt = nowMs();
-      snap.expiresAt = nowMs() - 1;
-    }
-    await saveDatabase(db, false);
+  const viewerId = c.get('userId');
+  snap.openedBy = Array.isArray(snap.openedBy) ? snap.openedBy : [];
+  if (!snap.openedBy.includes(viewerId)) snap.openedBy.push(viewerId);
+  snap.recipients = Array.isArray(snap.recipients) ? snap.recipients.filter(id => id !== viewerId) : [];
+  const deleted = snap.recipients.length === 0;
+  if (deleted) {
+    // Keep a tombstone through the merge-write path so the old row is not
+    // resurrected by mergeById(), then scheduler purges it on next read.
+    snap.deletedAt = nowMs();
+    snap.expiresAt = nowMs() - 1;
   }
-  return c.json({ ok: true, deleted: snap.userId !== c.get('userId') && Array.isArray(snap.recipients) && snap.recipients.length === 0 });
+  await saveDatabase(db, false);
+  return c.json({ ok: true, deleted });
 });
 
 // ---------- Admin panel removed by owner request ----------
