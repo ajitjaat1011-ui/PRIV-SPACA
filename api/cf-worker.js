@@ -1142,7 +1142,7 @@ async function requireAuth(c, next) {
     return;
   }
   // Slow path: read from Turso, then warm the cache
-  const authDb = await fetchPrimaryDatabase();
+  let authDb = await fetchPrimaryDatabase();
   let u = (authDb.users || []).find(x => x.id === p.uid);
   if (!u) return c.json({ error: 'Missing or invalid token' }, 401);
   const tokenVersion = Number(p.sv || 0);
