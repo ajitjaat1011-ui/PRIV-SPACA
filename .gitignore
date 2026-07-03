@@ -10,3 +10,4 @@ backups/turso_before_neon_replacement_*.json
 .dev.vars
 .wrangler/
 test_results.json
+backups/db-wipe-*.json
