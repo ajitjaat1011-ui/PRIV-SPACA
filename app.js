@@ -565,15 +565,33 @@ function bindAuth() {
   const tm = $('#termsModal');
   if (tm) tm.addEventListener('click', (e) => { if (e.target === tm) tm.classList.add('hidden'); });
 
-  $$('.auth-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tab = btn.dataset.authTab;
-      $$('.auth-tab').forEach(b => b.classList.toggle('active', b === btn));
-      $$('.auth-form').forEach(f => f.classList.remove('active'));
-      const map = { login: '#loginForm', signup: '#signupForm', reset: '#resetForm' };
-      $(map[tab]).classList.add('active');
-      $$('.auth-error').forEach(el => el.textContent = '');
-    });
+  // New auth flow: 3 options (login / signup / reset) that swap in just one panel each.
+  const authOptions = $('[data-auth-options]');
+  const authPanels = document.querySelectorAll('[data-auth-panel]');
+  function showAuthOptions() {
+    if (authOptions) authOptions.hidden = false;
+    authPanels.forEach(p => p.hidden = true);
+    $$('.auth-error').forEach(el => el.textContent = '');
+  }
+  function showAuthPanel(name) {
+    if (authOptions) authOptions.hidden = true;
+    authPanels.forEach(p => p.hidden = (p.dataset.authPanel !== name));
+    // Focus the first input of the active panel
+    const active = document.querySelector('[data-auth-panel="' + name + '"]');
+    if (active) {
+      const firstInput = active.querySelector('input:not([type=hidden])');
+      if (firstInput) setTimeout(() => firstInput.focus(), 50);
+    }
+    $$('.auth-error').forEach(el => el.textContent = '');
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) {}
+  }
+  // Option buttons: tap one to expand its panel
+  document.querySelectorAll('[data-auth-step]').forEach(btn => {
+    btn.addEventListener('click', () => showAuthPanel(btn.dataset.authStep));
+  });
+  // Back buttons: tap one to return to the options list
+  document.querySelectorAll('[data-auth-back]').forEach(btn => {
+    btn.addEventListener('click', () => showAuthOptions());
   });
 
   $('#loginForm').addEventListener('submit', async (e) => {
@@ -657,7 +675,8 @@ function bindAuth() {
         errEl.textContent = 'Password reset! Please sign in.';
         setTimeout(() => {
           errEl.style.color = ''; errEl.textContent = '';
-          $('[data-auth-tab="login"]').click();
+          // default to options list — user picks login/signup/reset themselves
+  showAuthOptions();
           $('#loginForm input[name=identifier]').value = String(fd.get('identifier') || '').trim();
           $('#loginForm input[name=password]').focus();
         }, 900);
