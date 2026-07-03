@@ -1122,7 +1122,9 @@ async function authFromRequest(c) {
 // (each isolate's cache is independent). That's fine: the worst case
 // after a deploy is one extra Turso round-trip per isolate, then the
 // cache warms up.
-const _authUserCache = new Map();   // uid -> { user, fetchedAt }
+const _authUserCache = new Map();          // uid -> { user, fetchedAt }
+const _loginUserCache = new Map();          // idLower -> { _user, _cachedAt }
+const _bcryptVerifyCache = new Map();       // bcryptCacheKey -> { ok, ts }
 const _AUTH_CACHE_TTL_MS = 30000;   // 30s is plenty for auth validation
 
 // Hono middleware
