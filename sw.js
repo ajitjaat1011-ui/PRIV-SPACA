@@ -12,8 +12,8 @@ const RUNTIME_CACHE = 'priv-spaca-runtime-v65-auth-sync-fix';
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=64-reels-removed',
-  '/app.js?v=64-reels-removed',
+  '/style.css?v=65-auth-sync-fix',
+  '/app.js?v=65-auth-sync-fix',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',
