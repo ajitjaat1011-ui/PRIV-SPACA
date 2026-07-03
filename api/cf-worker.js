@@ -1014,6 +1014,76 @@ async function saveDatabaseVerified(data, verifyFn, attempts = 4, opts = {}) {
   return false;
 }
 
+// ---------- Atomic read-mutate-write for shared-array fields ----------
+// saveDatabase()'s CAS loop is correct for whole-object creation (signup,
+// new post, new message) because mergeById's shallow `{...prev, ...x}` for
+// those cases only ever needs ONE side's copy of that exact object. It is
+// NOT safe for endpoints that mutate an array *inside* an existing shared
+// object (post.likes, post.comments, post.views, user.followers/following/
+// blocked), because a conflict-retry re-merge takes the whole array from
+// whichever side is treated as "local", silently discarding whatever the
+// other concurrent writer added to that same array in between.
+//
+// Confirmed live: 10 concurrent users liking the same post resulted in a
+// final likeCount of 4 instead of 10 — 6 likes were silently dropped this
+// way, root-caused directly to mergeById's shallow spread on the `likes`
+// array field.
+//
+// Fix: for these endpoints, don't compute the mutation once against a
+// possibly-stale `db` and hand the whole object to saveDatabase(). Instead,
+// re-read the freshest database and RE-APPLY the mutator function itself on
+// every attempt, so each retry always operates on the latest committed
+// state (including any other user's concurrent change to the very same
+// array) rather than merging two divergent snapshots together.
+//
+// `mutatorFn(freshDb)` should locate whatever it needs inside freshDb and
+// mutate it in place, then return whatever result value the caller wants
+// back (e.g. { liked, likeCount }). Return `{ __notFound: true }` (or throw)
+// if the target record doesn't exist in this fresh read.
+async function mutateDatabaseAtomic(mutatorFn, { skipSecondarySync } = {}) {
+  if (!isNeonConfigured()) {
+    // Legacy/GitHub-backed path: fall back to the simple pattern (single
+    // apply + saveDatabase's own merge-based retry). Concurrency volume on
+    // that deployment path is not a realistic concern the way it is on
+    // live Cloudflare/Neon production.
+    const db = await fetchDatabase();
+    const result = mutatorFn(db);
+    if (result && result.__notFound) return result;
+    const persisted = await saveDatabase(db, false, { skipSecondarySync });
+    return { ...(result || {}), __persisted: persisted, __db: db };
+  }
+  const MAX_ATTEMPTS = 15;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let versioned;
+    try {
+      versioned = await neonReadDbVersioned();
+    } catch (e) {
+      console.error('[mutateDatabaseAtomic] read failed', e && e.message);
+      return { __error: true };
+    }
+    const db = versioned.db;
+    const result = mutatorFn(db);
+    if (result && result.__notFound) return result;
+    let ok = false;
+    try {
+      ok = await neonWriteDbCAS(db, versioned.version);
+    } catch (e) {
+      console.error('[mutateDatabaseAtomic] CAS write failed', e && e.message);
+      return { __error: true };
+    }
+    if (ok) {
+      localCache = normalizeDb(db);
+      cacheTimestamp = nowMs();
+      return { ...(result || {}), __persisted: true, __db: db };
+    }
+    if (attempt < MAX_ATTEMPTS - 1) {
+      await sleepMs(10 + Math.floor(Math.random() * (20 + attempt * 10)));
+    }
+  }
+  console.error('[mutateDatabaseAtomic] CAS retries exhausted');
+  return { __error: true };
+}
+
 // ---------- Bcrypt + JWT (using pure-JS for Workers compat) ----------
 // bcryptjs works natively in Workers (pure JS, no native bindings).
 import bcrypt from 'bcryptjs';
@@ -1839,21 +1909,24 @@ app.post('/api/user/close-friends', requireAuth, async (c) => {
     const myId = c.get('userId');
     if (!targetId) return c.json({ error: 'targetId required' }, 400);
     if (targetId === myId) return c.json({ error: 'You cannot add yourself' }, 400);
-    const db = await fetchDatabase();
-    const me = db.users.find(u => u.id === myId);
-    const target = db.users.find(u => u.id === targetId);
-    if (!me || !target) return c.json({ error: 'Not found' }, 404);
-    me.closeFriends = Array.isArray(me.closeFriends) ? me.closeFriends : [];
-    const set = new Set(me.closeFriends);
-    const mode = String(action || 'toggle');
-    if (mode === 'add') set.add(targetId);
-    else if (mode === 'remove') set.delete(targetId);
-    else if (set.has(targetId)) set.delete(targetId);
-    else set.add(targetId);
-    me.closeFriends = Array.from(set).slice(0, 500);
-    await saveDatabase(db, false);
-    if (isTursoConfigured()) await tursoUpsertUser(me);
-    return c.json({ ids: me.closeFriends, added: me.closeFriends.includes(targetId) });
+    const result = await mutateDatabaseAtomic((db) => {
+      const me = db.users.find(u => u.id === myId);
+      const target = db.users.find(u => u.id === targetId);
+      if (!me || !target) return { __notFound: true };
+      me.closeFriends = Array.isArray(me.closeFriends) ? me.closeFriends : [];
+      const set = new Set(me.closeFriends);
+      const mode = String(action || 'toggle');
+      if (mode === 'add') set.add(targetId);
+      else if (mode === 'remove') set.delete(targetId);
+      else if (set.has(targetId)) set.delete(targetId);
+      else set.add(targetId);
+      me.closeFriends = Array.from(set).slice(0, 500);
+      return { ids: me.closeFriends, added: me.closeFriends.includes(targetId), me };
+    });
+    if (result.__notFound) return c.json({ error: 'Not found' }, 404);
+    if (result.__error || !result.__persisted) return c.json({ error: 'Update storage unavailable. Please retry.' }, 503);
+    if (isTursoConfigured()) await tursoUpsertUser(result.me);
+    return c.json({ ids: result.ids, added: result.added });
   } catch (e) { console.error('[close-friends]', e); return c.json({ error: 'Update failed' }, 500); }
 });
 
@@ -2250,28 +2323,34 @@ app.post('/api/user/follow', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
   const myId = c.get('userId');
   if (!targetId || targetId === myId) return c.json({ error: 'Invalid target' }, 400);
-  const db = await fetchDatabase();
-  const me = db.users.find(u => u.id === myId);
-  const target = db.users.find(u => u.id === targetId);
-  if (!me || !target) return c.json({ error: 'User not found' }, 404);
-  if (Array.isArray(target.blocked) && target.blocked.includes(myId)) return c.json({ error: 'Cannot follow this user' }, 403);
-  if (Array.isArray(me.blocked) && me.blocked.includes(targetId)) return c.json({ error: 'Unblock this user first' }, 403);
-  me.following = me.following || [];
-  target.followers = target.followers || [];
-  if (!me.following.includes(targetId)) me.following.push(targetId);
-  if (!target.followers.includes(myId)) target.followers.push(myId);
-  pushNotification(db, targetId, 'follow', myId);
-  await saveDatabase(db, false);
+  let notifTargetId = null;
+  const result = await mutateDatabaseAtomic((db) => {
+    const me = db.users.find(u => u.id === myId);
+    const target = db.users.find(u => u.id === targetId);
+    if (!me || !target) return { __notFound: true };
+    if (Array.isArray(target.blocked) && target.blocked.includes(myId)) return { __forbidden: 'Cannot follow this user' };
+    if (Array.isArray(me.blocked) && me.blocked.includes(targetId)) return { __forbidden: 'Unblock this user first' };
+    me.following = me.following || [];
+    target.followers = target.followers || [];
+    if (!me.following.includes(targetId)) me.following.push(targetId);
+    if (!target.followers.includes(myId)) target.followers.push(myId);
+    pushNotification(db, targetId, 'follow', myId);
+    notifTargetId = targetId;
+    return { following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers, me, target };
+  });
+  if (result.__notFound) return c.json({ error: 'User not found' }, 404);
+  if (result.__forbidden) return c.json({ error: result.__forbidden }, 403);
+  if (result.__error || !result.__persisted) return c.json({ error: 'Follow storage unavailable. Please retry.' }, 503);
   if (isTursoConfigured()) {
-    await tursoUpsertUser(me);
-    await tursoUpsertUser(target);
+    await tursoUpsertUser(result.me);
+    await tursoUpsertUser(result.target);
     // Fan-out on follow: backfill the followed user's recent posts
     // into the follower's feed table so they see content immediately.
     try {
       const tc = tursoClient();
       const recentPosts = await tc.execute({
         sql: `SELECT id, created_at FROM ps_posts WHERE user_id = ? AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT 50`,
-        args: [targetId]
+        args: [notifTargetId]
       }).catch(() => ({ rows: [] }));
       if (recentPosts.rows?.length) {
         const feedRows = recentPosts.rows.map(r => ({
@@ -2281,55 +2360,66 @@ app.post('/api/user/follow', requireAuth, async (c) => {
       }
     } catch (_) { /* best-effort; don't fail the follow */ }
   }
-  return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
+  return c.json({ ok: true, following: result.following, followers: result.followers, followingIds: result.followingIds, targetFollowerIds: result.targetFollowerIds });
 });
 app.post('/api/user/unfollow', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
   if (!targetId) return c.json({ error: 'targetId required' }, 400);
-  const db = await fetchDatabase();
-  const me = db.users.find(u => u.id === c.get('userId'));
-  const target = db.users.find(u => u.id === targetId);
-  if (!me || !target) return c.json({ error: 'User not found' }, 404);
-  me.following = (me.following || []).filter(id => id !== targetId);
-  target.followers = (target.followers || []).filter(id => id !== c.get('userId'));
-  await saveDatabase(db, false);
+  const myId = c.get('userId');
+  const result = await mutateDatabaseAtomic((db) => {
+    const me = db.users.find(u => u.id === myId);
+    const target = db.users.find(u => u.id === targetId);
+    if (!me || !target) return { __notFound: true };
+    me.following = (me.following || []).filter(id => id !== targetId);
+    target.followers = (target.followers || []).filter(id => id !== myId);
+    return { following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers, me, target };
+  });
+  if (result.__notFound) return c.json({ error: 'User not found' }, 404);
+  if (result.__error || !result.__persisted) return c.json({ error: 'Unfollow storage unavailable. Please retry.' }, 503);
   if (isTursoConfigured()) {
-    await tursoUpsertUser(me);
-    await tursoUpsertUser(target);
+    await tursoUpsertUser(result.me);
+    await tursoUpsertUser(result.target);
   }
-  return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
+  return c.json({ ok: true, following: result.following, followers: result.followers, followingIds: result.followingIds, targetFollowerIds: result.targetFollowerIds });
 });
 app.post('/api/user/block', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
   const myId = c.get('userId');
   if (!targetId || targetId === myId) return c.json({ error: 'Invalid target' }, 400);
-  const db = await fetchDatabase();
-  const me = db.users.find(u => u.id === myId);
-  const target = db.users.find(u => u.id === targetId);
-  if (!me || !target) return c.json({ error: 'User not found' }, 404);
-  me.blocked = me.blocked || [];
-  if (!me.blocked.includes(targetId)) me.blocked.push(targetId);
-  me.following = (me.following || []).filter(id => id !== targetId);
-  target.followers = (target.followers || []).filter(id => id !== myId);
-  target.following = (target.following || []).filter(id => id !== myId);
-  me.followers = (me.followers || []).filter(id => id !== targetId);
-  db.notifications = (db.notifications || []).filter(n => !((n.userId === myId && n.fromUserId === targetId) || (n.userId === targetId && n.fromUserId === myId)));
-  await saveDatabase(db, false);
+  const result = await mutateDatabaseAtomic((db) => {
+    const me = db.users.find(u => u.id === myId);
+    const target = db.users.find(u => u.id === targetId);
+    if (!me || !target) return { __notFound: true };
+    me.blocked = me.blocked || [];
+    if (!me.blocked.includes(targetId)) me.blocked.push(targetId);
+    me.following = (me.following || []).filter(id => id !== targetId);
+    target.followers = (target.followers || []).filter(id => id !== myId);
+    target.following = (target.following || []).filter(id => id !== myId);
+    me.followers = (me.followers || []).filter(id => id !== targetId);
+    db.notifications = (db.notifications || []).filter(n => !((n.userId === myId && n.fromUserId === targetId) || (n.userId === targetId && n.fromUserId === myId)));
+    return { me, target };
+  });
+  if (result.__notFound) return c.json({ error: 'User not found' }, 404);
+  if (result.__error || !result.__persisted) return c.json({ error: 'Block storage unavailable. Please retry.' }, 503);
   if (isTursoConfigured()) {
-    await tursoUpsertUser(me);
-    await tursoUpsertUser(target);
+    await tursoUpsertUser(result.me);
+    await tursoUpsertUser(result.target);
   }
   return c.json({ ok: true });
 });
 app.post('/api/user/unblock', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
   if (!targetId) return c.json({ error: 'targetId required' }, 400);
-  const db = await fetchDatabase();
-  const me = db.users.find(u => u.id === c.get('userId'));
-  if (!me) return c.json({ error: 'Not found' }, 404);
-  me.blocked = (me.blocked || []).filter(id => id !== targetId);
-  await saveDatabase(db, false);
-  if (isTursoConfigured()) await tursoUpsertUser(me);
+  const myId = c.get('userId');
+  const result = await mutateDatabaseAtomic((db) => {
+    const me = db.users.find(u => u.id === myId);
+    if (!me) return { __notFound: true };
+    me.blocked = (me.blocked || []).filter(id => id !== targetId);
+    return { me };
+  });
+  if (result.__notFound) return c.json({ error: 'Not found' }, 404);
+  if (result.__error || !result.__persisted) return c.json({ error: 'Unblock storage unavailable. Please retry.' }, 503);
+  if (isTursoConfigured()) await tursoUpsertUser(result.me);
   return c.json({ ok: true });
 });
 app.get('/api/user/:id/profile', requireAuth, async (c) => {
@@ -2474,27 +2564,25 @@ app.post('/api/posts/create', requireAuth, async (c) => {
 app.post('/api/posts/like', requireAuth, async (c) => {
   const { postId } = await c.req.json().catch(() => ({}));
   if (!postId) return c.json({ error: 'postId required' }, 400);
-  let db = await fetchDatabase();
-  let post = db.posts.find(p => p.id === postId);
-  // Cross-isolate consistency: if cache misses, force-refresh from GitHub
-  if (!post) {
-    cacheTimestamp = 0;
-    db = await fetchDatabase();
-    post = db.posts.find(p => p.id === postId);
-  }
-  if (!post) return c.json({ error: 'Not found' }, 404);
-  post.likes = post.likes || [];
   const myId = c.get('userId');
-  const idx = post.likes.indexOf(myId);
-  let liked;
-  if (idx === -1) { post.likes.push(myId); liked = true; } else { post.likes.splice(idx, 1); liked = false; }
-  const notif = liked ? pushNotification(db, post.userId, 'like', myId, { postId: post.id }) : null;
-  await saveDatabase(db, false, { skipSecondarySync: true });
+  let notif = null;
+  const result = await mutateDatabaseAtomic((db) => {
+    const post = db.posts.find(p => p.id === postId);
+    if (!post) return { __notFound: true };
+    post.likes = post.likes || [];
+    const idx = post.likes.indexOf(myId);
+    let liked;
+    if (idx === -1) { post.likes.push(myId); liked = true; } else { post.likes.splice(idx, 1); liked = false; }
+    notif = liked ? pushNotification(db, post.userId, 'like', myId, { postId: post.id }) : null;
+    return { liked, likeCount: post.likes.length, post };
+  }, { skipSecondarySync: true });
+  if (result.__notFound) return c.json({ error: 'Not found' }, 404);
+  if (result.__error || !result.__persisted) return c.json({ error: 'Like storage unavailable. Please retry.' }, 503);
   if (isTursoConfigured()) {
-    await tursoUpsertPosts([post]);
+    await tursoUpsertPosts([result.post]);
     if (notif) await tursoUpsertNotifications([notif]);
   }
-  return c.json({ liked, likeCount: post.likes.length });
+  return c.json({ liked: result.liked, likeCount: result.likeCount });
 });
 
 app.post('/api/rtc/signal', requireAuth, async (c) => {
@@ -2558,23 +2646,26 @@ app.post('/api/posts/comment', requireAuth, async (c) => {
   if (!postId) return c.json({ error: 'postId required' }, 400);
   const ct = sanitizeText(text, 600).trim();
   if (!ct) return c.json({ error: 'Empty comment' }, 400);
-  let db = await fetchDatabase();
-  let post = db.posts.find(p => p.id === postId);
-  if (!post) { cacheTimestamp = 0; db = await fetchDatabase(); post = db.posts.find(p => p.id === postId); }
-  if (!post) return c.json({ error: 'Not found' }, 404);
-  post.comments = post.comments || [];
   const myId = c.get('userId');
-  const author = db.users.find(u => u.id === myId);
-  const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
-  const comment = { id: uid('cmt'), userId: myId, text: ct, authorSnapshot: snap, createdAt: nowMs() };
-  post.comments.push(comment);
-  const notif = pushNotification(db, post.userId, 'comment', myId, { postId: post.id, commentId: comment.id, text: ct.slice(0, 140) });
-  await saveDatabase(db, false, { skipSecondarySync: true });
+  let notif = null;
+  const result = await mutateDatabaseAtomic((db) => {
+    const post = db.posts.find(p => p.id === postId);
+    if (!post) return { __notFound: true };
+    post.comments = post.comments || [];
+    const author = db.users.find(u => u.id === myId);
+    const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
+    const comment = { id: uid('cmt'), userId: myId, text: ct, authorSnapshot: snap, createdAt: nowMs() };
+    post.comments.push(comment);
+    notif = pushNotification(db, post.userId, 'comment', myId, { postId: post.id, commentId: comment.id, text: ct.slice(0, 140) });
+    return { comment: { ...comment, author: snap || { id: myId, displayName: 'Member', username: 'member' } }, post };
+  }, { skipSecondarySync: true });
+  if (result.__notFound) return c.json({ error: 'Not found' }, 404);
+  if (result.__error || !result.__persisted) return c.json({ error: 'Comment storage unavailable. Please retry.' }, 503);
   if (isTursoConfigured()) {
-    await tursoUpsertPosts([post]);
+    await tursoUpsertPosts([result.post]);
     if (notif) await tursoUpsertNotifications([notif]);
   }
-  return c.json({ comment: { ...comment, author: snap || { id: myId, displayName: 'Member', username: 'member' } } });
+  return c.json({ comment: result.comment });
 });
 
 app.post('/api/posts/delete', requireAuth, async (c) => {
