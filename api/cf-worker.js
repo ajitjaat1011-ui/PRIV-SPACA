@@ -9,6 +9,7 @@
  */
 
 import { Hono } from 'hono';
+import { runFullDiagnostics, SEVERITIES } from './diagnostics-lib.mjs';
 // Buffer polyfill — uses Web API (available in all Workers runtimes)
 // instead of node:buffer so esbuild bundling succeeds without nodejs_compat.
 const _b64decode = (b64) => {
@@ -536,6 +537,23 @@ async function tursoEnsure() {
       PRIMARY KEY (user_id, post_id)
     );
     CREATE INDEX IF NOT EXISTS idx_ps_user_feeds_user_created ON ps_user_feeds (user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_diagnostics (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'check',
+      severity TEXT NOT NULL,
+      category TEXT NOT NULL,
+      code TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      data_json TEXT,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      resolved_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_diagnostics_created ON ps_diagnostics (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ps_diagnostics_resolved_created ON ps_diagnostics (resolved, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ps_diagnostics_code ON ps_diagnostics (code, resolved);
   `);
   _tursoReady = true;
   return true;
@@ -596,6 +614,107 @@ async function tursoResetDb() {
   cacheTimestamp = Date.now();
   return true;
 }
+
+// ---------- Diagnostics persistence ----------
+function generateId(prefix = 'id') {
+  return prefix + '_' + Math.random().toString(36).slice(2) + '_' + nowMs().toString(36);
+}
+async function tursoQuery(sql, args = []) {
+  if (!isTursoConfigured()) return { rows: [] };
+  await tursoEnsure();
+  return tursoClient().execute({ sql, args });
+}
+async function insertDiagnostics(problems, { kind = 'check' } = {}) {
+  if (!isTursoConfigured() || !problems.length) return 0;
+  await tursoEnsure();
+  const c = tursoClient();
+  const ts = nowMs();
+  let inserted = 0;
+  for (const p of problems) {
+    const id = generateId('diag');
+    try {
+      await c.execute({
+        sql: `INSERT INTO ps_diagnostics
+              (id, kind, severity, category, code, title, description, data_json, resolved, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+        args: [id, kind, p.severity, p.category, p.code, p.title, p.description || '', JSON.stringify(p.data || {}), ts, ts],
+      });
+      inserted++;
+    } catch (e) {
+      console.warn('[diagnostics] insert failed', e && e.message);
+    }
+  }
+  return inserted;
+}
+async function resolveDiagnostics(codes) {
+  if (!isTursoConfigured() || !codes.length) return 0;
+  await tursoEnsure();
+  const placeholders = codes.map(() => '?').join(',');
+  const rs = await tursoClient().execute({
+    sql: `UPDATE ps_diagnostics SET resolved = 1, resolved_at = ?, updated_at = ?
+          WHERE resolved = 0 AND code IN (${placeholders})`,
+    args: [nowMs(), nowMs(), ...codes],
+  });
+  return Number(rs.rowsAffected || 0);
+}
+async function fetchUnresolvedDiagnostics({ limit = 200, severity } = {}) {
+  if (!isTursoConfigured()) return [];
+  await tursoEnsure();
+  let sql = 'SELECT * FROM ps_diagnostics WHERE resolved = 0';
+  const args = [];
+  if (severity && severity !== 'all') {
+    sql += ' AND severity = ?';
+    args.push(severity);
+  }
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  args.push(limit);
+  const rs = await tursoClient().execute({ sql, args });
+  return (rs.rows || []).map(r => ({
+    id: r.id,
+    kind: r.kind,
+    severity: r.severity,
+    category: r.category,
+    code: r.code,
+    title: r.title,
+    description: r.description,
+    data: safeJson(String(r.data_json || '{}'), {}),
+    resolved: !!r.resolved,
+    createdAt: Number(r.created_at || 0),
+    updatedAt: Number(r.updated_at || 0),
+    resolvedAt: r.resolved_at ? Number(r.resolved_at) : null,
+  }));
+}
+async function runAndStoreDiagnostics() {
+  const now = nowMs();
+  let db = null;
+  let dbReachable = false;
+  let dbError = null;
+  try {
+    db = await fetchPrimaryDatabase();
+    dbReachable = true;
+  } catch (e) {
+    dbError = e.message;
+  }
+  const problems = await runFullDiagnostics({
+    db,
+    now,
+    dbReachable,
+    dbError,
+    query: isTursoConfigured() ? tursoQuery : undefined,
+  });
+  const activeCodes = new Set(problems.map(p => p.code));
+  const inserted = await insertDiagnostics(problems);
+  let resolved = 0;
+  if (isTursoConfigured()) {
+    const allCodes = await tursoQuery('SELECT DISTINCT code FROM ps_diagnostics WHERE resolved = 0');
+    const codesToResolve = (allCodes.rows || [])
+      .map(r => r.code)
+      .filter(code => !activeCodes.has(code));
+    resolved = await resolveDiagnostics(codesToResolve);
+  }
+  return { ok: true, checkedAt: now, problemsFound: problems.length, inserted, resolved, codes: [...activeCodes] };
+}
+
 async function syncTursoMirror(db) {
   if (!isTursoConfigured()) return false;
   await tursoEnsure();
@@ -1646,6 +1765,68 @@ app.get('/api/diag', requireAdmin, async (c) => {
     } else out.error = db ? (db._err || db._httpError || 'Read returned no data (not an array)') : 'Read returned no data';
   } catch (e) { out.error = e.message; }
   return c.json(out);
+});
+
+// ---------- Diagnostics & agent-facing problem feed ----------
+const _reportIssueBuckets = new Map(); // ip -> { count, resetAt }
+function reportIssueRateLimit(ip) {
+  const now = nowMs();
+  let b = _reportIssueBuckets.get(ip);
+  if (!b || b.resetAt < now) { b = { count: 0, resetAt: now + 15 * 60 * 1000 }; _reportIssueBuckets.set(ip, b); }
+  b.count++;
+  return b.count <= 10;
+}
+app.post('/api/report-issue', async (c) => {
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+  if (!reportIssueRateLimit(ip)) return c.json({ error: 'Rate limit exceeded' }, 429);
+  const body = await c.req.json().catch(() => ({}));
+  const title = String(body.title || 'User reported issue').slice(0, 120);
+  const description = String(body.description || '').slice(0, 2000);
+  const category = String(body.category || 'user_report').slice(0, 40);
+  const severity = SEVERITIES.WARNING;
+  if (!description && !body.data) return c.json({ error: 'Description or data required' }, 400);
+  const problem = {
+    severity,
+    category: category || CATEGORIES.SYSTEM,
+    code: 'user_report',
+    title,
+    description,
+    data: { reporterIp: ip, ...(body.data || {}) },
+  };
+  await insertDiagnostics([problem], { kind: 'user_report' });
+  return c.json({ ok: true, message: 'Issue reported' });
+});
+app.post('/api/diagnostics/run', requireAdmin, async (c) => {
+  try {
+    const result = await runAndStoreDiagnostics();
+    return c.json(result);
+  } catch (e) {
+    return c.json({ ok: false, error: e.message }, 500);
+  }
+});
+app.get('/api/diagnostics', requireAdmin, async (c) => {
+  try {
+    const severity = c.req.query('severity') || 'all';
+    const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') || 200)));
+    const problems = await fetchUnresolvedDiagnostics({ severity, limit });
+    return c.json({ ok: true, count: problems.length, problems });
+  } catch (e) {
+    return c.json({ ok: false, error: e.message }, 500);
+  }
+});
+app.post('/api/diagnostics/:id/resolve', requireAdmin, async (c) => {
+  try {
+    const id = c.req.param('id');
+    if (!isTursoConfigured()) return c.json({ error: 'Turso not configured' }, 503);
+    await tursoEnsure();
+    const rs = await tursoClient().execute({
+      sql: 'UPDATE ps_diagnostics SET resolved = 1, resolved_at = ?, updated_at = ? WHERE id = ?',
+      args: [nowMs(), nowMs(), id],
+    });
+    return c.json({ ok: true, resolved: Number(rs.rowsAffected || 0) > 0 });
+  } catch (e) {
+    return c.json({ ok: false, error: e.message }, 500);
+  }
 });
 
 // ---------- Auth: signup ----------
@@ -3103,6 +3284,7 @@ data: ${payloadStr}
 });
 
 // ---------- Export for Cloudflare ----------
+export { runAndStoreDiagnostics };
 export default app;
 
 // ---------- Hybrid Fan-out Feed (DesignGurus Instagram optimization) ----------

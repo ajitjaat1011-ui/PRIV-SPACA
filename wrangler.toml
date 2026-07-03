@@ -18,6 +18,11 @@ pages_build_output_dir = "."
 GH_REPO = "ajitjaat1011-ui/PRIV-SPACA"
 GH_BRANCH = "data"
 GH_FILE = "db.json"
+
+# Run diagnostics every 5 minutes. The scheduled handler writes detected
+# problems to Turso (ps_diagnostics) for the agent to inspect.
+[[triggers.crons]]
+cron = "*/5 * * * *"
 # Turso/libSQL is the only primary store. Neon has been removed.
 ADMIN_USERS = "Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com"
 OWNER_EMAIL = "ajitjaat1011@gmail.com"
