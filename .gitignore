@@ -6,3 +6,4 @@ npm-debug.log
 *.log
 .env*
 backups/db-before-*.json
+backups/turso_before_neon_replacement_*.json
