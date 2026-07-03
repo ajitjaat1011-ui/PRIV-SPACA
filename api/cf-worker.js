@@ -28,6 +28,7 @@ let GITHUB_PAT = '';
 let DATABASE_URL = '';
 let TURSO_DATABASE_URL = '';
 let TURSO_AUTH_TOKEN = '';
+let PRIMARY_DATABASE = 'auto'; // auto prefers Turso when configured, then Neon, then GitHub
 let GH_REPO    = 'ajitjaat1011-ui/PRIV-SPACA';
 let GH_BRANCH  = 'data';
 let GH_FILE    = 'db.json';
@@ -74,6 +75,7 @@ function loadConfig(env) {
   if (env.DATABASE_URL) DATABASE_URL = String(env.DATABASE_URL).replace(/&amp;/g, '&');
   if (env.TURSO_DATABASE_URL) TURSO_DATABASE_URL = String(env.TURSO_DATABASE_URL).trim();
   if (env.TURSO_AUTH_TOKEN) TURSO_AUTH_TOKEN = String(env.TURSO_AUTH_TOKEN).trim();
+  if (env.PRIMARY_DATABASE || env.PRIMARY_DB) PRIMARY_DATABASE = String(env.PRIMARY_DATABASE || env.PRIMARY_DB || 'auto').trim().toLowerCase();
   if (env.GH_REPO) GH_REPO = env.GH_REPO;
   if (env.GH_BRANCH) GH_BRANCH = env.GH_BRANCH;
   if (env.GH_FILE) GH_FILE = env.GH_FILE;
@@ -108,7 +110,7 @@ const sleepMs = (ms) => new Promise(r => setTimeout(r, ms));
 const uid = (p = 'id') => p + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
 const safeJson = (s, f) => { try { return JSON.parse(s); } catch (_) { return f; } };
 const isRepo = () => !!(GITHUB_PAT && GH_REPO && GH_BRANCH);
-const isPersist = () => isRepo();
+const isPersist = () => isTursoPrimary() || isNeonPrimary() || isRepo();
 const isEmail = s => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 const isUsername = s => typeof s === 'string' && /^[a-zA-Z0-9_]{3,24}$/.test(s);
 const isPin = s => typeof s === 'string' && /^\d{4}$/.test(s);
@@ -233,6 +235,34 @@ async function requireAdmin(c, next) {
 let _neonSql = null;
 let _neonReady = false;
 function isNeonConfigured() { return !!DATABASE_URL; }
+function primaryMode() {
+  const m = String(PRIMARY_DATABASE || 'auto').trim().toLowerCase();
+  if (['turso', 'libsql', 'sqlite'].includes(m)) return 'turso';
+  if (['neon', 'postgres', 'postgresql'].includes(m)) return 'neon';
+  if (['github', 'repo'].includes(m)) return 'github';
+  return 'auto';
+}
+function isTursoPrimary() {
+  if (!isTursoConfigured()) return false;
+  const m = primaryMode();
+  if (m === 'turso') return true;
+  if (m === 'neon' || m === 'github') return false;
+  // Zero-cost default: Turso replaces Neon whenever Turso credentials exist.
+  return true;
+}
+function isNeonPrimary() {
+  if (!isNeonConfigured()) return false;
+  const m = primaryMode();
+  if (m === 'neon') return true;
+  if (m === 'turso' || m === 'github') return false;
+  return !isTursoConfigured();
+}
+function primaryPersistenceName() {
+  if (isTursoPrimary()) return 'turso-libsql-primary';
+  if (isNeonPrimary()) return 'neon-postgres';
+  if (isRepo()) return 'github-repo';
+  return 'in-memory';
+}
 function neonClient() {
   if (!_neonSql) _neonSql = neon(DATABASE_URL);
   return _neonSql;
@@ -332,7 +362,8 @@ async function neonResetDb() {
 // ---------- GitHub repo persistence ----------
 
 async function repoRead() {
-  if (isNeonConfigured()) return await neonReadDb();
+  if (isTursoPrimary()) return await tursoReadDb();
+  if (isNeonPrimary()) return await neonReadDb();
   if (!isRepo()) return null;
   try {
     const url = `https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(GH_FILE)}?ref=${encodeURIComponent(GH_BRANCH)}&_=${Date.now()}`;
@@ -355,7 +386,8 @@ async function repoRead() {
   }
 }
 async function repoWrite(dbObj) {
-  if (isNeonConfigured()) return await neonWriteDb(dbObj);
+  if (isTursoPrimary()) return await tursoWriteDb(dbObj);
+  if (isNeonPrimary()) return await neonWriteDb(dbObj);
   if (!isRepo()) return false;
   try {
     if (!ghFileSha) await repoRead();
@@ -504,6 +536,28 @@ async function tursoEnsure() {
   if (_tursoReady) return true;
   const c = tursoClient();
   await c.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS ps_kv (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ps_rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      reset_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_rate_limits_reset_at ON ps_rate_limits (reset_at);
+    CREATE TABLE IF NOT EXISTS ps_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      data TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_events_user_ts ON ps_events (user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ps_events_ts ON ps_events (created_at);
     CREATE TABLE IF NOT EXISTS ps_users (
       id TEXT PRIMARY KEY,
       username_lower TEXT,
@@ -574,6 +628,62 @@ async function tursoEnsure() {
     CREATE INDEX IF NOT EXISTS idx_ps_user_feeds_user_created ON ps_user_feeds (user_id, created_at DESC);
   `);
   _tursoReady = true;
+  return true;
+}
+
+// ---------- Turso/libSQL full JSON primary storage ----------
+async function tursoReadDb() {
+  if (!isTursoConfigured()) return null;
+  await tursoEnsure();
+  const rs = await tursoClient().execute({ sql: 'SELECT value FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
+  if (!rs.rows || rs.rows.length === 0) return normalizeDb({});
+  return normalizeDb(safeJson(String(rs.rows[0].value || '{}'), normalizeDb({})));
+}
+async function tursoReadDbVersioned() {
+  if (!isTursoConfigured()) return null;
+  await tursoEnsure();
+  const rs = await tursoClient().execute({ sql: 'SELECT value, version FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
+  if (!rs.rows || rs.rows.length === 0) return { db: normalizeDb({}), version: null };
+  return { db: normalizeDb(safeJson(String(rs.rows[0].value || '{}'), normalizeDb({}))), version: Number(rs.rows[0].version || 0) };
+}
+async function tursoWriteDb(dbObj) {
+  if (!isTursoConfigured()) return false;
+  await tursoEnsure();
+  const db = normalizeDb(dbObj);
+  db.meta = { ...(db.meta || {}), storage: 'turso-json-v1', updatedAt: Date.now() };
+  const ts = nowMs();
+  await tursoClient().execute({
+    sql: `INSERT INTO ps_kv (key, value, version, updated_at) VALUES (?, ?, 1, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, version = ps_kv.version + 1, updated_at = excluded.updated_at`,
+    args: ['db', JSON.stringify(db), ts],
+  });
+  return true;
+}
+async function tursoWriteDbCAS(dbObj, expectedVersion) {
+  if (!isTursoConfigured()) return false;
+  await tursoEnsure();
+  const db = normalizeDb(dbObj);
+  db.meta = { ...(db.meta || {}), storage: 'turso-json-v1', updatedAt: Date.now() };
+  const ts = nowMs();
+  if (expectedVersion === null || expectedVersion === undefined) {
+    const rs = await tursoClient().execute({
+      sql: 'INSERT INTO ps_kv (key, value, version, updated_at) VALUES (?, ?, 0, ?) ON CONFLICT(key) DO NOTHING',
+      args: ['db', JSON.stringify(db), ts],
+    });
+    return Number(rs.rowsAffected || 0) > 0;
+  }
+  const rs = await tursoClient().execute({
+    sql: 'UPDATE ps_kv SET value = ?, version = version + 1, updated_at = ? WHERE key = ? AND version = ?',
+    args: [JSON.stringify(db), ts, 'db', Number(expectedVersion || 0)],
+  });
+  return Number(rs.rowsAffected || 0) > 0;
+}
+async function tursoResetDb() {
+  if (!isTursoConfigured()) return false;
+  const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'turso-json-v1', resetAt: Date.now() } });
+  await tursoWriteDb(empty);
+  localCache = empty;
+  cacheTimestamp = Date.now();
   return true;
 }
 async function syncTursoMirror(db) {
@@ -850,7 +960,7 @@ async function fetchDatabase({ fresh = false, includeTurso = true } = {}) {
   if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
     localCache = normalizeDb(remote);
   }
-  if (includeTurso && isTursoConfigured()) {
+  if (includeTurso && isTursoConfigured() && !isTursoPrimary()) {
     const mirror = await fetchTursoMirror(localCache);
     if ((mirror.users || []).length > 0) localCache.users = mirror.users;
     if ((mirror.posts || []).length > 0) localCache.posts = mirror.posts;
@@ -872,14 +982,24 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
   // the active backend — otherwise heartbeat/typing indicators are silently
   // dropped almost all the time (they still report {ok:true} to the client,
   // which is misleading and breaks the "who's typing" / online-status UI).
-  if (isEphemeral && !isNeonConfigured()) {
+  if (isEphemeral && !isNeonPrimary() && !isTursoPrimary()) {
     const now = nowMs();
     if (now - lastEphemeralWrite < EPHEMERAL_WRITE_INTERVAL_MS) return true;
     lastEphemeralWrite = now;
     repoWrite(data).catch(() => {});
     return true;
   }
-  if (isEphemeral && isNeonConfigured()) {
+  if (isEphemeral && isTursoPrimary()) {
+    // Same CAS strategy as durable writes, but best-effort: losing one
+    // heartbeat/typing tick is acceptable; clobbering a real user/message is not.
+    try {
+      const versioned = await tursoReadDbVersioned();
+      const merged = mergeDatabase(versioned.db, data);
+      await tursoWriteDbCAS(merged, versioned.version);
+    } catch (_) { /* best-effort; ephemeral data, ok to lose occasionally */ }
+    return true;
+  }
+  if (isEphemeral && isNeonPrimary()) {
     // Write directly to Neon and await it. We intentionally do NOT use a
     // fire-and-forget pattern here: Cloudflare Workers can terminate
     // un-awaited promises as soon as the HTTP response is sent, which was
@@ -917,7 +1037,38 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
   // intended change into it, and retry. This is a handful of fast Postgres
   // round trips with no artificial sleep, so it stays fast in the common
   // (uncontended) case while remaining correct under real concurrency.
-  if (isNeonConfigured()) {
+  if (isTursoPrimary()) {
+    const originalData = data;
+    const MAX_CAS_ATTEMPTS = 15;
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
+      let versioned;
+      try {
+        versioned = await tursoReadDbVersioned();
+      } catch (e) {
+        console.error('[saveDatabase:turso] read failed', e && e.message);
+        return false;
+      }
+      const merged = mergeDatabase(versioned.db, originalData);
+      let ok = false;
+      try {
+        ok = await tursoWriteDbCAS(merged, versioned.version);
+      } catch (e) {
+        console.error('[saveDatabase:turso] CAS write failed', e && e.message);
+        return false;
+      }
+      if (ok) {
+        localCache = normalizeDb(merged);
+        cacheTimestamp = nowMs();
+        return true;
+      }
+      if (attempt < MAX_CAS_ATTEMPTS - 1) {
+        await sleepMs(10 + Math.floor(Math.random() * (20 + attempt * 10)));
+      }
+    }
+    console.error('[saveDatabase:turso] CAS retries exhausted for key=db');
+    return false;
+  }
+  if (isNeonPrimary()) {
     const originalData = data;
     const MAX_CAS_ATTEMPTS = 15;
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
@@ -991,7 +1142,7 @@ async function saveDatabaseVerified(data, verifyFn, attempts = 4, opts = {}) {
   // committed. Re-reading afterwards to "verify" would be redundant, so we
   // just surface saveDatabase()'s result directly. verifyFn is intentionally
   // unused on this path (kept only for signature/call-site compatibility).
-  if (isNeonConfigured()) {
+  if (isTursoPrimary() || isNeonPrimary()) {
     return await saveDatabase(data, false, opts);
   }
   // ---- GitHub Contents API path (legacy / fallback persistence) ----
@@ -1111,9 +1262,34 @@ function rateLimit({ key, limit, windowMs }) {
   return { allowed: b.count <= limit, remaining: Math.max(0, limit - b.count), resetAt: b.resetAt };
 }
 async function sharedRateLimit({ key, limit, windowMs }) {
-  if (!isNeonConfigured()) return rateLimit({ key, limit, windowMs });
   const now = Date.now();
   const nextResetAt = now + windowMs;
+  if (isTursoPrimary()) {
+    try {
+      await tursoEnsure();
+      const tc = tursoClient();
+      await tc.execute({
+        sql: `INSERT INTO ps_rate_limits (key, count, reset_at, updated_at) VALUES (?, 1, ?, ?)
+              ON CONFLICT(key) DO UPDATE SET
+                count = CASE WHEN reset_at <= ? THEN 1 ELSE count + 1 END,
+                reset_at = CASE WHEN reset_at <= ? THEN ? ELSE reset_at END,
+                updated_at = ?`,
+        args: [key, nextResetAt, now, now, now, nextResetAt, now],
+      });
+      if (Math.random() < 0.01) {
+        tc.execute({ sql: 'DELETE FROM ps_rate_limits WHERE reset_at < ?', args: [now - (24 * 60 * 60 * 1000)] }).catch(() => {});
+      }
+      const rs = await tc.execute({ sql: 'SELECT count, reset_at FROM ps_rate_limits WHERE key = ? LIMIT 1', args: [key] });
+      const row = rs.rows && rs.rows[0] ? rs.rows[0] : { count: 1, reset_at: nextResetAt };
+      const count = Number(row.count || 0);
+      const resetAt = Number(row.reset_at || nextResetAt);
+      return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetAt };
+    } catch (e) {
+      console.warn('[sharedRateLimit:turso] falling back to in-memory limiter:', e && e.message);
+      return rateLimit({ key, limit, windowMs });
+    }
+  }
+  if (!isNeonPrimary()) return rateLimit({ key, limit, windowMs });
   try {
     await neonEnsure();
     const rows = await neonClient()`INSERT INTO priv_spaca_rate_limits AS rl (key, count, reset_at, updated_at)
@@ -1131,7 +1307,7 @@ async function sharedRateLimit({ key, limit, windowMs }) {
     const resetAt = Number(row.reset_at || nextResetAt);
     return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetAt };
   } catch (e) {
-    console.warn('[sharedRateLimit] falling back to in-memory limiter:', e && e.message);
+    console.warn('[sharedRateLimit:neon] falling back to in-memory limiter:', e && e.message);
     return rateLimit({ key, limit, windowMs });
   }
 }
@@ -1159,9 +1335,9 @@ async function globalRateLimit(c, next) {
   // low-tens-of-ms after this change.
   //
   // This is a generous 400-req/min-per-IP COURTESY limit, not the app's
-  // real abuse defense — that's authRateLimit (40/15min, Neon-backed) and
+  // real abuse defense — that's authRateLimit (40/15min, primary-DB-backed) and
   // authSubjectRateLimit + the per-account lockout below, all of which are
-  // unchanged and still shared across isolates via Neon. A fast in-memory,
+  // unchanged and still shared across isolates via the primary DB. A fast in-memory,
   // per-isolate counter is an acceptable trade-off here: worst case under
   // heavy multi-isolate traffic is that a single IP can exceed 400/min by
   // some multiple of Cloudflare's isolate count before any single isolate
@@ -1226,7 +1402,12 @@ function _pushEvent(userId, kind, data) {
     try { sub.write(`id: ${evt.id}\nevent: ${evt.kind}\ndata: ${JSON.stringify(evt)}\n\n`); }
     catch (_) { sub.closed = true; }
   }
-  if (isNeonConfigured()) {
+  if (isTursoPrimary()) {
+    tursoEnsure().then(() => tursoClient().execute({
+      sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
+      args: [evt.id, userId, kind, JSON.stringify(evt), evt.ts],
+    })).catch(() => {});
+  } else if (isNeonPrimary()) {
     neonClient()`INSERT INTO priv_spaca_events (id, user_id, kind, data, created_at)
       VALUES (${evt.id}, ${userId}, ${kind}, ${JSON.stringify(evt)}::jsonb, ${evt.ts})
       ON CONFLICT (id) DO NOTHING`.catch(() => {});
@@ -1238,7 +1419,7 @@ function _broadcastEvent(kind, data, excludeUserId) {
     if (userId === excludeUserId) continue;
     _pushEvent(userId, kind, data);
   }
-  if (isNeonConfigured()) {
+  if (isTursoPrimary() || isNeonPrimary()) {
     _pushEvent('__ALL__', kind, data);
   }
 }
@@ -1540,15 +1721,15 @@ app.use('/api/*', globalRateLimit);
 // ---------- Health & diag ----------
 app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
-  persistence: isNeonConfigured() ? 'neon-postgres' : (isRepo() ? 'github-repo' : 'in-memory'),
+  persistence: primaryPersistenceName(),
   secondaryPersistence: isTursoConfigured() ? 'turso-structured-social' : null,
   runtime: 'cloudflare-workers',
-  time: nowMs(), version: 'phase1-neon-json-storage',
+  time: nowMs(), version: 'phase2-turso-json-primary',
 }));
 
 app.get('/api/diag', requireAdmin, async (c) => {
   const out = {
-    persistence: isNeonConfigured() ? 'neon-postgres' : (isRepo() ? 'github-repo' : 'in-memory'),
+    persistence: primaryPersistenceName(),
     repoConfigured: isRepo(), gistConfigured: false,
     repo: GH_REPO ? '[configured]' : '', branch: GH_BRANCH ? '[configured]' : '', file: GH_FILE ? '[configured]' : '',
     canRead: false, canWrite: false, userCount: 0, error: null,
@@ -1560,7 +1741,7 @@ app.get('/api/diag', requireAdmin, async (c) => {
       out.canRead = true;
       out.userCount = (db.users || []).length;
       // Do not perform a real write in diagnostics; it can conflict with signup/message saves.
-      out.canWrite = !!GITHUB_PAT;
+      out.canWrite = isTursoPrimary() || isNeonPrimary() || !!GITHUB_PAT;
     } else if (!isPersist()) {
       out.canRead = true; out.canWrite = true;
       out.userCount = (localCache.users || []).length;
@@ -1999,7 +2180,7 @@ app.get('/api/user/typing', requireAuth, async (c) => {
 
 // ---------- Messages ----------
 app.get('/api/messages', requireAuth, async (c) => {
-  cacheTimestamp = 0; // force fresh GitHub read for chat reliability across Cloudflare isolates
+  cacheTimestamp = 0; // force fresh primary read for chat reliability across Cloudflare isolates
   const roomId = normalizeRoomId(c.req.query('roomId') || 'general-group', c.get('userId'));
   if (roomId.startsWith('dm:')) {
     const parts = roomId.slice(3).split(':');
@@ -2007,20 +2188,25 @@ app.get('/api/messages', requireAuth, async (c) => {
   }
   let db = await fetchDatabase({ fresh: true });
   let now = nowMs();
+  const dbRoomMessages = () => db.messages
+    .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-200);
   let list = await fetchTursoMessages(roomId, now);
-  if (!Array.isArray(list)) {
-    list = db.messages
-      .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .slice(-200);
+  // If the structured Turso read layer is empty/stale for a room that the
+  // primary JSON store definitely has, fall back to primary instead of
+  // returning an empty chat during/after migration.
+  if (!Array.isArray(list) || (list.length === 0 && db.messages.some(m => m.roomId === roomId && !m.deletedAt))) {
+    list = dbRoomMessages();
   }
   if (list.length === 0 && roomId.startsWith('dm:')) {
     await sleepMs(900); cacheTimestamp = 0; db = await fetchDatabase({ fresh: true }); now = nowMs();
     const mirrorRetry = await fetchTursoMessages(roomId, now);
-    list = Array.isArray(mirrorRetry) ? mirrorRetry : db.messages
+    const primaryRetry = db.messages
       .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
       .sort((a, b) => a.createdAt - b.createdAt)
       .slice(-200);
+    list = (Array.isArray(mirrorRetry) && (mirrorRetry.length > 0 || primaryRetry.length === 0)) ? mirrorRetry : primaryRetry;
   }
   const enriched = list.map(m => {
     const author = db.users.find(u => u.id === m.userId);
@@ -2751,25 +2937,42 @@ app.get('/api/stream', async (c) => {
       const heartbeat = setInterval(() => { try { send(': ping\n\n'); } catch (_) {} }, 10000);
       let lastSeenTs = Date.now() - 1500;
       const sentIds = new Set();
-      const neonPoller = isNeonConfigured() ? setInterval(async () => {
+      const primaryPoller = (isTursoPrimary() || isNeonPrimary()) ? setInterval(async () => {
         if (sub.closed) return;
         try {
-          const sql = neonClient();
-          const rows = await sql`SELECT id, kind, data, created_at FROM priv_spaca_events
-            WHERE (user_id = ${userId} OR user_id = '__ALL__') AND created_at > ${lastSeenTs}
-            ORDER BY created_at ASC LIMIT 30`;
+          let rows = [];
+          if (isTursoPrimary()) {
+            await tursoEnsure();
+            const rs = await tursoClient().execute({
+              sql: `SELECT id, kind, data, created_at FROM ps_events
+                    WHERE (user_id = ? OR user_id = ?) AND created_at > ?
+                    ORDER BY created_at ASC LIMIT 30`,
+              args: [userId, '__ALL__', lastSeenTs],
+            });
+            rows = rs.rows || [];
+          } else if (isNeonPrimary()) {
+            const sql = neonClient();
+            rows = await sql`SELECT id, kind, data, created_at FROM priv_spaca_events
+              WHERE (user_id = ${userId} OR user_id = '__ALL__') AND created_at > ${lastSeenTs}
+              ORDER BY created_at ASC LIMIT 30`;
+          }
           for (const r of rows || []) {
             const ts = Number(r.created_at);
             if (ts > lastSeenTs) lastSeenTs = ts;
             if (!sentIds.has(r.id)) {
               sentIds.add(r.id);
               const payloadStr = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
-              send(`id: ${r.id}\nevent: ${r.kind}\ndata: ${payloadStr}\n\n`);
+              send(`id: ${r.id}
+event: ${r.kind}
+data: ${payloadStr}
+
+`);
             }
           }
           if (Math.random() < 0.03) {
             const oldTs = Date.now() - 300_000;
-            sql`DELETE FROM priv_spaca_events WHERE created_at < ${oldTs}`.catch(() => {});
+            if (isTursoPrimary()) tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ?', args: [oldTs] }).catch(() => {});
+            else if (isNeonPrimary()) neonClient()`DELETE FROM priv_spaca_events WHERE created_at < ${oldTs}`.catch(() => {});
           }
         } catch (_) {}
       }, 1500) : null;
@@ -2778,7 +2981,7 @@ app.get('/api/stream', async (c) => {
         if (sub.closed) return;
         sub.closed = true;
         clearInterval(heartbeat);
-        if (neonPoller) clearInterval(neonPoller);
+        if (primaryPoller) clearInterval(primaryPoller);
         clearTimeout(autoclose);
         const set = _eventSubscribers.get(userId);
         if (set) { set.delete(sub); if (set.size === 0) _eventSubscribers.delete(userId); }

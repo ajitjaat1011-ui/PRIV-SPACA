@@ -15,6 +15,10 @@ pages_build_output_dir = "."
 GH_REPO = "ajitjaat1011-ui/PRIV-SPACA"
 GH_BRANCH = "data"
 GH_FILE = "db.json"
+# Prefer the existing Turso/libSQL database as the zero-cost primary store.
+# This prevents Neon Postgres traffic even if DATABASE_URL remains configured
+# as a rollback secret in Cloudflare Pages.
+PRIMARY_DATABASE = "turso"
 ADMIN_USERS = "Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com"
 OWNER_EMAIL = "ajitjaat1011@gmail.com"
 OWNER_USERNAME = "Arvindjaat1011"
