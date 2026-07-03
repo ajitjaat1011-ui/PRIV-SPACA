@@ -247,8 +247,29 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .topbar{
   display:flex;justify-content:space-between;align-items:center;
-  padding:0 16px;background:var(--bg-2);border-bottom:1px solid var(--line);
-  z-index:5;height:54px;position:relative;overflow:hidden;
+  padding:8px 14px;
+  /* Liquid glass: translucent + blur */
+  background:linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.55) 100%);
+  -webkit-backdrop-filter:saturate(180%) blur(22px) brightness(1.04);
+  backdrop-filter:saturate(180%) blur(22px) brightness(1.04);
+  border:0;
+  border-bottom:1px solid rgba(255,255,255,0.45);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.7) inset,
+    0 -1px 0 rgba(20,30,40,0.04) inset,
+    0 6px 22px -8px rgba(20,30,40,0.18);
+  z-index:5;height:60px;position:relative;overflow:hidden;
+  border-radius:0 0 18px 18px;
+}
+[data-theme="dark"] .topbar,
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .topbar{
+    background:linear-gradient(180deg, rgba(21,32,48,0.78) 0%, rgba(11,22,32,0.62) 100%);
+    border-bottom:1px solid rgba(255,255,255,0.08);
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.06) inset,
+      0 6px 22px -8px rgba(0,0,0,0.6);
+  }
 }
 .topbar-left-icon{justify-self:start}
 .topbar > .ghost-btn:last-child{justify-self:end}
@@ -264,20 +285,47 @@ img{user-select:none;-webkit-user-drag:none}
 
 /* IG-style cursive wordmark, centered — animated gradient flow + periodic shine sweep */
 .brand-wordmark{
+  /* Liquid glass pill behind the cursive wordmark */
+  position:relative;
   font-family:'Dancing Script', 'Playfair Display', cursive;
-  font-weight:700;font-size:32px;line-height:1.1;
-  color:var(--text);letter-spacing:0.4px;
-  text-align:center;justify-self:center;position:relative;z-index:3;
-  background:linear-gradient(120deg, #ffd23f 0%, #ff8b3d 22%, #ff3d77 48%, #c33dff 72%, #3d8bff 100%);
-  background-size:260% 260%;
-  -webkit-background-clip:text;background-clip:text;
-  -webkit-text-fill-color:transparent;
-  filter:drop-shadow(0 2px 10px rgba(255,90,140,0.32));
-  animation:brandGradientFlow 8s ease-in-out infinite,
-            brandPopIn 0.65s cubic-bezier(0.22,1.4,0.42,1) both;
-  user-select:none;padding:0 6px;cursor:pointer;
+  font-weight:700;font-size:30px;line-height:1;
+  letter-spacing:0.4px;
+  text-align:center;justify-self:center;z-index:3;
+  padding:6px 16px 8px;
+  border-radius:999px;
+  background:linear-gradient(135deg,
+    rgba(255,255,255,0.55) 0%,
+    rgba(255,255,255,0.18) 60%,
+    rgba(255,200,230,0.28) 100%);
+  -webkit-backdrop-filter:blur(14px) saturate(200%);
+  backdrop-filter:blur(14px) saturate(200%);
+  border:1px solid rgba(255,255,255,0.55);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 -1px 0 rgba(120,80,160,0.10) inset,
+    0 6px 18px -4px rgba(255,90,140,0.30),
+    0 0 0 1px rgba(255,255,255,0.15);
+  color:transparent;
+  background-clip:padding-box;
+  /* The actual gradient is on a child span via ::before, the pill bg above is the glass */
+  overflow:visible;
+  animation:brandPopIn 0.65s cubic-bezier(0.22,1.4,0.42,1) both;
+  user-select:none;cursor:pointer;
   transition:transform .18s cubic-bezier(0.34,1.56,0.64,1), filter .18s ease;
   -webkit-tap-highlight-color:transparent;
+}
+.brand-wordmark::before{
+  content:attr(data-text);
+  position:absolute;inset:6px 16px 8px;
+  display:flex;align-items:center;justify-content:center;
+  font-family:inherit;font-weight:inherit;font-size:inherit;line-height:1;letter-spacing:inherit;
+  background:linear-gradient(120deg, #ff7ab8 0%, #ff3d77 30%, #c33dff 60%, #5b8bff 100%);
+  background-size:200% 200%;
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 1px 1px rgba(255,255,255,0.6)) drop-shadow(0 2px 6px rgba(255,90,140,0.30));
+  animation:brandShift 6s ease-in-out infinite;
+  pointer-events:none;
 }
 .brand-wordmark::after{
   content:attr(data-text);
@@ -324,9 +372,62 @@ img{user-select:none;-webkit-user-drag:none}
   .brand-wordmark::after{animation:none;opacity:0}
 }
 .ig-username-header,.topbar .ghost-btn{position:relative;z-index:3}
-.topbar .ghost-btn{padding:8px;color:var(--text)}
-.topbar .ghost-btn i{width:24px;height:24px;stroke-width:1.8}
+.topbar .ghost-btn{padding:8px 10px;color:var(--text)}
+.topbar .ghost-btn i{width:22px;height:22px;stroke-width:1.9;transition:transform .35s cubic-bezier(.34,1.56,.64,1),color .2s ease}
 .topbar .ghost-btn:hover{background:transparent;color:var(--accent)}
+
+/* Liquid glass pill behind the heart (and other) top-bar buttons */
+#topNotifBtn{
+  position:relative;
+  width:42px;height:42px;
+  display:flex;align-items:center;justify-content:center;
+  border-radius:50%;
+  background:linear-gradient(135deg, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.22) 100%);
+  -webkit-backdrop-filter:blur(18px) saturate(180%);
+  backdrop-filter:blur(18px) saturate(180%);
+  border:1px solid rgba(255,255,255,0.55);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 -1px 0 rgba(20,30,40,0.06) inset,
+    0 6px 14px -4px rgba(255,80,120,0.18),
+    0 0 0 1px rgba(255,255,255,0.10);
+  transition:transform .25s ease, box-shadow .25s ease, background .25s ease;
+  color:var(--text);
+}
+#topNotifBtn::after{
+  /* Soft pulsing glow ring */
+  content:"";
+  position:absolute;inset:-3px;border-radius:50%;
+  background:radial-gradient(circle, rgba(255,80,120,0.0) 60%, rgba(255,80,120,0.0) 100%);
+  pointer-events:none;
+  transition:background .3s ease, box-shadow .3s ease;
+}
+#topNotifBtn:hover{
+  transform:translateY(-1px) scale(1.04);
+  background:linear-gradient(135deg, rgba(255,180,200,0.55) 0%, rgba(255,255,255,0.30) 100%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.95) inset,
+    0 -1px 0 rgba(20,30,40,0.06) inset,
+    0 8px 20px -4px rgba(255,80,120,0.38),
+    0 0 0 1px rgba(255,255,255,0.20);
+}
+#topNotifBtn:hover i{color:#ff3040;filter:drop-shadow(0 0 6px rgba(255,80,120,0.55))}
+#topNotifBtn:active{transform:scale(0.95)}
+#topNotifBtn .dot{ /* notification dot */
+  position:absolute;top:8px;right:9px;
+  width:9px;height:9px;border-radius:50%;
+  background:linear-gradient(135deg,#ff5e7e,#ff2d55);
+  border:1.5px solid rgba(255,255,255,0.95);
+  box-shadow:0 1px 3px rgba(255,45,85,0.55);
+}
+[data-theme="dark"] #topNotifBtn,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) #topNotifBtn{
+    background:linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.04) 100%);
+    border:1px solid rgba(255,255,255,0.12);
+    color:var(--text);
+  }
+}
 
 /* Profile sub-header (IG-style "@username  ☰") */
 .profile-titlebar{
@@ -1044,51 +1145,119 @@ img{user-select:none;-webkit-user-drag:none}
 
 /* ---- Stories rail (Instagram-style: borderless, transparent) ---- */
 .stories-rail{
-  display:flex;gap:14px;padding:14px 14px 16px;
-  background:transparent;
-  border:0;border-bottom:1px solid var(--line);border-radius:0;
-  margin:0;box-shadow:none;
+  display:flex;gap:14px;padding:14px;
+  margin:12px 12px 8px;
+  /* Liquid glass card */
+  background:linear-gradient(135deg,
+    rgba(255,255,255,0.62) 0%,
+    rgba(245,250,255,0.40) 50%,
+    rgba(255,235,245,0.42) 100%);
+  -webkit-backdrop-filter:saturate(180%) blur(24px) brightness(1.05);
+  backdrop-filter:saturate(180%) blur(24px) brightness(1.05);
+  border:1px solid rgba(255,255,255,0.55);
+  border-radius:22px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 -1px 0 rgba(120,80,160,0.06) inset,
+    0 12px 32px -10px rgba(120,80,200,0.18),
+    0 2px 6px rgba(20,30,40,0.04);
   overflow-x:auto;overflow-y:hidden;
   scrollbar-width:none;
+  position:relative;
 }
 .stories-rail::-webkit-scrollbar{display:none}
+.stories-rail::before{
+  /* Subtle iridescent sheen across the strip */
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(115deg,
+    rgba(255,255,255,0) 30%,
+    rgba(255,255,255,0.45) 50%,
+    rgba(255,180,220,0.18) 70%,
+    rgba(255,255,255,0) 100%);
+  mix-blend-mode:overlay;
+  opacity:.7;
+}
+[data-theme="dark"] .stories-rail,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .stories-rail{
+    background:linear-gradient(135deg,
+      rgba(40,55,75,0.55) 0%,
+      rgba(25,35,55,0.40) 50%,
+      rgba(55,30,60,0.45) 100%);
+    border:1px solid rgba(255,255,255,0.10);
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.10) inset,
+      0 12px 32px -10px rgba(0,0,0,0.5);
+  }
+}
 .story-cell{
   display:flex;flex-direction:column;align-items:center;gap:6px;
   flex-shrink:0;cursor:pointer;width:72px;
   background:transparent;border:0;padding:0;
-  transition:transform .15s;
+  transition:transform .18s;
 }
 .story-cell:active{transform:scale(.94)}
 .story-ring{
   width:66px;height:66px;border-radius:50%;
-  background:var(--pink-grad);padding:2.5px;
+  /* Iridescent glass ring (was a hard gradient border) */
+  background:
+    conic-gradient(from 200deg,
+      #ff7ab8 0%, #ffa86a 18%, #ffd23f 30%, #7ee0a8 48%,
+      #5b8bff 66%, #c33dff 84%, #ff5e9c 100%);
+  padding:2.5px;
   display:flex;align-items:center;justify-content:center;
   position:relative;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.4),
+    0 6px 18px -6px rgba(255,90,140,0.45);
+  transition:transform .25s ease, box-shadow .25s ease;
 }
-/* Viewed: replaces gradient with grey ring (IG-style) */
+.story-cell:hover .story-ring{transform:scale(1.04);box-shadow:0 0 0 1px rgba(255,255,255,0.55),0 10px 24px -4px rgba(255,90,140,0.55)}
+.story-ring::after{
+  /* Inner glass fill so the ring has a glassy depth */
+  content:"";position:absolute;inset:0;border-radius:50%;
+  background:linear-gradient(135deg,rgba(255,255,255,0.45),rgba(255,255,255,0.0) 60%);
+  mix-blend-mode:overlay;pointer-events:none;
+}
+/* Viewed: glass-grey ring */
 .story-ring.viewed{
-  background:none;
-  border:1.5px solid #c7d0d8;
-  padding:3px;
+  background:linear-gradient(135deg, #d8e0e8 0%, #c2cdd6 100%);
+  box-shadow:0 0 0 1px rgba(255,255,255,0.5),0 4px 10px -4px rgba(80,90,100,0.25);
 }
-.story-ring.is-me{background:var(--accent-grad)}
+.story-ring.is-me{
+  background:
+    linear-gradient(135deg, #00a2ff 0%, #c33dff 50%, #ff5e9c 100%);
+  box-shadow:0 0 0 1px rgba(255,255,255,0.5),0 8px 22px -4px rgba(0,162,255,0.45);
+}
 .story-ring .avatar-inner{
   width:100%;height:100%;border-radius:50%;
-  background-color:var(--bg-2);background-size:cover;background-position:center;
-  border:2.5px solid var(--bg-2);display:flex;align-items:center;justify-content:center;
+  background-color:rgba(255,255,255,0.6);
+  background-size:cover;background-position:center;
+  border:2.5px solid rgba(255,255,255,0.85);
+  display:flex;align-items:center;justify-content:center;
   color:#fff;font-weight:700;font-size:18px;letter-spacing:.5px;overflow:hidden;
+  box-shadow:inset 0 1px 2px rgba(255,255,255,0.6),inset 0 -1px 2px rgba(0,0,0,0.05);
+  text-shadow:0 1px 2px rgba(0,0,0,0.25);
 }
 .story-ring .add-badge{
   position:absolute;right:-2px;bottom:-2px;
-  width:22px;height:22px;border-radius:50%;background:var(--accent);
+  width:24px;height:24px;border-radius:50%;
+  /* Liquid glass add badge */
+  background:linear-gradient(135deg, #00a2ff 0%, #5b8bff 100%);
   color:#fff;display:flex;align-items:center;justify-content:center;
-  border:2.5px solid var(--bg-2);font-size:14px;font-weight:700;line-height:1;
+  border:2px solid rgba(255,255,255,0.9);
+  font-size:15px;font-weight:700;line-height:1;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.5),
+    0 2px 6px rgba(0,100,200,0.45);
+  text-shadow:0 1px 1px rgba(0,60,120,0.3);
 }
 .story-cell .lbl{
-  font-size:12px;color:var(--text-2);font-weight:500;
+  font-size:11.5px;color:var(--text-2);font-weight:500;
   max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  text-align:center;letter-spacing:-.1px;
 }
-.story-cell.me .lbl{color:var(--text);font-weight:600}
+.story-cell.me .lbl{color:var(--text);font-weight:700}
 
 /* ---- Composer card ---- */
 .composer-card{background:var(--bg-2);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--shadow-xs);margin:0 12px}
@@ -2615,14 +2784,12 @@ body{
   background:var(--bg)!important;
 }
 .topbar{
-  height:58px;
-  background:var(--surface)!important;
-  border-bottom:1px solid var(--border)!important;
-  box-shadow:none!important;
+  /* Keep the liquid-glass look from the .topbar rule above. */
+  height:60px;
 }
 .brand-wordmark{
-  font-size:31px;
-  filter:none!important;
+  font-size:30px;
+  /* Glass pill provides the surface; we let ::before paint the gradient text. */
 }
 .view.active{background:var(--bg)}
 .feed-wrap,
@@ -2632,9 +2799,8 @@ body{
   padding-bottom:110px;
 }
 .stories-rail{
-  background:var(--surface)!important;
-  border-bottom:1px solid var(--border)!important;
-  padding:14px 12px 12px!important;
+  /* Keep the liquid-glass look from the .stories-rail rule above. */
+  padding:14px!important;
 }
 .story-cell{width:76px!important;gap:7px!important}
 .story-cell .story-ring{width:66px!important;height:66px!important;box-shadow:none!important}
