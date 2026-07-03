@@ -3092,28 +3092,64 @@ function renderPrivStack() {
   root.appendChild(stack);
   refreshIcons();
 }
+let _privViewerItems = [];
+let _privViewerIndex = 0;
+let _privViewerOpened = new Set();
 function openPrivViewer(snap) {
+  const items = (State.privSnaps || []).slice();
+  _privViewerItems = items.length ? items : [snap];
+  _privViewerIndex = Math.max(0, _privViewerItems.findIndex(x => x.id === snap.id));
+  _privViewerOpened = new Set();
+  showPrivViewerAt(_privViewerIndex);
+}
+function showPrivViewerAt(index) {
+  if (!_privViewerItems.length) return;
+  if (index < 0) index = _privViewerItems.length - 1;
+  if (index >= _privViewerItems.length) index = 0;
+  _privViewerIndex = index;
+  const snap = _privViewerItems[_privViewerIndex];
+  if (!snap) return;
   const existing = $('#privViewer'); if (existing) existing.remove();
   const v = document.createElement('div');
   v.id = 'privViewer';
   v.className = 'priv-viewer';
   const author = snap.author || {};
+  const pos = _privViewerItems.length > 1 ? `${_privViewerIndex + 1}/${_privViewerItems.length}` : 'PRIV';
   v.innerHTML = `
     <div class="priv-viewer-bg"></div>
     <button class="priv-viewer-close" aria-label="Close"><i data-lucide="x"></i></button>
+    <button class="priv-viewer-nav prev" aria-label="Previous PRIV"><i data-lucide="chevron-left"></i></button>
+    <button class="priv-viewer-nav next" aria-label="Next PRIV"><i data-lucide="chevron-right"></i></button>
     <div class="priv-viewer-card">
       <img src="${escapeHtml(snap.imageUrl)}" alt="PRIV instant" />
-      <div class="priv-viewer-top"><span class="avatar md"></span><strong>${escapeHtml(author.displayName || author.username || 'Member')}</strong><b>PRIV</b></div>
+      <div class="priv-viewer-top"><span class="avatar md"></span><strong>${escapeHtml(author.displayName || author.username || 'Member')}</strong><b>${escapeHtml(pos)}</b></div>
       ${snap.caption ? `<div class="priv-viewer-caption">${escapeHtml(snap.caption)}</div>` : ''}
-      <div class="priv-viewer-hint">${snap.userId === (State.user && State.user.id) ? 'Your PRIV · expires in 24h' : 'Viewed once · disappears after open'}</div>
+      <div class="priv-viewer-hint">${snap.userId === (State.user && State.user.id) ? 'Your PRIV · expires in 24h' : 'Viewed once · disappears after open'} · tap sides for next</div>
     </div>`;
   document.body.appendChild(v);
   renderAvatar(v.querySelector('.avatar'), author);
-  v.querySelector('.priv-viewer-close').addEventListener('click', () => { v.remove(); loadPriv(); });
-  v.addEventListener('click', e => { if (e.target === v || e.target.classList.contains('priv-viewer-bg')) { v.remove(); loadPriv(); } });
-  if (snap.userId !== (State.user && State.user.id)) api('/priv/open', { method: 'POST', body: { snapId: snap.id }}).catch(() => {});
+  const close = async () => { v.remove(); await loadPriv(); };
+  const go = (delta) => showPrivViewerAt(_privViewerIndex + delta);
+  v.querySelector('.priv-viewer-close').addEventListener('click', close);
+  v.querySelector('.priv-viewer-nav.prev').addEventListener('click', (e) => { e.stopPropagation(); go(-1); });
+  v.querySelector('.priv-viewer-nav.next').addEventListener('click', (e) => { e.stopPropagation(); go(1); });
+  v.querySelector('.priv-viewer-card').addEventListener('click', (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    go(e.clientX < rect.left + rect.width / 2 ? -1 : 1);
+  });
+  v.addEventListener('click', e => { if (e.target === v || e.target.classList.contains('priv-viewer-bg')) close(); });
+  markPrivOpened(snap);
   refreshIcons();
 }
+function markPrivOpened(snap) {
+  const myId = State.user && State.user.id;
+  if (!snap || snap.userId === myId || _privViewerOpened.has(snap.id)) return;
+  _privViewerOpened.add(snap.id);
+  State.privSnaps = (State.privSnaps || []).filter(s => s.id !== snap.id);
+  updatePrivFabBadge();
+  api('/priv/open', { method: 'POST', body: { snapId: snap.id }}).catch(() => {});
+}
+
 let _privCameraStream = null;
 let _privFacingMode = 'user';
 let _privFlashOn = false;
@@ -3123,9 +3159,11 @@ async function sendPrivFile(file) {
   const btn = $('#privCaptureBtn'); if (btn) btn.disabled = true;
   try {
     toast('Sending PRIV...', 'info');
-    const up = await uploadPermanentImage(file, { kind: 'post', maxDim: 900, quality: .78 });
+    // PRIV is instant-first: send a compact inline image to avoid CDN/GitHub
+    // upload delays and failures. Backend caps and validates this data URL.
+    const imageUrl = await resizeImageToDataUrl(file, 720, .72);
     const audience = ($('#privAudience') && $('#privAudience').value) || 'all';
-    const res = await api('/priv/send', { method: 'POST', body: { imageUrl: up.url, audience } });
+    const res = await api('/priv/send', { method: 'POST', body: { imageUrl, audience } });
     toast('PRIV sent to ' + (res.recipients || 0) + ' friends', 'success');
     closePrivCamera();
     $('#privPanel')?.classList.remove('hidden');

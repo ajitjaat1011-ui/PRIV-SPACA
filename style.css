@@ -3369,3 +3369,7 @@ body{
 .app-shell.chat-thread-open .priv-chat-panel{display:none!important}
 .priv-chat-fab em{position:absolute;right:8px;top:10px;min-width:18px;height:18px;border-radius:999px;background:#ff2f6d;color:#fff;font-size:10px;font-weight:950;display:flex;align-items:center;justify-content:center;font-style:normal;box-shadow:0 0 0 2px rgba(255,255,255,.55)}
 .priv-chat-fab em.hidden{display:none!important}
+
+/* PRIV viewer side tap/switch controls */
+.priv-viewer-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:46px;height:74px;border:0;border-radius:999px;background:rgba(255,255,255,.10);color:#fff;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}.priv-viewer-nav.prev{left:10px}.priv-viewer-nav.next{right:10px}.priv-viewer-nav i,.priv-viewer-nav svg{width:26px;height:26px}.priv-viewer-nav:active{transform:translateY(-50%) scale(.94)}
+@media(max-width:700px){.priv-viewer-nav{background:transparent;width:30%;height:70%;opacity:.0}.priv-viewer-nav.prev{left:0}.priv-viewer-nav.next{right:0}}
