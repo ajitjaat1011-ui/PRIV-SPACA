@@ -966,14 +966,14 @@ function canViewPrivSnap(snap, viewerId, db) {
   if (!Array.isArray(snap.recipients) || !snap.recipients.includes(viewerId)) return false;
   const author = (db.users || []).find(u => u.id === snap.userId);
   const viewer = (db.users || []).find(u => u.id === viewerId);
-  if (!author || !viewer) return false;
-  if (Array.isArray(author.blocked) && author.blocked.includes(viewerId)) return false;
-  if (Array.isArray(viewer.blocked) && viewer.blocked.includes(author.id)) return false;
-  const aud = snap.audience || 'all';
-  if (aud === 'all') return true;
-  if (aud === 'close_friends') return Array.isArray(author.closeFriends) && author.closeFriends.includes(viewerId);
-  if (aud === 'mutuals') return Array.isArray(author.following) && author.following.includes(viewerId) && Array.isArray(viewer.following) && viewer.following.includes(author.id);
-  return false;
+  // Recipients are computed at send time and are the source of truth. If user
+  // mirrors lag, do not hide the snap; only enforce block checks when both
+  // records are available.
+  if (author && viewer) {
+    if (Array.isArray(author.blocked) && author.blocked.includes(viewerId)) return false;
+    if (Array.isArray(viewer.blocked) && viewer.blocked.includes(author.id)) return false;
+  }
+  return true;
 }
 function privRecipientsFor(user, db, audience) {
   const ids = new Set();
