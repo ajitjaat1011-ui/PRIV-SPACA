@@ -2856,7 +2856,7 @@ app.get('/api/feed', requireAuth, async (c) => {
     const allFollowing = [...following, myId];
     const usersById = new Map((db.users || []).map(u => [u.id, u]));
     const posts = (db.posts || [])
-      .filter(p => allFollowing.includes(p.userId) && !p.story)
+      .filter(p => !p.deletedAt && allFollowing.includes(p.userId) && !p.story)
       .sort((a,b) => {
         const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
         const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
@@ -2891,7 +2891,7 @@ app.get('/api/feed', requireAuth, async (c) => {
   if (allFollowing.length > 0) {
     const placeholders = allFollowing.map(() => '?').join(',');
     const recentPosts = await tc.execute({
-      sql: `SELECT id FROM ps_posts WHERE user_id IN (${placeholders}) AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT ?`,
+      sql: `SELECT id FROM ps_posts WHERE user_id IN (${placeholders}) AND (story IS NULL OR story = 0) AND (deleted_at IS NULL OR deleted_at = 0) ORDER BY created_at DESC LIMIT ?`,
       args: [...allFollowing, limit]
     }).catch(() => ({ rows: [] }));
 
@@ -2904,7 +2904,11 @@ app.get('/api/feed', requireAuth, async (c) => {
 
   const idPlaceholders = finalPostIds.map(() => '?').join(',');
   const postData = await tc.execute({
-    sql: `SELECT data_json FROM ps_posts WHERE id IN (${idPlaceholders})`,
+    // ps_user_feeds (the pre-fanned push-model table) is not pruned when a
+    // post is deleted, so a since-deleted post's id can still show up in
+    // postIds above. Filter deleted_at here too as a second safety net —
+    // don't rely solely on the two upstream queries already excluding it.
+    sql: `SELECT data_json FROM ps_posts WHERE id IN (${idPlaceholders}) AND (deleted_at IS NULL OR deleted_at = 0)`,
     args: finalPostIds
   }).catch(() => ({ rows: [] }));
 
@@ -2919,7 +2923,7 @@ app.get('/api/feed', requireAuth, async (c) => {
   const usersById = new Map((db.users || []).map(u => [u.id, u]));
   const posts = postData.rows?.map(r => {
     try { return JSON.parse(r.data_json); } catch { return null; }
-  }).filter(Boolean).map(p => {
+  }).filter(Boolean).filter(p => !p.deletedAt).map(p => {
     const liveUser = usersById.get(p.userId);
     const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
     return { ...p, author: authorObj };
