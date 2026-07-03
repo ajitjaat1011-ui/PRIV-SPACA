@@ -1619,6 +1619,36 @@ app.get('/api/health', (c) => c.json({
   time: nowMs(), version: 'phase1-neon-json-storage',
 }));
 
+// TEMPORARY diagnostic endpoint — traces a CAS increment-array cycle and
+// returns full detail in the response body, to debug why concurrent
+// mutateDatabaseAtomic() calls report success but silently lose data.
+// No auth so it's easy to hit directly; only touches a throwaway test key.
+app.post('/api/_diag/cas-trace', async (c) => {
+  const { tag } = await c.req.json().catch(() => ({ tag: 'x' }));
+  const trace = [];
+  const MAX_ATTEMPTS = 15;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const t0 = Date.now();
+    const versioned = await neonReadDbVersioned();
+    const t1 = Date.now();
+    // Use meta.casTrace (meta IS preserved by normalizeDb) instead of a
+    // made-up top-level field, which normalizeDb's allow-list would strip.
+    const arr = Array.isArray(versioned.db.meta && versioned.db.meta.casTrace) ? versioned.db.meta.casTrace : [];
+    const newArr = [...arr, tag];
+    const dbToWrite = { ...versioned.db, meta: { ...(versioned.db.meta || {}), casTrace: newArr } };
+    const ok = await neonWriteDbCAS(dbToWrite, versioned.version);
+    const t2 = Date.now();
+    trace.push({ attempt, readVersion: versioned.version, arrLenBeforeMyWrite: arr.length, arrLenIWrote: newArr.length, casOk: ok, readMs: t1 - t0, writeMs: t2 - t1 });
+    if (ok) {
+      // Immediately re-read to see what's ACTUALLY in Postgres right now.
+      const verify = await neonReadDbVersioned();
+      return c.json({ trace, tag, finalArr: verify.db.meta && verify.db.meta.casTrace, finalVersion: verify.version });
+    }
+    await sleepMs(10 + Math.floor(Math.random() * (20 + attempt * 10)));
+  }
+  return c.json({ trace, tag, error: 'exhausted' });
+});
+
 app.get('/api/diag', requireAdmin, async (c) => {
   const out = {
     persistence: isNeonConfigured() ? 'neon-postgres' : (isRepo() ? 'github-repo' : 'in-memory'),
