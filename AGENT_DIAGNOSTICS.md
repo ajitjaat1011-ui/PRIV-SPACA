@@ -94,6 +94,15 @@ curl http://localhost:3000/api/diagnostics \
 
 - The new `ps_diagnostics` table is created automatically by `tursoEnsure()` on
   the next DB operation, so no manual migration is needed.
-- Cloudflare Cron Triggers may need to be enabled for the Pages project. The
-  config in `wrangler.toml` tells Wrangler to register the cron.
+- Cloudflare Pages does **not** support `[[triggers.crons]]` in `wrangler.toml`.
+  To run checks automatically in production, you have three options:
+
+  1. **Cloudflare dashboard** (recommended): Go to your Pages project →
+     Functions → Triggers → Cron Triggers and add `*/5 * * * *` pointing to the
+     `_worker.js` `scheduled` handler. The handler is already implemented.
+  2. **External cron service** (e.g. cron-job.org, UptimeRobot): POST to
+     `/api/diagnostics/run` every 5 minutes using an admin JWT.
+  3. **Local/VM monitor**: run `npm run monitor` on any server with Turso creds;
+     it writes `data/diagnostics.json` continuously.
+
 - The GitHub repo is public; no secrets were added to committed files.
