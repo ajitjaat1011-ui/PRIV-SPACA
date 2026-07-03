@@ -133,7 +133,7 @@ function isSafeMediaUrl(url, { allowData = true } = {}) {
 }
 function isSafePrivImageUrl(url) {
   if (isSafeImageUrl(url)) return true;
-  if (typeof url !== 'string' || url.length > 1500000) return false;
+  if (typeof url !== 'string' || url.length > 4000000) return false;
   return /^data:image\/(jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(url.trim());
 }
 function isSafeImageUrl(url, { allowData = true } = {}) {
@@ -224,6 +224,7 @@ function canViewPrivSnap(snap, viewerId, db) {
   if (snap.userId === viewerId) return true;
   if (snap.expiresAt && snap.expiresAt <= nowMs()) return false;
   if (Array.isArray(snap.openedBy) && snap.openedBy.includes(viewerId)) return false;
+  if (Array.isArray(snap.recipients) && !snap.recipients.includes(viewerId)) return false;
   const author = (db.users || []).find(u => u.id === snap.userId);
   const viewer = (db.users || []).find(u => u.id === viewerId);
   if (!author || !viewer) return false;
@@ -2658,11 +2659,16 @@ app.post('/api/priv/open', requireAuth, async (c) => {
   const snap = (db.privSnaps || []).find(s => s.id === snapId);
   if (!snap || !canViewPrivSnap(snap, c.get('userId'), db)) return c.json({ error: 'Not found' }, 404);
   if (snap.userId !== c.get('userId')) {
+    const viewerId = c.get('userId');
     snap.openedBy = Array.isArray(snap.openedBy) ? snap.openedBy : [];
-    if (!snap.openedBy.includes(c.get('userId'))) snap.openedBy.push(c.get('userId'));
+    if (!snap.openedBy.includes(viewerId)) snap.openedBy.push(viewerId);
+    snap.recipients = Array.isArray(snap.recipients) ? snap.recipients.filter(id => id !== viewerId) : [];
+    if (snap.recipients.length === 0) {
+      db.privSnaps = (db.privSnaps || []).filter(s => s.id !== snap.id);
+    }
     await saveDatabase(db, false);
   }
-  return c.json({ ok: true });
+  return c.json({ ok: true, deleted: snap.userId !== c.get('userId') && Array.isArray(snap.recipients) && snap.recipients.length === 0 });
 });
 
 // ---------- Admin panel removed by owner request ----------
