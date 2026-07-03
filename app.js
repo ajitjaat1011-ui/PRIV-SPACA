@@ -345,13 +345,19 @@ function pulseEl(el, opts = {}) {
 }
 
 // Resolve any author-like object into a renderable display object (no "Unknown")
-function resolveAuthor(rawAuthor, fallbackUserId) {
-  if (rawAuthor && rawAuthor.username && rawAuthor.username !== 'unknown') return rawAuthor;
+function resolveAuthor(rawAuthor, fallbackUserId, authorSnapshot) {
+  if (rawAuthor && rawAuthor.username && rawAuthor.username !== 'unknown' && !String(rawAuthor.username).startsWith('member_')) return rawAuthor;
   // Try members directory
   if (fallbackUserId) {
     const m = State.members.find(u => u.id === fallbackUserId);
     if (m) return m;
   }
+  // Embedded snapshot from server (posts/messages/comments all carry
+  // authorSnapshot as their durable author record — /api/feed's raw Turso
+  // rows in particular only set authorSnapshot, not author, so this must be
+  // checked before falling back to a synthetic "member_xxx" label).
+  if (authorSnapshot && (authorSnapshot.username || authorSnapshot.displayName)) return authorSnapshot;
+  if (rawAuthor && rawAuthor.username && rawAuthor.username !== 'unknown') return rawAuthor;
   // Embedded snapshot from server
   if (rawAuthor && (rawAuthor.displayName || rawAuthor.id)) return rawAuthor;
   // Synthetic fallback — derive short id label
@@ -360,55 +366,40 @@ function resolveAuthor(rawAuthor, fallbackUserId) {
   return { id, displayName: 'Member ' + short, username: 'member_' + short, photoUrl: '' };
 }
 
-// ====== Image upload (multi-provider with fallback) ======
+// ====== Image upload (durable fallback only — tmpfiles.org removed) ======
+// tmpfiles.org used to be tried here as a "fallback" when the durable
+// /api/upload-photo (GitHub-backed CDN) path failed. That's backwards:
+// tmpfiles.org links expire/get pruned (confirmed live — multiple posts'
+// images returned 404 within days), so using it as a fallback quietly
+// trades a transient upload failure for a guaranteed-to-break-later image.
+// This now always produces a durable result: it persists the image as a
+// data URL via the same /api/upload-photo endpoint the primary path uses
+// (which commits it to the GitHub media CDN), so there is no unreliable
+// third-party host in the chain at all anymore.
 async function uploadImage(file, onProgress) {
   if (!file) throw new Error('No file');
   if (file.size > 15 * 1024 * 1024) throw new Error('File too large (max 15MB)');
-  // Try tmpfiles.org first
-  try {
-    return await uploadToTmpfiles(file, onProgress);
-  } catch (e) {
-    console.warn('tmpfiles failed, falling back to base64', e.message);
-    // Fallback: embed as data URL (works always, but bloats DB)
-    if (file.size > 800 * 1024) throw new Error('Image upload service unavailable. Please use a smaller image (<800KB) or try again later.');
-    if (onProgress) onProgress(50);
-    const dataUrl = await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = () => reject(new Error('Read failed'));
-      r.readAsDataURL(file);
-    });
-    if (onProgress) onProgress(100);
-    return { url: dataUrl, name: file.name, size: file.size };
-  }
-}
-
-function uploadToTmpfiles(file, onProgress) {
-  return new Promise((resolve, reject) => {
-    const form = new FormData();
-    form.append('file', file);
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', 'https://tmpfiles.org/api/v1/upload', true);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 95));
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText);
-          let url = data && data.data && data.data.url;
-          if (!url) return reject(new Error('Upload returned no URL'));
-          url = url.replace('://tmpfiles.org/', '://tmpfiles.org/dl/');
-          if (onProgress) onProgress(100);
-          resolve({ url, name: file.name, size: file.size });
-        } catch (e) { reject(new Error('Upload parse failed')); }
-      } else reject(new Error('HTTP ' + xhr.status));
-    };
-    xhr.onerror = () => reject(new Error('Network error'));
-    xhr.ontimeout = () => reject(new Error('Timeout'));
-    xhr.timeout = 60000;
-    xhr.send(form);
+  if (onProgress) onProgress(10);
+  const dataUrl = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error('Read failed'));
+    r.readAsDataURL(file);
   });
+  if (onProgress) onProgress(50);
+  try {
+    const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind: 'media' } });
+    if (onProgress) onProgress(100);
+    return { url: res.url || dataUrl, name: file.name, size: file.size, persisted: res.persisted !== false };
+  } catch (e) {
+    // Last resort: inline data URL only (works everywhere, but bloats the
+    // DB record and won't persist across a full post-storage rewrite). Only
+    // reached if /api/upload-photo itself is unreachable/erroring, and only
+    // for small files so we don't balloon storage with large inline blobs.
+    if (file.size > 800 * 1024) throw new Error('Image upload service unavailable. Please use a smaller image (<800KB) or try again later.');
+    if (onProgress) onProgress(100);
+    return { url: dataUrl, name: file.name, size: file.size, persisted: false };
+  }
 }
 
 // ====== Splash / Shells ======
@@ -2082,7 +2073,7 @@ function renderMessage(m, meId, grouped) {
   if (isMine) row.classList.add('mine');
   row.dataset.id = m.id;
 
-  const author = resolveAuthor(m.author, m.userId);
+  const author = resolveAuthor(m.author, m.userId, m.authorSnapshot);
 
   const av = document.createElement('span');
   av.className = 'avatar sm';
@@ -2259,7 +2250,7 @@ function renderMessage(m, meId, grouped) {
 }
 
 function setReplyTo(m) {
-  const author = resolveAuthor(m.author, m.userId);
+  const author = resolveAuthor(m.author, m.userId, m.authorSnapshot);
   State.replyTo = {
     id: m.id,
     text: m.text || (isAudioAttachmentUrl(m.imageUrl) ? '🎙️ Voice note' : (m.imageUrl ? '📷 Photo' : '')),
@@ -3442,7 +3433,7 @@ function renderPost(p) {
   card.className = 'post-card';
   card.dataset.id = p.id;
 
-  const author = resolveAuthor(p.author, p.userId);
+  const author = resolveAuthor(p.author, p.userId, p.authorSnapshot);
   const meId = State.user && State.user.id;
   const isMine = p.userId === meId;
   const liked = Array.isArray(p.likes) && p.likes.includes(meId);
@@ -3739,7 +3730,7 @@ function renderPost(p) {
     const pv = document.createElement('div');
     pv.className = 'preview-comments';
     p.comments.slice(-2).forEach(c => {
-      const cAuth = resolveAuthor(c.author, c.userId);
+      const cAuth = resolveAuthor(c.author, c.userId, c.authorSnapshot);
       const row = document.createElement('div');
       row.className = 'preview-comment';
       const a = document.createElement('span'); a.className = 'author';
@@ -3913,7 +3904,7 @@ function patchCommentUI(card, p) {
     }
     pv.innerHTML = '';
     (p.comments || []).slice(-2).forEach(c => {
-      const cAuth = resolveAuthor(c.author, c.userId);
+      const cAuth = resolveAuthor(c.author, c.userId, c.authorSnapshot);
       const row = document.createElement('div');
       row.className = 'preview-comment';
       const a = document.createElement('span'); a.className = 'author';
@@ -4066,7 +4057,7 @@ function openCommentsSheet(p) {
     list.appendChild(li);
   }
   cms.forEach(c => {
-    const cAuth = resolveAuthor(c.author, c.userId);
+    const cAuth = resolveAuthor(c.author, c.userId, c.authorSnapshot);
     const li = document.createElement('li');
     const a = document.createElement('span'); a.className = 'avatar sm';
     renderAvatar(a, cAuth);
