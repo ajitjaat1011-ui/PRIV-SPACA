@@ -899,9 +899,9 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-function sanitizeUser(u) {
+function sanitizeUser(u, includePrivate = false) {
   if (!u) return null;
-  return {
+  const out = {
     id: u.id,
     email: u.email,
     username: u.username,
@@ -913,6 +913,19 @@ function sanitizeUser(u) {
     verified: !!u.verified,
     note: activeNote(u),
   };
+  if (includePrivate) {
+    out.dateOfBirth = typeof u.dateOfBirth === 'string' ? u.dateOfBirth : '';
+    out.cardVisibility = ['everyone','close_friends','private'].includes(u.cardVisibility) ? u.cardVisibility : 'everyone';
+  }
+  return out;
+}
+function canViewProfileCard(owner, viewerId) {
+  if (!owner || !viewerId) return false;
+  if (owner.id === viewerId) return true;
+  const mode = ['everyone','close_friends','private'].includes(owner.cardVisibility) ? owner.cardVisibility : 'everyone';
+  if (mode === 'everyone') return true;
+  if (mode === 'close_friends') return Array.isArray(owner.closeFriends) && owner.closeFriends.includes(viewerId);
+  return false;
 }
 // A "note" is a short 24h status (Instagram-style). Returns null once expired.
 function adminSet() {
@@ -1249,7 +1262,7 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
     }
 
     const token = signToken(newUser);
-    return res.json({ token, user: sanitizeUser(newUser) });
+    return res.json({ token, user: sanitizeUser(newUser, true) });
   } catch (e) {
     console.error('[signup] exception', e);
     return res.status(500).json({ error: 'Signup failed' });
@@ -1285,7 +1298,7 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
     }
     clearLoginFails(user.id);
     const token = signToken(user);
-    return res.json({ token, user: sanitizeUser(user) });
+    return res.json({ token, user: sanitizeUser(user, true) });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'Login failed' });
@@ -1323,7 +1336,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
       return res.status(503).json({ error: 'Storage temporarily unavailable. Please try again in a moment.' });
     }
     const token = signToken(user);
-    return res.json({ ok: true, token, user: sanitizeUser(user) });
+    return res.json({ ok: true, token, user: sanitizeUser(user, true) });
   } catch (e) {
     console.error('[reset] exception', e);
     return res.status(500).json({ error: 'Reset failed' });
@@ -1333,7 +1346,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   const u = req.authUser;
   if (!u) return res.status(404).json({ error: 'Not found' });
-  res.json({ user: sanitizeUser(u) });
+  res.json({ user: sanitizeUser(u, true) });
 });
 
 // ---------- User Routes ----------
@@ -1422,7 +1435,7 @@ app.post('/api/upload-photo', authMiddleware, async (req, res) => {
 });
 app.post('/api/user/update', authMiddleware, async (req, res) => {
   try {
-    const { displayName, username, bio, photoUrl } = req.body || {};
+    const { displayName, username, bio, photoUrl, dateOfBirth, cardVisibility } = req.body || {};
     const db = await fetchDatabase();
     const user = db.users.find(u => u.id === req.userId);
     if (!user) return res.status(404).json({ error: 'Not found' });
@@ -1444,8 +1457,16 @@ app.post('/api/user/update', authMiddleware, async (req, res) => {
       const cleanPhoto = photoUrl.trim();
       if (cleanPhoto === '' || isSafeImageUrl(cleanPhoto)) user.photoUrl = cleanPhoto;
     }
+    if (typeof dateOfBirth === 'string') {
+      const dob = dateOfBirth.trim();
+      if (dob === '' || /^\d{4}-\d{2}-\d{2}$/.test(dob)) user.dateOfBirth = dob;
+    }
+    if (typeof cardVisibility === 'string') {
+      const cv = cardVisibility.trim();
+      if (['everyone','close_friends','private'].includes(cv)) user.cardVisibility = cv;
+    }
     await saveDatabase(db, false);
-    res.json({ user: sanitizeUser(user) });
+    res.json({ user: sanitizeUser(user, true) });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Update failed' });
@@ -1464,7 +1485,7 @@ app.post('/api/user/vip/redeem', authMiddleware, async (req, res) => {
     user.verified = true;
     user.verifiedAt = user.verifiedAt || nowMs();
     await saveDatabase(db, false);
-    res.json({ ok: true, user: sanitizeUser(user) });
+    res.json({ ok: true, user: sanitizeUser(user, true) });
   } catch (e) { console.error('[vip/redeem]', e); res.status(500).json({ error: 'VIP activation failed' }); }
 });
 
@@ -2069,15 +2090,22 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
     ...sourceUsers.filter(u => Array.isArray(u.following) && u.following.includes(targetId)).map(u => u.id),
   ])).filter(id => id && id !== targetId);
   const followingIds = Array.from(new Set(Array.isArray(target.following) ? target.following : [])).filter(id => id && id !== targetId);
+  const canViewCard = canViewProfileCard(target, req.userId);
+  const cardVisibility = ['everyone','close_friends','private'].includes(target.cardVisibility) ? target.cardVisibility : 'everyone';
+  const profileUser = {
+    ...sanitizeUser(target, targetId === req.userId),
+    followers: followerIds.length,
+    following: followingIds.length,
+    followerIds,
+    followingIds,
+    postsCount: posts.length,
+  };
+  profileUser.card = canViewCard ? {
+    canView: true, visibility: cardVisibility, dateOfBirth: target.dateOfBirth || '',
+    postsCount: posts.length, followers: followerIds.length, following: followingIds.length
+  } : { canView: false, visibility: cardVisibility };
   res.json({
-    user: {
-      ...sanitizeUser(target),
-      followers: followerIds.length,
-      following: followingIds.length,
-      followerIds,
-      followingIds,
-      postsCount: posts.length,
-    },
+    user: profileUser,
     posts,
     relationship: {
       isMe: targetId === req.userId,

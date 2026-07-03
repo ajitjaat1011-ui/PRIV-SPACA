@@ -182,11 +182,24 @@ function canViewerSeeStory(post, viewerId, db) {
   const closeFriends = Array.isArray(author && author.closeFriends) ? author.closeFriends : [];
   return closeFriends.includes(viewerId);
 }
-function sanitizeUser(u) {
+function sanitizeUser(u, includePrivate = false) {
   if (!u) return null;
-  return { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
+  const out = { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
            bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt,
            publicKey: u.publicKey || null, verified: !!u.verified, note: activeNote(u) };
+  if (includePrivate) {
+    out.dateOfBirth = typeof u.dateOfBirth === 'string' ? u.dateOfBirth : '';
+    out.cardVisibility = ['everyone','close_friends','private'].includes(u.cardVisibility) ? u.cardVisibility : 'everyone';
+  }
+  return out;
+}
+function canViewProfileCard(owner, viewerId) {
+  if (!owner || !viewerId) return false;
+  if (owner.id === viewerId) return true;
+  const mode = ['everyone','close_friends','private'].includes(owner.cardVisibility) ? owner.cardVisibility : 'everyone';
+  if (mode === 'everyone') return true;
+  if (mode === 'close_friends') return Array.isArray(owner.closeFriends) && owner.closeFriends.includes(viewerId);
+  return false;
 }
 // A "note" is a short 24h status (Instagram-style). Returns null once expired.
 function activeNote(u) {
@@ -1452,7 +1465,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     }
     if (isTursoConfigured()) await tursoUpsertUser(newUser);
     const token = await signToken(newUser);
-    return c.json({ token, user: sanitizeUser(newUser) });
+    return c.json({ token, user: sanitizeUser(newUser, true) });
   } catch (e) {
     console.error('[signup]', e);
     return c.json({ error: 'Signup failed' }, 500);
@@ -1493,7 +1506,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     }
     clearLoginFails(user.id);
     const token = await signToken(user);
-    return c.json({ token, user: sanitizeUser(user) });
+    return c.json({ token, user: sanitizeUser(user, true) });
   } catch (e) {
     console.error('[login]', e);
     return c.json({ error: 'Login failed' }, 500);
@@ -1532,7 +1545,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     if (isPersist() && !persisted) { user.passwordHash = oldHash; user.tokenVersion = oldTokenVersion; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
     if (isTursoConfigured()) await tursoUpsertUser(user);
     const token = await signToken(user);
-    return c.json({ ok: true, token, user: sanitizeUser(user) });
+    return c.json({ ok: true, token, user: sanitizeUser(user, true) });
   } catch (e) {
     console.error('[reset]', e);
     return c.json({ error: 'Reset failed' }, 500);
@@ -1543,7 +1556,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
 app.get('/api/auth/me', requireAuth, async (c) => {
   const u = c.get('authUser');
   if (!u) return c.json({ error: 'Not found' }, 404);
-  return c.json({ user: sanitizeUser(u) });
+  return c.json({ user: sanitizeUser(u, true) });
 });
 
 // ---------- Upload photo (to GitHub CDN) ----------
@@ -1600,7 +1613,7 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
 app.post('/api/user/update', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { displayName, username, bio, photoUrl } = body;
+    const { displayName, username, bio, photoUrl, dateOfBirth, cardVisibility } = body;
     const db = await fetchDatabase();
     const user = db.users.find(u => u.id === c.get('userId'));
     if (!user) return c.json({ error: 'Not found' }, 404);
@@ -1618,9 +1631,17 @@ app.post('/api/user/update', requireAuth, async (c) => {
       const cleanPhoto = photoUrl.trim();
       if (cleanPhoto === '' || isSafeImageUrl(cleanPhoto)) user.photoUrl = cleanPhoto;
     }
+    if (typeof dateOfBirth === 'string') {
+      const dob = dateOfBirth.trim();
+      if (dob === '' || /^\d{4}-\d{2}-\d{2}$/.test(dob)) user.dateOfBirth = dob;
+    }
+    if (typeof cardVisibility === 'string') {
+      const cv = cardVisibility.trim();
+      if (['everyone','close_friends','private'].includes(cv)) user.cardVisibility = cv;
+    }
     await saveDatabase(db, false);
     if (isTursoConfigured()) await tursoUpsertUser(user);
-    return c.json({ user: sanitizeUser(user) });
+    return c.json({ user: sanitizeUser(user, true) });
   } catch (e) { console.error('[user/update]', e); return c.json({ error: 'Update failed' }, 500); }
 });
 
@@ -1638,7 +1659,7 @@ app.post('/api/user/vip/redeem', requireAuth, async (c) => {
     user.verifiedAt = user.verifiedAt || nowMs();
     await saveDatabase(db, false);
     if (isTursoConfigured()) await tursoUpsertUser(user);
-    return c.json({ ok: true, user: sanitizeUser(user) });
+    return c.json({ ok: true, user: sanitizeUser(user, true) });
   } catch (e) { console.error('[vip/redeem]', e); return c.json({ error: 'VIP activation failed' }, 500); }
 });
 
@@ -2170,8 +2191,15 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
     ...sourceUsers.filter(u => Array.isArray(u.following) && u.following.includes(targetId)).map(u => u.id),
   ])).filter(id => id && id !== targetId);
   const followingIds = Array.from(new Set(Array.isArray(target.following) ? target.following : [])).filter(id => id && id !== targetId);
+  const canViewCard = canViewProfileCard(target, myId);
+  const cardVisibility = ['everyone','close_friends','private'].includes(target.cardVisibility) ? target.cardVisibility : 'everyone';
+  const profileUser = { ...sanitizeUser(target, targetId === myId), followers: followerIds.length, following: followingIds.length, followerIds, followingIds, postsCount: posts.length };
+  profileUser.card = canViewCard ? {
+    canView: true, visibility: cardVisibility, dateOfBirth: target.dateOfBirth || '',
+    postsCount: posts.length, followers: followerIds.length, following: followingIds.length
+  } : { canView: false, visibility: cardVisibility };
   return c.json({
-    user: { ...sanitizeUser(target), followers: followerIds.length, following: followingIds.length, followerIds, followingIds, postsCount: posts.length },
+    user: profileUser,
     posts,
     relationship: {
       isMe: targetId === myId,

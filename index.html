@@ -426,7 +426,7 @@
 
         <div class="ig-tabs">
           <button class="ig-tab active" data-grid="posts" aria-label="Posts"><i data-lucide="grid-3x3"></i></button>
-          <button class="ig-tab" data-grid="tagged" aria-label="Tagged"><i data-lucide="user-check"></i></button>
+          <button class="ig-tab" data-grid="card" aria-label="Profile card"><i data-lucide="contact"></i></button>
         </div>
         <div id="profilePostsGrid" class="ig-posts-grid"></div>
       </div>
@@ -461,6 +461,10 @@
             <span>Bio</span>
             <textarea name="bio" maxlength="280" rows="3" placeholder="A short bio…"></textarea>
           </label>
+          <label class="field">
+            <span>Date of birth (for profile card)</span>
+            <input name="dateOfBirth" type="date" />
+          </label>
           <button type="submit" class="primary-btn">Save changes</button>
           <div id="profileStatus" class="muted small"></div>
         </form>
@@ -492,6 +496,7 @@
       <div class="ig-profile-actions">
         <button id="upFollowBtn" class="ig-action-btn primary">Follow</button>
         <button id="upMessageBtn" class="ig-action-btn">Message</button>
+        <button id="upCardBtn" class="ig-action-btn icon-only" title="View profile card" aria-label="View profile card"><i data-lucide="contact"></i></button>
       </div>
       <div id="upPostsGrid" class="ig-posts-grid"></div>
     </div>
@@ -600,6 +605,16 @@
 <!-- ====== COMMENTS SHEET ====== -->
 <!-- ====== NOTIFICATIONS SHEET ====== -->
 <!-- ====== SETTINGS SHEET ====== -->
+
+<!-- ====== REFLECTIVE PROFILE CARD ====== -->
+<div id="profileCardSheet" class="profile-card-sheet hidden" role="dialog" aria-modal="true">
+  <div class="profile-card-backdrop" data-close-profile-card></div>
+  <div class="profile-card-stage">
+    <button type="button" class="profile-card-close" data-close-profile-card aria-label="Close"><i data-lucide="x"></i></button>
+    <div id="profileCardMount"></div>
+  </div>
+</div>
+
 <div id="settingsSheet" class="comments-sheet hidden" role="dialog" aria-modal="true">
   <div class="sheet-backdrop" data-close-settings></div>
   <div class="sheet-card">
@@ -653,6 +668,18 @@
           <i data-lucide="badge-check"></i>
           <input id="vipKeyInput" type="password" placeholder="Enter VIP key" autocomplete="off" />
           <button id="vipActivateBtn" type="button">Activate</button>
+        </div>
+      </div>
+
+      <div class="settings-section-title">Profile card</div>
+      <div class="settings-strip">
+        <div class="settings-row card-privacy-row">
+          <i data-lucide="contact"></i><span>Who can see my card</span>
+          <select id="cardVisibilitySelect" class="settings-select" aria-label="Profile card visibility">
+            <option value="everyone">Everyone</option>
+            <option value="close_friends">Only close friends</option>
+            <option value="private">Only me</option>
+          </select>
         </div>
       </div>
 

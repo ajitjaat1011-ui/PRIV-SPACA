@@ -6026,7 +6026,8 @@ function bindProfile() {
       const data = await api('/user/update', { method: 'POST', body: {
         displayName: String(fd.get('displayName') || '').trim(),
         username: String(fd.get('username') || '').trim(),
-        bio: String(fd.get('bio') || '').trim()
+        bio: String(fd.get('bio') || '').trim(),
+        dateOfBirth: String(fd.get('dateOfBirth') || '').trim()
       }});
       State.user = data.user;
       localStorage.setItem('ps_user', JSON.stringify(State.user));
@@ -6325,6 +6326,7 @@ function openSettings() {
   );
   // Sync visual state of theme + accent inside the sheet
   const stored = localStorage.getItem('ps_theme') || 'auto';
+  const cvs = $('#cardVisibilitySelect'); if (cvs && State.user) cvs.value = State.user.cardVisibility || 'everyone';
   $$('#settingsSheet [data-theme-set]').forEach(b => b.classList.toggle('active', b.dataset.themeSet === stored));
   const accent = localStorage.getItem('ps_accent') || '#00a2ff';
   $$('#settingsSheet [data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === accent));
@@ -6399,6 +6401,20 @@ function bindSettingsSheet() {
     switchTab('profile');
     setTimeout(() => { const btn = $('#editProfileBtn'); if (btn) btn.click(); }, 200);
   });
+  const cvs = $('#cardVisibilitySelect');
+  if (cvs) {
+    cvs.value = (State.user && State.user.cardVisibility) || 'everyone';
+    cvs.addEventListener('change', async () => {
+      cvs.disabled = true;
+      try {
+        const data = await api('/user/update', { method: 'POST', body: { cardVisibility: cvs.value } });
+        State.user = data.user;
+        localStorage.setItem('ps_user', JSON.stringify(State.user));
+        toast('Profile card visibility updated', 'success');
+      } catch (e) { toast(e.message || 'Visibility update failed', 'error'); }
+      finally { cvs.disabled = false; }
+    });
+  }
   const savedPosts = $('#settingsSavedPosts');
   if (savedPosts) savedPosts.addEventListener('click', openSavedPostsSheet);
   const vt = $('#settingsViewTerms');
@@ -6790,6 +6806,13 @@ function renderOtherProfile(data) {
     const member = (State.members || []).find(m => m.id === u.id) || u;
     openDM(member); switchTab('chat');
   };
+  const cb = $('#upCardBtn');
+  if (cb) {
+    const canCard = !u.card || u.card.canView !== false;
+    cb.disabled = !canCard;
+    cb.title = canCard ? 'View profile card' : 'Profile card is private';
+    cb.onclick = () => openProfileCard(data, u);
+  }
   // Posts grid
   const grid = $('#upPostsGrid');
   grid.innerHTML = '';
@@ -6903,6 +6926,97 @@ function bindUserProfileSheet() {
 }
 
 // ============================================================
+
+// ===== Reflective profile card (vanilla adaptation of React Bits ReflectiveCard)
+// ============================================================
+function formatProfileDob(dob) {
+  if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(String(dob))) return 'Not shared';
+  try {
+    return new Date(dob + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch (_) { return dob; }
+}
+function profileCardFromUser(user, profileData = null) {
+  const u = (profileData && profileData.user) || user || State.user || {};
+  const c = (u && u.card) || {};
+  const postsCount = Number(c.postsCount ?? u.postsCount ?? $('#statPosts')?.textContent ?? 0) || 0;
+  const followers = Number(c.followers ?? u.followers ?? $('#statFollowers')?.textContent ?? 0) || 0;
+  const following = Number(c.following ?? u.following ?? $('#statFollowing')?.textContent ?? 0) || 0;
+  return {
+    user: u,
+    canView: c.canView !== false,
+    visibility: c.visibility || u.cardVisibility || 'everyone',
+    dateOfBirth: c.dateOfBirth || u.dateOfBirth || '',
+    postsCount, followers, following,
+  };
+}
+function openProfileCard(profileData = null, fallbackUser = null) {
+  const data = profileCardFromUser(fallbackUser || (profileData && profileData.user) || State.user, profileData);
+  const u = data.user || {};
+  const sheet = $('#profileCardSheet');
+  const mount = $('#profileCardMount');
+  if (!sheet || !mount) return;
+  if (!data.canView) {
+    toast('This profile card is private', 'info');
+    return;
+  }
+  const display = u.displayName || u.username || 'Member';
+  const username = u.username ? '@' + u.username : '';
+  const dob = formatProfileDob(data.dateOfBirth);
+  const photo = u.photoUrl && isSafeUrlForCss(u.photoUrl) ? `style="background-image:url('${escapeHtml(u.photoUrl).replace(/'/g, '%27')}')"` : '';
+  mount.innerHTML = `
+    <div class="reflective-card-container ps-reflective-card" style="--blur-strength:10px;--metalness:.82;--roughness:.38;--overlay-color:rgba(0,0,0,.18);--text-color:#fff;--saturation:.55">
+      <svg class="reflective-svg-filters" aria-hidden="true" focusable="false">
+        <defs>
+          <filter id="metallic-displacement" x="-20%" y="-20%" width="140%" height="140%">
+            <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="2" result="noise" />
+            <feColorMatrix in="noise" type="luminanceToAlpha" result="noiseAlpha" />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale="18" xChannelSelector="R" yChannelSelector="G" result="rippled" />
+            <feSpecularLighting in="noiseAlpha" surfaceScale="18" specularConstant="1.6" specularExponent="20" lightingColor="#ffffff" result="light"><fePointLight x="0" y="0" z="300" /></feSpecularLighting>
+            <feComposite in="light" in2="rippled" operator="in" result="light-effect" />
+            <feBlend in="light-effect" in2="rippled" mode="screen" result="metallic-result" />
+          </filter>
+        </defs>
+      </svg>
+      <div class="reflective-video reflective-card-photo" ${photo}></div>
+      <div class="reflective-noise"></div>
+      <div class="reflective-sheen"></div>
+      <div class="reflective-border"></div>
+      <div class="reflective-content">
+        <div class="card-header">
+          <div class="security-badge"><i data-lucide="lock"></i><span>PRIV CARD</span></div>
+          <i data-lucide="activity" class="status-icon"></i>
+        </div>
+        <div class="card-body">
+          <span class="avatar xl reflective-user-avatar"></span>
+          <div class="user-info">
+            <h2 class="user-name">${escapeHtml(display)}</h2>
+            <p class="user-role">${escapeHtml(username || 'PRIVATE MEMBER')}</p>
+          </div>
+          <div class="reflective-stats">
+            <div><strong>${data.postsCount}</strong><span>posts</span></div>
+            <div><strong>${data.followers}</strong><span>followers</span></div>
+            <div><strong>${data.following}</strong><span>following</span></div>
+          </div>
+        </div>
+        <div class="card-footer">
+          <div class="id-section"><span class="label">DATE OF BIRTH</span><span class="value">${escapeHtml(dob)}</span></div>
+          <div class="fingerprint-section"><i data-lucide="fingerprint" class="fingerprint-icon"></i></div>
+        </div>
+      </div>
+    </div>`;
+  renderAvatar(mount.querySelector('.reflective-user-avatar'), u);
+  sheet.classList.remove('hidden');
+  springIn(mount.querySelector('.reflective-card-container'));
+  refreshIcons();
+}
+function closeProfileCard() {
+  const sheet = $('#profileCardSheet');
+  if (sheet) sheet.classList.add('hidden');
+}
+function isSafeUrlForCss(url) {
+  return typeof url === 'string' && (/^https?:\/\//i.test(url) || /^data:image\//i.test(url));
+}
+
 // ===== Own profile view (IG-style) — render + edit toggle
 // ============================================================
 let _profileTab = 'posts';
@@ -7195,9 +7309,11 @@ function bindProfileView() {
       const dn = f.querySelector('[name="displayName"]');
       const un = f.querySelector('[name="username"]');
       const bio = f.querySelector('[name="bio"]');
+      const dob = f.querySelector('[name="dateOfBirth"]');
       if (dn) dn.value = State.user.displayName || '';
       if (un) un.value = State.user.username || '';
       if (bio) bio.value = State.user.bio || '';
+      if (dob) dob.value = State.user.dateOfBirth || '';
     }
     springIn($('#profileEditMode'));
   });
@@ -7216,12 +7332,17 @@ function bindProfileView() {
       else { await navigator.clipboard.writeText(url); toast('Link copied'); }
     } catch (_) {}
   });
-  // Grid tabs
+  // Grid / card tabs
   $$('.ig-tab').forEach(t => t.addEventListener('click', () => {
     $$('.ig-tab').forEach(x => x.classList.toggle('active', x === t));
+    if (t.dataset.grid === 'card') {
+      openProfileCard(null, State.user);
+      return;
+    }
     _profileTab = t.dataset.grid;
     renderOwnProfile();
   }));
+  $$('[data-close-profile-card]').forEach(b => b.addEventListener('click', closeProfileCard));
   // Stat buttons: open followers/following lists.
   $$('.stat-btn[data-stat]').forEach(btn => btn.addEventListener('click', () => {
     const stat = btn.dataset.stat;
