@@ -2710,7 +2710,10 @@ app.get('/api/stories/:id/viewers', authMiddleware, async (req, res) => {
   if (!p || !isStoryRecord(p)) return res.status(404).json({ error: 'Story not found' });
   if (p.userId !== myId) return res.status(403).json({ error: 'Forbidden' });
   const views = (Array.isArray(p.views) ? p.views : []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
-  const viewers = views.map(v => {
+  // Bug #10 fix: Filter out viewers who can no longer see the story
+  // (e.g., removed from close_friends after they viewed)
+  const filteredViews = views.filter(v => canViewerSeeStory(p, v.userId, db));
+  const viewers = filteredViews.map(v => {
     const u = db.users.find(x => x.id === v.userId);
     const su = u ? sanitizeUser(u) : { id: v.userId, displayName: 'Member', username: (v.userId || 'm').slice(-6), photoUrl: '' };
     return { ...su, at: v.at || 0 };

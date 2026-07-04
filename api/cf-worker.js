@@ -142,13 +142,12 @@ function loadConfig(env) {
 }
 
 const JWT_EXPIRES_DAYS = 7;
-// Cloudflare Worker CPU-safe bcrypt cost. rounds=6 is a deliberate trade-off
-// for the Workers runtime (bcryptjs is pure-JS and 1 round ≈ 25-50ms on the
-// V8 isolate; rounds=8 would add ~100ms per login, rounds=10 ~300ms). The
-// stored hash carries its own cost factor so existing $2a$08$... entries
-// continue to validate at their original cost. We do a transparent upgrade
-// to rounds=6 the first time a user signs in successfully.
-const PASSWORD_HASH_ROUNDS = 6;
+// Bug #7 fix: Consistent bcrypt rounds between index.js and cf-worker.js.
+// rounds=8 provides good security while remaining acceptable for the Workers
+// runtime (bcryptjs is pure-JS; ~100ms per login). The stored hash carries its
+// own cost factor so existing hashes with different costs continue to work.
+// We do a transparent upgrade to rounds=8 the first time a user signs in.
+const PASSWORD_HASH_ROUNDS = 8;
 // Cache TTL on Cloudflare tuned for up to 100 concurrent users (absorbs polling spikes across isolates)
 const CACHE_TTL_MS = 2500;
 const EPHEMERAL_WRITE_INTERVAL_MS = 30000;
@@ -3232,7 +3231,10 @@ app.get('/api/stories/:id/viewers', requireAuth, async (c) => {
   if (!p || !isStoryRecord(p)) return c.json({ error: 'Story not found' }, 404);
   if (p.userId !== myId) return c.json({ error: 'Forbidden' }, 403); // only the author sees viewers
   const views = (Array.isArray(p.views) ? p.views : []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
-  const viewers = views.map(v => {
+  // Bug #10 fix: Filter out viewers who can no longer see the story
+  // (e.g., removed from close_friends after they viewed)
+  const filteredViews = views.filter(v => canViewerSeeStory(p, v.userId, db));
+  const viewers = filteredViews.map(v => {
     const u = db.users.find(x => x.id === v.userId);
     const su = u ? sanitizeUser(u) : { id: v.userId, displayName: 'Member', username: (v.userId || 'm').slice(-6), photoUrl: '' };
     return { ...su, at: v.at || 0 };
