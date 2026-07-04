@@ -879,7 +879,7 @@ function switchTab(tab) {
   });
   $$('.view').forEach(v => v.classList.remove('active'));
   let activeView = null;
-  if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadFeed(); loadPosts(); markTabSeen('feed'); }
+  if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadFeed(); markTabSeen('feed'); }
   if (tab === 'search') {
     activeView = $('#searchView');
     activeView.classList.add('active');
@@ -2628,6 +2628,7 @@ function isUserIdle() { return Date.now() - _lastUserActivity > 30000; }
 // Poll cadence multiplier: 1× when active, 3× when idle (3× slower)
 function pollGap(activeMs, idleMs) { return isUserIdle() ? idleMs : activeMs; }
 
+let _lastMsgPollAt = 0;
 let _lastFeedPollAt = 0;
 let _lastNotifPollAt = 0;
 function isStorySurfaceOpen() {
@@ -2655,13 +2656,18 @@ function startPolls() {
     if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
     if (isUserIdle()) return; // skip entirely when idle — SSE handles it
+    const now = Date.now();
+    const minGap = pollGap(isFastPolling() ? 2000 : 4500, 15000);
+    if ((now - _lastMsgPollAt) < minGap) return;
+    _lastMsgPollAt = now;
     loadMessages(false);
   }, 1500);
   State.pollTimers.typing = setInterval(() => {
     if (State.currentTab !== 'chat') return;
     if (isStorySurfaceOpen()) return;
+    if (isUserIdle()) return;
     pollTyping();
-  }, 2000);
+  }, 2500);
   // FEED: same safety-net logic as chat so posts still appear even if SSE misses an event.
   // Also make boostPolling() truly dynamic instead of locking the interval at startup.
   State.pollTimers.feed = setInterval(() => {
@@ -2669,7 +2675,7 @@ function startPolls() {
     if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
     const now = Date.now();
-    const minGap = pollGap(isFastPolling() ? 1500 : 4000, 12000);
+    const minGap = pollGap(isFastPolling() ? 2500 : 5000, 15000);
     if ((now - _lastFeedPollAt) < minGap) return;
     _lastFeedPollAt = now;
     loadFeed();
@@ -2679,16 +2685,17 @@ function startPolls() {
     if (isStorySurfaceOpen()) return;
     if (_sseConnected && !_sseNeedsPollingBackstop) return;
     const now = Date.now();
-    const minGap = pollGap(isFastPolling() ? 2000 : 5000, 15000);
+    const minGap = pollGap(isFastPolling() ? 3000 : 6000, 20000);
     if ((now - _lastNotifPollAt) < minGap) return;
     _lastNotifPollAt = now;
     pollNotifications();
   }, 2000);
-  // RTC call signaling — poll every 1.5s for fast call pickup
+  // RTC call signaling — poll every 2.5s when active (skip when idle > 30s)
   State.pollTimers.rtc = setInterval(() => {
     if (isStorySurfaceOpen()) return;
+    if (isUserIdle()) return;
     pollRTCSignals();
-  }, 1500);
+  }, 2500);
   // Try SSE — it'll auto-fall-back if not supported
   connectSSE();
 }
@@ -2810,7 +2817,7 @@ function handleRealtimeEvent(type, evt) {
         }
       }
       boostPolling(15000);
-      if (State.currentTab === 'feed') loadPosts && loadPosts();
+      if (State.currentTab === 'feed') loadFeed(true);
     }
   } else if (type === 'presence' || type === 'typing') {
     // Refresh members
@@ -8128,7 +8135,7 @@ function boot() {
         loadMembers();
         pollNotifications();
         if (State.currentTab === 'chat') loadMessages(false);
-        if (State.currentTab === 'feed') loadPosts();
+        if (State.currentTab === 'feed') loadFeed(true);
         if (!_sseConnected) connectSSE();
       }
     } else {
