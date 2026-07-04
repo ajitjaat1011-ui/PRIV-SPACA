@@ -2995,10 +2995,10 @@ app.get('/api/stream/token', requireAuth, async (c) => {
     return c.json({ error: 'GetStream API credentials are not configured on this server.' }, 501);
   }
   const myId = c.get('userId');
-  const header = _b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = _b64url(JSON.stringify({ user_id: String(myId) }));
+  const header = b64urlJson({ alg: 'HS256', typ: 'JWT' });
+  const payload = b64urlJson({ user_id: String(myId) });
   const signingInput = header + '.' + payload;
-  const signature = await hmacSha256(apiSecret, signingInput);
+  const signature = b64url(await hmacSha256(apiSecret, signingInput));
   const token = signingInput + '.' + signature;
   return c.json({ token, userId: myId, apiKey, appId });
 });
