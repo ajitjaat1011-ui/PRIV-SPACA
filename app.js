@@ -34,7 +34,7 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v68-self-heal';
+const APP_VERSION = 'priv-spaca-v72-rtc-fix';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -7723,7 +7723,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=68-self-heal').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=72-rtc-fix').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
@@ -8606,12 +8606,15 @@ function createPeerConnection() {
     }
   };
 
-  // Remote track arrives → show video
+  // Remote track arrives → show media
   rtcPeerConnection.ontrack = (e) => {
-    if (!e.streams || !e.streams[0]) return;
-    e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
-    $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
-    // If video call, show the video layer now
+    if (e.track) rtcRemoteStream.addTrack(e.track);
+    else if (e.streams && e.streams[0]) e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
+    const remoteVid = $('#rtcRemoteVideo');
+    if (remoteVid) {
+      remoteVid.srcObject = rtcRemoteStream;
+      remoteVid.play().catch(() => {});
+    }
     if (isVideoCall) {
       $('#callVideos').classList.remove('hidden');
       $('#callOverlay').classList.add('video-active');
