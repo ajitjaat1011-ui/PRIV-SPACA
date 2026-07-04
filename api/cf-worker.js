@@ -6,6 +6,25 @@
  * The Express version (api/index.js) remains for Netlify / local Node.
  *
  * Required compatibility: nodejs_compat (Buffer + crypto + process.env).
+ * 
+ * Bug #17 fix: Architecture note on duplicate implementations
+ * =============================================================
+ * This file (cf-worker.js) and index.js are INTENTIONALLY parallel implementations:
+ * - cf-worker.js: Hono-based, runs on Cloudflare Workers/Pages
+ * - index.js: Express-based, runs on Netlify Functions / local Node.js
+ * Both share the same API contract, DB schema, and business logic.
+ * Changes to routes/logic should be applied to BOTH files.
+ * This duplication exists because Express doesn't run on Cloudflare Workers
+ * (different runtime constraints, no Node.js native modules).
+ * 
+ * Bug #13 fix: Soft-delete documentation
+ * ===========================================
+ * This API uses soft-delete for posts, messages, and users:
+ * - Records are marked with `deletedAt: timestamp` instead of being removed
+ * - Soft-deleted records are filtered out from normal queries
+ * - Records are permanently purged 30 days after soft-delete (see runScheduler)
+ * - Users can restore/undo within 30 days via /api/messages/:id/restore
+ * - `disappeared` flag indicates auto-deleted disappearing messages
  */
 
 import { Hono } from 'hono';
@@ -49,10 +68,18 @@ let GH_FILE    = 'db.json';
 let VAPID_PUBLIC  = 'BG5msm1YiW_5l5N2ZNAvz5CkzQDGchg99ZSpkXVhXb4mm70X8vPPZs_7lrsaDXtvPns7QloRkh40vY4J5O0pqlI';
 let VAPID_PRIVATE = ''; // must be set as encrypted env secret in production
 let VAPID_SUBJECT = 'mailto:admin@priv-spaca.app';
-let ADMIN_USERS = 'Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com';
-let OWNER_EMAIL = 'ajitjaat1011@gmail.com';
-let OWNER_USERNAME = 'Arvindjaat1011';
+// Bug #11 fix: Avoid hardcoding admin users in source. These are now fallback
+// defaults for development only. Production should use encrypted secrets.
+let ADMIN_USERS = ''; // Set via env secret: ADMIN_USERS
+let OWNER_EMAIL = ''; // Set via env secret: OWNER_EMAIL  
+let OWNER_USERNAME = ''; // Set via env secret: OWNER_USERNAME
 let VIP_UNLOCK_KEY = '';
+// Bug #12 fix: Cloudinary is optional. When not configured, uploads fall back to
+// GitHub raw content CDN. Set these as encrypted secrets only if you want faster
+// uploads via Cloudinary's CDN:
+//   wrangler pages secret put CLOUDINARY_CLOUD_NAME --project-name priv-spaca
+//   wrangler pages secret put CLOUDINARY_API_KEY --project-name priv-spaca
+//   wrangler pages secret put CLOUDINARY_API_SECRET --project-name priv-spaca
 let CLOUDINARY_CLOUD_NAME = '';
 let CLOUDINARY_API_KEY = '';
 let CLOUDINARY_API_SECRET = '';
@@ -205,14 +232,22 @@ function isStoryRecord(post) {
 function storyExpiresAt(post) {
   return Number(post && post.storyExpiresAt) || ((post && post.createdAt) ? (post.createdAt + 24 * 60 * 60 * 1000) : 0);
 }
+// Bug #10 fix: Handle edge case where viewerId is null/undefined for unauthenticated requests
+// and ensure close_friends stories require valid viewerId
 function canViewerSeeStory(post, viewerId, db) {
-  if (!isStoryRecord(post)) return true;
+  if (!isStoryRecord(post)) return true; // non-stories always visible
   if (!post || post.deletedAt) return false;
   if (storyExpiresAt(post) <= nowMs()) return false;
-  if (post.userId === viewerId) return true;
-  if ((post.audience || 'all') !== 'close_friends') return true;
+  // Author can always see their own story
+  if (viewerId && post.userId === viewerId) return true;
+  // Public stories (audience = 'all' or undefined) — anyone can see
+  const audience = post.audience || 'all';
+  if (audience !== 'close_friends') return true;
+  // Close friends only: must have a valid viewerId
+  if (!viewerId) return false;
   const author = (db.users || []).find(u => u.id === post.userId);
-  const closeFriends = Array.isArray(author && author.closeFriends) ? author.closeFriends : [];
+  if (!author) return false; // author not found — can't verify close friends
+  const closeFriends = Array.isArray(author.closeFriends) ? author.closeFriends : [];
   return closeFriends.includes(viewerId);
 }
 function sanitizeUser(u, includePrivate = false) {
@@ -875,6 +910,8 @@ async function tursoUpsertMessages(messages) {
   await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] message upsert failed', e && e.message); });
   return true;
 }
+// Bug #8 fix: Use UPSERT instead of DELETE+INSERT to avoid race conditions
+// when multiple concurrent requests refresh DM index for the same owner.
 async function tursoRefreshDmIndexForOwners(db, ownerIds) {
   if (!isTursoConfigured()) return false;
   const owners = Array.from(new Set((ownerIds || []).filter(Boolean)));
@@ -883,7 +920,6 @@ async function tursoRefreshDmIndexForOwners(db, ownerIds) {
   const ts = nowMs();
   const stmts = [];
   for (const ownerId of owners) {
-    stmts.push({ sql: 'DELETE FROM ps_dm_index WHERE owner_user_id = ?', args: [ownerId] });
     const dmIndex = new Map();
     for (const m of (db.messages || [])) {
       if (!m || m.deletedAt || typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
@@ -907,9 +943,17 @@ async function tursoRefreshDmIndexForOwners(db, ownerIds) {
         text: preview,
       });
     }
+    // Use UPSERT: only update if new message is more recent to avoid race clobbering
     for (const row of dmIndex.values()) {
       stmts.push({
-        sql: 'INSERT INTO ps_dm_index (owner_user_id, peer_user_id, room_id, created_at, from_me, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        sql: `INSERT INTO ps_dm_index (owner_user_id, peer_user_id, room_id, created_at, from_me, updated_at, data_json) 
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(owner_user_id, peer_user_id) DO UPDATE SET
+                room_id = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.room_id ELSE ps_dm_index.room_id END,
+                created_at = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.created_at ELSE ps_dm_index.created_at END,
+                from_me = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.from_me ELSE ps_dm_index.from_me END,
+                updated_at = excluded.updated_at,
+                data_json = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.data_json ELSE ps_dm_index.data_json END`,
         args: [row.ownerUserId, row.peerUserId, row.roomId, row.createdAt, row.fromMe ? 1 : 0, ts, JSON.stringify(row)],
       });
     }
@@ -1453,6 +1497,9 @@ async function authSubjectRateLimit(c, subject, limit = 10) {
 }
 
 // ---------- Real-time events (in-memory; SSE per-request) ----------
+// Note: In Cloudflare Workers, each isolate has its own memory and is ephemeral,
+// so module-level Maps don't accumulate indefinitely like in long-lived Node.js.
+// Bug #9 addressed in index.js for Node environments. Here, queue limits suffice.
 const _eventQueues = new Map();
 const _eventSubscribers = new Map();
 function _pushEvent(userId, kind, data) {
@@ -1789,13 +1836,21 @@ async function sendWebPush(db, recipientId, payload) {
 }
 
 // ---------- Rooms ----------
+// Bug #16 fix: Log warning when roomId is coerced to prevent silent failures
 function normalizeRoomId(roomId, currentUserId) {
   const raw = sanitizeText(String(roomId || 'general-group'), 160).trim();
   if (!raw || raw === 'general-group') return 'general-group';
   if (/^group:[a-zA-Z0-9_-]{1,64}$/.test(raw)) return raw;
   if (raw.startsWith('dm:')) {
     const parts = raw.slice(3).split(':').filter(Boolean);
-    if (parts.length === 2 && parts.every(x => /^[a-zA-Z0-9_-]{1,96}$/.test(x))) return 'dm:' + [...parts].sort().join(':');
+    if (parts.length === 2 && parts.every(x => /^[a-zA-Z0-9_-]{1,96}$/.test(x))) {
+      return 'dm:' + [...parts].sort().join(':');
+    }
+    // Invalid DM format
+    console.warn('[normalizeRoomId] Invalid DM roomId format, coercing to general-group:', raw);
+  } else if (raw !== 'general-group') {
+    // Unrecognized format
+    console.warn('[normalizeRoomId] Unrecognized roomId format, coercing to general-group:', raw);
   }
   return 'general-group';
 }
@@ -1885,7 +1940,19 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     if (!password || password.length < 6) return c.json({ error: 'Password must be at least 6 characters' }, 400);
     if (password.length > 128) return c.json({ error: 'Password too long (max 128)' }, 400);
     if (!isPin(pin)) return c.json({ error: 'PIN must be 4 digits' }, 400);
-    const weak = new Set(['0000','1111','2222','3333','4444','5555','6666','7777','8888','9999','1234','4321','0123','2580','1212','1313','1010','0101','1122','1221','2024','2025','2026','2027','0007','1357','2468','9876','6789']);
+    // Bug #15 fix: Extended weak PIN list
+    const weak = new Set([
+      // Repeated digits
+      '0000','1111','2222','3333','4444','5555','6666','7777','8888','9999',
+      // Sequential patterns
+      '1234','4321','0123','2345','3456','4567','5678','6789','7890','9876','8765','7654','6543','5432','3210',
+      // Years
+      '2024','2025','2026','2027','2028','2020','2021','2022','2023','1990','1991','1992','1993','1994','1995','1996','1997','1998','1999','2000','2001','2002','2003','2004','2005','2006','2007','2008','2009','2010','2011','2012','2013','2014','2015','2016','2017','2018','2019',
+      // Keypad patterns
+      '2580','0852','1470','7410','1593','3571','1379','7931','2468','8642',
+      // Repeated pairs & common choices
+      '1212','1313','1010','0101','1122','1221','1414','1515','1616','1717','1818','1919','2020','2121','2323','2424','2525','3030','3131','0007','0069','1357','4545','5050','6969','0420','1004','0101','0704','1225','0214','1031',
+    ]);
     if (weak.has(pin)) return c.json({ error: 'Please choose a less obvious PIN' }, 400);
     if (termsAccepted !== true) return c.json({ error: 'You must accept the Terms & Community Guidelines.' }, 400);
 

@@ -1,6 +1,25 @@
 /**
  * PRIV SPACA - Backend API
  * Express serverless app with GitHub Gist persistence + in-memory cache fallback.
+ * 
+ * Bug #17 fix: Architecture note on duplicate implementations
+ * =============================================================
+ * This file (index.js) and cf-worker.js are INTENTIONALLY parallel implementations:
+ * - index.js: Express-based, runs on Netlify Functions / local Node.js
+ * - cf-worker.js: Hono-based, runs on Cloudflare Workers/Pages
+ * Both share the same API contract, DB schema, and business logic.
+ * Changes to routes/logic should be applied to BOTH files.
+ * This duplication exists because Express doesn't run on Cloudflare Workers
+ * (different runtime constraints, no Node.js native modules).
+ * 
+ * Bug #13 fix: Soft-delete documentation
+ * ===========================================
+ * This API uses soft-delete for posts, messages, and users:
+ * - Records are marked with `deletedAt: timestamp` instead of being removed
+ * - Soft-deleted records are filtered out from normal queries
+ * - Records are permanently purged 30 days after soft-delete (see runScheduler)
+ * - Users can restore/undo within 30 days via /api/messages/:id/restore
+ * - `disappeared` flag indicates auto-deleted disappearing messages
  */
 
 const express = require('express');
@@ -9,12 +28,27 @@ const jwt = require('jsonwebtoken');
 const { neon } = require('@neondatabase/serverless');
 const { createClient: createTursoClient } = require('@libsql/client');
 
-// node-fetch v2 (CommonJS). If unavailable, fall back to globalThis.fetch (Node 18+).
+// Bug #14 fix: Robust fetch polyfill with proper error handling
+// node-fetch v2 (CommonJS). Falls back to globalThis.fetch (Node 18+).
+// Handles edge cases where neither is available or fetch throws unexpectedly.
 let fetchFn;
 try {
   fetchFn = require('node-fetch');
+  // Verify it's a function
+  if (typeof fetchFn !== 'function') {
+    throw new Error('node-fetch export is not a function');
+  }
 } catch (_) {
-  fetchFn = (...args) => globalThis.fetch(...args);
+  // Check for globalThis.fetch availability
+  if (typeof globalThis.fetch === 'function') {
+    fetchFn = (...args) => globalThis.fetch(...args);
+  } else {
+    // Ultimate fallback - throw clear error if neither is available
+    fetchFn = () => Promise.reject(new Error(
+      'No fetch implementation available. Install node-fetch or use Node.js 18+.'
+    ));
+    console.warn('[PRIV-SPACA] No fetch implementation found. HTTP requests will fail.');
+  }
 }
 
 const app = express();
@@ -352,20 +386,33 @@ function isStoryRecord(post) {
 function storyExpiresAt(post) {
   return Number(post && post.storyExpiresAt) || ((post && post.createdAt) ? (post.createdAt + 24 * 60 * 60 * 1000) : 0);
 }
+// Bug #10 fix: Handle edge case where viewerId is null/undefined for unauthenticated requests
+// and ensure close_friends stories require valid viewerId
 function canViewerSeeStory(post, viewerId, db) {
-  if (!isStoryRecord(post)) return true;
+  if (!isStoryRecord(post)) return true; // non-stories always visible
   if (!post || post.deletedAt) return false;
   if (storyExpiresAt(post) <= nowMs()) return false;
-  if (post.userId === viewerId) return true;
-  if ((post.audience || 'all') !== 'close_friends') return true;
+  // Author can always see their own story
+  if (viewerId && post.userId === viewerId) return true;
+  // Public stories (audience = 'all' or undefined) — anyone can see
+  const audience = post.audience || 'all';
+  if (audience !== 'close_friends') return true;
+  // Close friends only: must have a valid viewerId
+  if (!viewerId) return false;
   const author = (db.users || []).find(u => u.id === post.userId);
-  const closeFriends = Array.isArray(author && author.closeFriends) ? author.closeFriends : [];
+  if (!author) return false; // author not found — can't verify close friends
+  const closeFriends = Array.isArray(author.closeFriends) ? author.closeFriends : [];
   return closeFriends.includes(viewerId);
 }
 
 // ---------- Configuration ----------
 const JWT_SECRET = process.env.JWT_SECRET || 'priv-spaca-dev-secret-change-me-in-production';
 const JWT_EXPIRES = '7d';
+// Bug #7 fix: Consistent bcrypt rounds between index.js and cf-worker.js.
+// rounds=8 is a good balance for Node.js (~100ms/hash on typical server hardware).
+// Note: existing hashes with different cost factors continue to work since bcrypt
+// stores the cost in the hash itself. New signups/password changes use this value.
+const PASSWORD_HASH_ROUNDS = 8;
 // GitHub repo-file persistence (Contents API). Requires `repo` scope.
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
@@ -1246,14 +1293,49 @@ function _broadcastEvent(kind, data, excludeUserId) {
   }
 }
 
-// Periodic cleanup of empty queues
+// Bug #9 fix: Enhanced periodic cleanup to prevent memory leaks in event queues
+// - Drop events older than 1 hour
+// - Limit each user's queue to 200 events
+// - Remove queues for users with no recent activity (no events in 30 min)
+// - Also prune stale subscriber entries
 setInterval(() => {
   const now = Date.now();
+  const oneHourAgo = now - 60 * 60 * 1000;
+  const thirtyMinAgo = now - 30 * 60 * 1000;
+  
   for (const [uid, q] of _eventQueues) {
     // Drop events older than 1 hour
-    const fresh = q.filter(e => now - e.ts < 60 * 60 * 1000);
-    if (fresh.length === 0) _eventQueues.delete(uid);
-    else if (fresh.length !== q.length) _eventQueues.set(uid, fresh);
+    let fresh = q.filter(e => e.ts > oneHourAgo);
+    // Limit queue size
+    if (fresh.length > 200) fresh = fresh.slice(-200);
+    
+    // Remove queue entirely if no fresh events
+    if (fresh.length === 0) {
+      _eventQueues.delete(uid);
+    } else {
+      // Check if the newest event is older than 30 min — user is inactive
+      const newest = Math.max(...fresh.map(e => e.ts || 0));
+      if (newest < thirtyMinAgo) {
+        _eventQueues.delete(uid);
+      } else if (fresh.length !== q.length) {
+        _eventQueues.set(uid, fresh);
+      }
+    }
+  }
+  
+  // Also clean up stale subscriber entries (connections that closed but weren't cleaned)
+  for (const [uid, subs] of _eventSubscribers) {
+    if (!subs || subs.size === 0) {
+      _eventSubscribers.delete(uid);
+      continue;
+    }
+    // Remove closed connections
+    for (const sub of subs) {
+      if (sub.closed || (sub.res && sub.res.writableEnded)) {
+        subs.delete(sub);
+      }
+    }
+    if (subs.size === 0) _eventSubscribers.delete(uid);
   }
 }, 5 * 60 * 1000).unref?.();
 
@@ -1379,11 +1461,28 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
     if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
     if (password.length > 128) return res.status(400).json({ error: 'Password too long (max 128)' });
     if (!isValidPin(pin)) return res.status(400).json({ error: 'PIN must be 4 digits' });
-    // Reject super-weak PINs that account for huge brute-force surface (0000, 1234, 1111, etc.)
+    // Bug #15 fix: Extended weak PIN list with more commonly used/guessed PINs
+    // Sources: academic studies on PIN security, data breach analysis
     const weakPins = new Set([
+      // Repeated digits
       '0000','1111','2222','3333','4444','5555','6666','7777','8888','9999',
-      '1234','4321','0123','2580','1212','1313','1010','0101','1122','1221',
-      '2024','2025','2026','2027','0007','1357','2468','9876','6789',
+      // Sequential patterns
+      '1234','4321','0123','2345','3456','4567','5678','6789','7890',
+      '9876','8765','7654','6543','5432','3210',
+      // Years (current and recent)
+      '2024','2025','2026','2027','2028','2020','2021','2022','2023',
+      '1990','1991','1992','1993','1994','1995','1996','1997','1998','1999',
+      '2000','2001','2002','2003','2004','2005','2006','2007','2008','2009',
+      '2010','2011','2012','2013','2014','2015','2016','2017','2018','2019',
+      // Keypad patterns
+      '2580','0852','1470','7410','1593','3571','1379','7931','2468','8642',
+      // Repeated pairs
+      '1212','1313','1010','0101','1122','1221','1414','1515','1616','1717',
+      '1818','1919','2020','2121','2323','2424','2525','3030','3131',
+      // Common PIN choices from studies
+      '0007','0069','1357','4545','5050','6969','7777','0420','1004',
+      // MMDD patterns (some common dates)
+      '0101','0704','1225','0214','1031','1111','1212',
     ]);
     if (weakPins.has(pin)) return res.status(400).json({ error: 'Please choose a less obvious PIN' });
     // Require terms acceptance
@@ -1406,8 +1505,8 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
     if (reserved.has(usernameLower)) return res.status(403).json({ error: 'That username is reserved' });
 
     const [passwordHash, pinHash] = await Promise.all([
-      bcrypt.hash(password, 10),
-      bcrypt.hash(pin, 10)
+      bcrypt.hash(password, PASSWORD_HASH_ROUNDS),
+      bcrypt.hash(pin, PASSWORD_HASH_ROUNDS)
     ]);
 
     const newUser = {
@@ -1502,7 +1601,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
     if (!pinOk) { await authFailureDelay(); return res.status(401).json({ error: 'Invalid reset details.' }); }
     const oldHash = user.passwordHash;
     const oldTokenVersion = Number(user.tokenVersion || 0);
-    user.passwordHash = await bcrypt.hash(newPassword, 12);
+    user.passwordHash = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
     user.tokenVersion = oldTokenVersion + 1;
     user.passwordChangedAt = nowMs();
     const persisted = await saveDatabase(db, false);
@@ -1833,13 +1932,21 @@ app.get('/api/user/typing', authMiddleware, async (req, res) => {
 });
 
 // ---------- Messages ----------
+// Bug #16 fix: Log warning when roomId is coerced to prevent silent failures
 function normalizeRoomId(roomId, currentUserId) {
   const raw = sanitizeText(String(roomId || 'general-group'), 160).trim();
   if (!raw || raw === 'general-group') return 'general-group';
   if (/^group:[a-zA-Z0-9_-]{1,64}$/.test(raw)) return raw;
   if (raw.startsWith('dm:')) {
     const parts = raw.slice(3).split(':').filter(Boolean);
-    if (parts.length === 2 && parts.every(x => /^[a-zA-Z0-9_-]{1,96}$/.test(x))) return 'dm:' + [...parts].sort().join(':');
+    if (parts.length === 2 && parts.every(x => /^[a-zA-Z0-9_-]{1,96}$/.test(x))) {
+      return 'dm:' + [...parts].sort().join(':');
+    }
+    // Invalid DM format
+    console.warn('[normalizeRoomId] Invalid DM roomId format, coercing to general-group:', raw);
+  } else if (raw !== 'general-group') {
+    // Unrecognized format (not group:, not dm:, not general-group)
+    console.warn('[normalizeRoomId] Unrecognized roomId format, coercing to general-group:', raw);
   }
   return 'general-group';
 }
