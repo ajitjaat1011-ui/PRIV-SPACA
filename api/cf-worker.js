@@ -1518,7 +1518,10 @@ function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
   if (kind === 'comment') body = `${fromName} commented: ${(notif.text || '').slice(0, 80)}`;
   if (kind === 'follow')  body = `${fromName} started following you`;
   if (kind === 'message') body = `${fromName}: ${(notif.text || '').slice(0, 80)}`;
-  if (body) sendWebPush(db, recipientId, { title, body, tag: 'priv-spaca-' + notif.id, url: '/', kind, notifId: notif.id }).catch(() => {});
+  if (body) sendWebPush(db, recipientId, { title, body, tag: 'priv-spaca-' + notif.id, url: '/', kind, notifId: notif.id }).catch((err) => {
+    // v77-bugfix: Log push failures instead of silently swallowing
+    console.warn('[pushNotification:sendWebPush] error for', recipientId, kind, err && err.message);
+  });
   return notif;
 }
 

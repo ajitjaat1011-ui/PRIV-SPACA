@@ -2127,7 +2127,10 @@ function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
       tag: 'priv-spaca-' + notif.id,
       url: '/',
       kind, notifId: notif.id,
-    }).catch(() => {});
+    }).catch((err) => {
+      // v77-bugfix: Log push failures instead of silently swallowing
+      console.warn('[pushNotification:sendWebPush] error for', recipientId, kind, err && err.message);
+    });
   }
   return notif;
 }
