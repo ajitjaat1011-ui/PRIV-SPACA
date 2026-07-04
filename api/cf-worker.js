@@ -2373,11 +2373,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     } else {
       _broadcastEvent('new_message', { roomId, message: enriched }, myId);
     }
-    const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true });
-    if (isPersist() && !persisted) return c.json({ error: 'Message storage unavailable. Please retry.' }, 503);
     if (isTursoConfigured()) {
-      // v66: batch all the structured writes in a single round trip.
-      // send is the hot path; this cuts latency ~3x.
       const stmts = [];
       stmts.push({
         sql: 'INSERT INTO ps_messages (id, room_id, user_id, created_at, deleted_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET deleted_at=excluded.deleted_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
@@ -2398,9 +2394,17 @@ app.post('/api/messages/send', requireAuth, async (c) => {
           });
         }
       }
-      try { await tursoClient().batch(stmts, 'write'); }
-      catch (e) { console.warn('[send] batched write failed, falling back to non-batched:', e && e.message);
-        try { await tursoUpsertMessages([msg]); if (tursoNotifs.length) await tursoUpsertNotifications(tursoNotifs); if (roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean)); } catch (_) {} }
+      const [persisted] = await Promise.all([
+        saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true }),
+        tursoClient().batch(stmts, 'write').catch(e => {
+          console.warn('[send] batched write failed:', e && e.message);
+          return tursoUpsertMessages([msg]).catch(() => {});
+        })
+      ]);
+      if (isPersist() && !persisted) return c.json({ error: 'Message storage unavailable. Please retry.' }, 503);
+    } else {
+      const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true });
+      if (isPersist() && !persisted) return c.json({ error: 'Message storage unavailable. Please retry.' }, 503);
     }
     return c.json({ message: enriched });
   } catch (e) { console.error('[send]', e); return c.json({ error: 'Send failed' }, 500); }
@@ -2748,11 +2752,15 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     db.posts.push(post);
     const enriched = { ...post, likeCount: 0, commentCount: 0, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
     _broadcastEvent('new_post', { post: enriched }, myId);
-    const persisted = await saveDatabaseVerified(db, d => (d.posts || []).some(p => p.id === post.id), 4, { skipSecondarySync: true });
-    if (isPersist() && !persisted) return c.json({ error: 'Post storage unavailable. Please retry.' }, 503);
     if (isTursoConfigured()) {
-      await tursoUpsertPosts([post]);
-      await fanoutPostToFollowers(post, db);
+      const [persisted] = await Promise.all([
+        saveDatabaseVerified(db, d => (d.posts || []).some(p => p.id === post.id), 4, { skipSecondarySync: true }),
+        tursoUpsertPosts([post]).then(() => fanoutPostToFollowers(post, db)).catch(() => {})
+      ]);
+      if (isPersist() && !persisted) return c.json({ error: 'Post storage unavailable. Please retry.' }, 503);
+    } else {
+      const persisted = await saveDatabaseVerified(db, d => (d.posts || []).some(p => p.id === post.id), 4, { skipSecondarySync: true });
+      if (isPersist() && !persisted) return c.json({ error: 'Post storage unavailable. Please retry.' }, 503);
     }
     return c.json({ post: enriched });
   } catch (e) { return c.json({ error: 'Create post failed' }, 500); }
@@ -3129,99 +3137,25 @@ async function fanoutPostToFollowers(post, db) {
 app.get('/api/feed', requireAuth, async (c) => {
   const myId = c.get('userId');
   const limit = Math.min(50, Math.max(5, parseInt(c.req.query('limit') || '20')));
-  
-  if (!isTursoConfigured()) {
-    // Fallback to existing posts endpoint behavior
-    const db = await fetchDatabase();
-    const me = (db.users || []).find(u => u.id === myId);
-    const following = (me && Array.isArray(me.following)) ? me.following : [];
-    const allFollowing = [...following, myId];
-    const usersById = new Map((db.users || []).map(u => [u.id, u]));
-    const posts = (db.posts || [])
-      .filter(p => !p.deletedAt && allFollowing.includes(p.userId) && !p.story)
-      .sort((a,b) => {
-        const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
-        const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
-        return ((b.createdAt||0) * 0.7 + engB * 0.3) - ((a.createdAt||0) * 0.7 + engA * 0.3);
-      })
-      .slice(0, limit)
-      .map(p => {
-        const liveUser = usersById.get(p.userId);
-        const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
-        return { ...p, author: authorObj };
-      });
-    return c.json({ posts, source: 'full-db-fallback' });
-  }
-
-  await tursoEnsure();
-  const tc = tursoClient();
-
-  // 1. Get pre-fanned posts from ps_user_feeds (push model)
-  const feedRows = await tc.execute({
-    sql: `SELECT post_id, created_at FROM ps_user_feeds WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
-    args: [myId, limit * 2]
-  }).catch(() => ({ rows: [] }));
-
-  let postIds = new Set(feedRows.rows?.map(r => r.post_id) || []);
-
-  // 2. Also fetch recent posts from people I follow (for celebrities + new follows)
   const db = await fetchDatabase();
   const me = (db.users || []).find(u => u.id === myId);
   const following = (me && Array.isArray(me.following)) ? me.following : [];
-  const allFollowing = [...following, myId];
-
-  if (allFollowing.length > 0) {
-    const placeholders = allFollowing.map(() => '?').join(',');
-    const recentPosts = await tc.execute({
-      sql: `SELECT id FROM ps_posts WHERE user_id IN (${placeholders}) AND (story IS NULL OR story = 0) AND (deleted_at IS NULL OR deleted_at = 0) ORDER BY created_at DESC LIMIT ?`,
-      args: [...allFollowing, limit]
-    }).catch(() => ({ rows: [] }));
-
-    recentPosts.rows?.forEach(r => postIds.add(r.id));
-  }
-
-  // 3. Fetch full post data from Turso ps_posts
-  const finalPostIds = Array.from(postIds).slice(0, limit);
-  if (!finalPostIds.length) return c.json({ posts: [] });
-
-  const idPlaceholders = finalPostIds.map(() => '?').join(',');
-  const postData = await tc.execute({
-    // ps_user_feeds (the pre-fanned push-model table) is not pruned when a
-    // post is deleted, so a since-deleted post's id can still show up in
-    // postIds above. Filter deleted_at here too as a second safety net —
-    // don't rely solely on the two upstream queries already excluding it.
-    sql: `SELECT data_json FROM ps_posts WHERE id IN (${idPlaceholders}) AND (deleted_at IS NULL OR deleted_at = 0)`,
-    args: finalPostIds
-  }).catch(() => ({ rows: [] }));
-
-  // Enrich with a live `author` object the same way /api/posts does — raw
-  // ps_posts rows only ever carry `authorSnapshot` (frozen at creation
-  // time), never `author`. Without this, the frontend's resolveAuthor()
-  // fallback chain could bottom out on a synthetic "member_xxx" label
-  // whenever /api/feed's Turso path is the source of a post, instead of
-  // showing the poster's real name. Prefer the live user record (so a
-  // display-name/photo change shows up immediately) and fall back to the
-  // frozen snapshot if the user record is unavailable for any reason.
-  // We use cached users array from fetchDatabase (db.users) so
-  // each post's author can be resolved without scanning ps_users over network.
+  const allFollowing = new Set([...following, myId]);
   const usersById = new Map((db.users || []).map(u => [u.id, u]));
-  const posts = postData.rows?.map(r => {
-    try { return JSON.parse(r.data_json); } catch { return null; }
-  }).filter(Boolean).filter(p => !p.deletedAt).map(p => {
-    const liveUser = usersById.get(p.userId);
-    const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
-    return { ...p, author: authorObj };
-  }).sort((a,b) => {
-    // Engagement-weighted ranking: recency (70%) + engagement (30%)
-    // Likes × 3 + comments × 5 = engagement score
-    const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
-    const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
-    const scoreA = (a.createdAt || 0) * 0.7 + engA * 0.3;
-    const scoreB = (b.createdAt || 0) * 0.7 + engB * 0.3;
-    return scoreB - scoreA;
-  });
-
-  return c.json({ posts, source: 'hybrid-turso-feed' });
+  const posts = (db.posts || [])
+    .filter(p => !p.deletedAt && allFollowing.has(p.userId) && !p.story)
+    .sort((a,b) => {
+      const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
+      const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
+      return ((b.createdAt||0) * 0.7 + engB * 0.3) - ((a.createdAt||0) * 0.7 + engA * 0.3);
+    })
+    .slice(0, limit)
+    .map(p => {
+      const liveUser = usersById.get(p.userId);
+      const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
+      return { ...p, author: authorObj };
+    });
+  return c.json({ posts, source: isTursoConfigured() ? 'hybrid-turso-feed' : 'full-db-fallback' });
 });
 
 // ---------- 404 ----------
