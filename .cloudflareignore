@@ -1,23 +1,18 @@
-node_modules
-.git
-.netlify
-.vercel
-backups
-scripts
-SECURITY_AUDIT*.md
-*.log
-README.md
-THIRD_PARTY_API_AUDIT.md
+# Exclude from Cloudflare Pages deployment
+node_modules/
+*.md
 *.py
-__pycache__
-.cache
-.config
-.local
-.npm
-*.json
-!manifest.json
-!package.json
-!package-lock.json
-dist
-_worker.js.bundled.js
-_worker.js.map
+.git/
+.github/
+backups/
+scripts/
+*.log
+package-lock.json
+wrangler.toml
+.gitignore
+.vercelignore
+.gitlab-ci.yml
+dev-server.js
+logo_PS_concept.png
+# Keep original files but exclude from deployment
+# app.js and style.css are replaced by .min.js/.min.css
