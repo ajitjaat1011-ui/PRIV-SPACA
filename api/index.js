@@ -182,19 +182,48 @@ async function authRateLimit(req, res, next) {
   next();
 }
 
-// Per-account brute-force tracker: 5 wrong passwords in 5 min → 15 min lockout
+// v77-bugfix: Per-account brute-force tracker with database persistence.
+// 5 wrong passwords in 5 min → 15 min lockout
+// For Express/Node.js, in-memory is primary (process-local), but we also
+// persist to Turso for observability and potential cluster deployments.
 const _loginFails = new Map(); // userId -> { count, firstAt, lockedUntil }
-function checkAccountLock(userId) {
+
+async function checkAccountLock(userId) {
+  const now = Date.now();
+  
+  // Try Turso first for persistence
+  if (isTursoConfigured()) {
+    try {
+      const c = tursoClient();
+      const rs = await c.execute({
+        sql: 'SELECT locked_until FROM ps_rate_limits WHERE key = ? LIMIT 1',
+        args: ['lockout:' + userId],
+      });
+      if (rs.rows && rs.rows.length > 0) {
+        const lockedUntil = Number(rs.rows[0].locked_until || 0);
+        if (lockedUntil > now) {
+          return { locked: true, remaining: lockedUntil - now };
+        }
+      }
+    } catch (e) {
+      console.warn('[checkAccountLock:turso] falling back to in-memory:', e && e.message);
+    }
+  }
+  
+  // Fallback to in-memory
   const rec = _loginFails.get(userId);
   if (!rec) return { locked: false };
-  const now = Date.now();
   if (rec.lockedUntil && rec.lockedUntil > now) {
     return { locked: true, remaining: rec.lockedUntil - now };
   }
   return { locked: false };
 }
-function recordLoginFail(userId) {
+
+async function recordLoginFail(userId) {
   const now = Date.now();
+  const fiveMinutesAgo = now - 5 * 60_000;
+  
+  // Update in-memory
   let rec = _loginFails.get(userId);
   if (!rec || (now - rec.firstAt) > 5 * 60_000) {
     rec = { count: 0, firstAt: now };
@@ -204,8 +233,55 @@ function recordLoginFail(userId) {
   if (rec.count >= 5) {
     rec.lockedUntil = now + 15 * 60_000;
   }
+  
+  // Persist to Turso
+  if (isTursoConfigured()) {
+    try {
+      const c = tursoClient();
+      const key = 'lockout:' + userId;
+      const lockoutDuration = 15 * 60_000;
+      const windowDuration = 5 * 60_000;
+      
+      await c.execute({
+        sql: `INSERT INTO ps_rate_limits (key, count, reset_at, locked_until, updated_at) 
+              VALUES (?, 1, ?, 0, ?)
+              ON CONFLICT(key) DO UPDATE SET
+                count = CASE WHEN reset_at < ? THEN 1 ELSE count + 1 END,
+                reset_at = CASE WHEN reset_at < ? THEN ? ELSE reset_at END,
+                locked_until = CASE 
+                  WHEN reset_at < ? THEN 0
+                  WHEN count + 1 >= 5 THEN ?
+                  ELSE locked_until 
+                END,
+                updated_at = ?`,
+        args: [
+          key, now + windowDuration, now,
+          fiveMinutesAgo,
+          fiveMinutesAgo, now + windowDuration,
+          fiveMinutesAgo, now + lockoutDuration,
+          now
+        ],
+      });
+    } catch (e) {
+      console.warn('[recordLoginFail:turso] error:', e && e.message);
+    }
+  }
 }
-function clearLoginFails(userId) { _loginFails.delete(userId); }
+
+async function clearLoginFails(userId) {
+  _loginFails.delete(userId);
+  
+  if (isTursoConfigured()) {
+    try {
+      await tursoClient().execute({
+        sql: 'DELETE FROM ps_rate_limits WHERE key = ?',
+        args: ['lockout:' + userId],
+      });
+    } catch (e) {
+      console.warn('[clearLoginFails:turso] error:', e && e.message);
+    }
+  }
+}
 const AUTH_GENERIC_ERROR = 'Invalid username/email or password.';
 function authFailureDelay() {
   return new Promise(r => setTimeout(r, 250 + Math.floor(Math.random() * 250)));
@@ -504,14 +580,37 @@ async function persistWrite(dbObj) {
  * Fetch the database with cache TTL. Also auto-flushes scheduled messages
  * whose deliverAt timestamp has elapsed into the messages collection.
  */
+// v77-bugfix: Turso client management for Express/Node.js environment.
+// Unlike Cloudflare Workers (which require per-request clients due to isolate boundaries),
+// Node.js can safely use a singleton pattern since the process is long-lived.
+// However, we add periodic refresh logic to handle connection staleness.
 let _turso = null;
 let _tursoReady = false;
 let _tursoBootstrapped = false;
+let _tursoLastRefresh = 0;
+const TURSO_CLIENT_REFRESH_MS = 5 * 60 * 1000; // Refresh client every 5 minutes to avoid stale connections
+
 function isTursoConfigured() {
   return !!(TURSO_DATABASE_URL && TURSO_AUTH_TOKEN);
 }
+
 function tursoClient() {
-  if (!_turso) _turso = createTursoClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
+  const now = Date.now();
+  // Refresh the client periodically to avoid long-lived connection issues
+  if (!_turso || (now - _tursoLastRefresh) > TURSO_CLIENT_REFRESH_MS) {
+    try {
+      // Close existing client if any (libsql client may not have a close method, so we just replace it)
+      _turso = createTursoClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
+      _tursoLastRefresh = now;
+    } catch (e) {
+      console.warn('[tursoClient] Error creating client:', e && e.message);
+      // If refresh fails, try to use existing client if available
+      if (!_turso) {
+        _turso = createTursoClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
+        _tursoLastRefresh = now;
+      }
+    }
+  }
   return _turso;
 }
 async function tursoEnsure() {
@@ -580,6 +679,15 @@ async function tursoEnsure() {
       value TEXT,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ps_rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      reset_at INTEGER NOT NULL,
+      locked_until INTEGER DEFAULT 0,
+      first_at INTEGER DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_rate_limits_reset_at ON ps_rate_limits (reset_at);
   `);
   _tursoReady = true;
   return true;
@@ -1025,33 +1133,80 @@ app.post('/api/push/unsubscribe', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Send a push notification to a user (called internally by pushNotification).
-// Fire-and-forget; failures (expired sub etc.) are pruned.
+// v77-bugfix: Send a push notification to a user (called internally by pushNotification).
+// Returns { sent: number, failed: number, pruned: number } for observability.
+// Failures are logged with details, not silently swallowed.
 async function sendWebPush(db, recipientId, payload) {
-  if (!webpush || !VAPID_PUBLIC || !VAPID_PRIVATE) return;
+  const result = { sent: 0, failed: 0, pruned: 0 };
+  
+  if (!webpush) {
+    console.warn('[push] webpush module not configured');
+    return result;
+  }
+  if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
+    console.warn('[push] VAPID keys not configured - push notifications disabled');
+    return result;
+  }
+  
   const u = db.users.find(x => x.id === recipientId);
-  if (!u || !Array.isArray(u.pushSubs) || u.pushSubs.length === 0) return;
+  if (!u) {
+    console.warn('[push] recipient not found:', recipientId);
+    return result;
+  }
+  if (!Array.isArray(u.pushSubs) || u.pushSubs.length === 0) {
+    // No subscriptions - this is expected, not an error
+    return result;
+  }
+  
   const body = JSON.stringify(payload);
   const stillValid = [];
+  
   await Promise.all(u.pushSubs.map(async (sub) => {
+    if (!sub || !sub.endpoint) {
+      console.warn('[push] invalid subscription object for', u.username);
+      result.pruned++;
+      return;
+    }
+    
     try {
       await webpush.sendNotification(sub, body, { TTL: 60 });
       stillValid.push(sub);
+      result.sent++;
     } catch (e) {
-      // 404/410 = subscription expired
+      // 404/410 = subscription expired - expected and handled
       if (e.statusCode === 404 || e.statusCode === 410) {
-        console.log('[push] pruning expired sub for', u.username);
+        console.log('[push] pruning expired sub for', u.username, '-', sub.endpoint.slice(0, 50));
+        result.pruned++;
       } else {
-        console.warn('[push] send error', e.statusCode, e.body || e.message);
-        stillValid.push(sub); // keep it; might be a transient error
+        // Log unexpected errors with full details
+        console.error('[push] send error for', u.username, {
+          statusCode: e.statusCode,
+          body: e.body || null,
+          message: e.message || 'Unknown error',
+          endpoint: sub.endpoint ? sub.endpoint.slice(0, 60) : 'no-endpoint'
+        });
+        // Keep subscription on transient errors (5xx, network issues)
+        if (e.statusCode >= 500 || !e.statusCode) {
+          stillValid.push(sub);
+        } else {
+          // Client errors (4xx except 404/410) - prune bad subscriptions
+          result.pruned++;
+        }
+        result.failed++;
       }
     }
   }));
+  
+  // Update user's subscriptions if any were pruned
   if (stillValid.length !== u.pushSubs.length) {
     u.pushSubs = stillValid;
-    // Lazy save via ephemeral
-    saveDatabase(db, true).catch(() => {});
+    // Async save - don't block notification delivery
+    saveDatabase(db, true).catch((e) => {
+      console.warn('[push] failed to save pruned subs:', e && e.message);
+    });
   }
+  
+  return result;
 }
 
 // ---------- Real-time event queue + SSE ----------
@@ -1307,18 +1462,18 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
     const db = await fetchPrimaryDatabase();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) { await authFailureDelay(); return res.status(404).json({ error: AUTH_GENERIC_ERROR }); }
-    const lock = checkAccountLock(user.id);
+    const lock = await checkAccountLock(user.id);
     if (lock.locked) {
       res.setHeader('Retry-After', String(Math.ceil(lock.remaining / 1000)));
       return res.status(429).json({ error: 'Too many login attempts. Please wait and try again.' });
     }
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
-      recordLoginFail(user.id);
+      await recordLoginFail(user.id);
       await authFailureDelay();
       return res.status(401).json({ error: AUTH_GENERIC_ERROR });
     }
-    clearLoginFails(user.id);
+    await clearLoginFails(user.id);
     const token = signToken(user);
     return res.json({ token, user: sanitizeUser(user, true) });
   } catch (e) {
