@@ -31,6 +31,14 @@ const State = {
   rtcLastSignalAt: Math.max(Number(safeLocalGet('ps_rtcLastSignalAt', 0) || 0), Date.now() - 5000),
 };
 
+// ====== Self-heal config ======
+// This version must match SW_VERSION in sw.js. If it doesn't, the page is
+// running stale code and needs to heal.
+const APP_VERSION = 'priv-spaca-v68-self-heal';
+const HEAL_MAX_ATTEMPTS = 2;
+const HEAL_PROBE_TIMEOUT_MS = 4000;
+const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
+
 const API_BASE = '/api';
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -7711,21 +7719,214 @@ function registerServiceWorker() {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js?v=68-self-heal').then((reg) => {
       try { reg.update(); } catch (_) {}
-      // Listen for updates and offer reload
+      // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
         const sw = reg.installing;
         if (!sw) return;
         sw.addEventListener('statechange', () => {
           if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-            // New version available — activate quickly to remove any old stuck loader cache
+            console.log('[sw] new version waiting; activating now');
             try { sw.postMessage({ type: 'SKIP_WAITING' }); } catch (_) {}
-            console.log('[sw] new version installed; activating');
+          }
+          if (sw.state === 'activated' && navigator.serviceWorker.controller) {
+            // If the old controller is still around, a reload is the only way
+            // to switch to the new SW. Do it once, gracefully.
+            if (!sessionStorage.getItem('ps_sw_reload_once')) {
+              sessionStorage.setItem('ps_sw_reload_once', '1');
+              console.log('[sw] activated new version; reloading once');
+              setTimeout(() => location.reload(), 300);
+            }
           }
         });
       });
+      // If a new SW is already waiting (e.g. from a previous tab), activate it
+      if (reg.waiting) {
+        try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (_) {}
+      }
     }).catch(err => console.warn('[sw] register failed', err.message));
   });
 }
+
+// ====== Self-healing utilities ======
+const SelfHeal = {
+  async clearCaches() {
+    if (!window.caches || !caches.keys) return;
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
+      console.log('[heal] cleared', keys.length, 'cache(s)');
+    } catch (_) {}
+  },
+  async unregisterServiceWorkers() {
+    if (!navigator.serviceWorker) return;
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations().catch(() => []);
+      await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+      console.log('[heal] unregistered', regs.length, 'SW registration(s)');
+    } catch (_) {}
+  },
+  clearStorage() {
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && HEAL_STORAGE_PREFIXES.some(p => key.startsWith(p))) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch (_) {}
+    try {
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key && HEAL_STORAGE_PREFIXES.some(p => key.startsWith(p))) {
+          sessionStorage.removeItem(key);
+        }
+      }
+    } catch (_) {}
+    console.log('[heal] cleared app storage keys');
+  },
+  async clearIndexedDB() {
+    if (!window.indexedDB || !indexedDB.databases) return;
+    try {
+      const dbs = await indexedDB.databases().catch(() => []);
+      await Promise.all(dbs.map(db => {
+        if (db && db.name && HEAL_STORAGE_PREFIXES.some(p => db.name.startsWith(p))) {
+          return indexedDB.deleteDatabase(db.name);
+        }
+      }));
+      console.log('[heal] cleared', dbs.length, 'IDB database(s)');
+    } catch (_) {}
+  },
+  async probeApiHealth() {
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), HEAL_PROBE_TIMEOUT_MS) : null;
+    try {
+      const res = await fetch('/api/health', {
+        cache: 'no-store',
+        signal: controller ? controller.signal : undefined,
+      });
+      if (timer) clearTimeout(timer);
+      return { ok: res && res.ok, status: res ? res.status : 0 };
+    } catch (e) {
+      if (timer) clearTimeout(timer);
+      return { ok: false, error: e && e.name };
+    }
+  },
+  async probeSwVersion() {
+    // Bypass SW cache by busting the URL. Old SW won't have cached this exact URL.
+    const url = '/sw.js?__heal_probe=' + Date.now();
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), HEAL_PROBE_TIMEOUT_MS) : null;
+    try {
+      const res = await fetch(url, {
+        cache: 'no-store',
+        signal: controller ? controller.signal : undefined,
+      });
+      if (timer) clearTimeout(timer);
+      if (!res || !res.ok) return { ok: false, reason: 'fetch-failed' };
+      const text = await res.text();
+      const match = text.match(/SW_VERSION\s*=\s*['"]([^'"]+)['"]/);
+      const swVersion = match ? match[1] : null;
+      return {
+        ok: swVersion === APP_VERSION,
+        swVersion,
+        appVersion: APP_VERSION,
+        reason: swVersion === APP_VERSION ? null : (swVersion ? 'version-mismatch' : 'no-version'),
+      };
+    } catch (e) {
+      if (timer) clearTimeout(timer);
+      return { ok: false, reason: 'exception', error: e && e.name };
+    }
+  },
+  showManualReset(reason) {
+    if (document.getElementById('ps-heal-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'ps-heal-overlay';
+    overlay.innerHTML = `
+      <div style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;">
+        <div style="background:#111;color:#fff;max-width:420px;width:100%;border-radius:16px;padding:28px;font-family:system-ui,sans-serif;text-align:center;border:1px solid #333;">
+          <h2 style="margin:0 0 12px;font-size:22px;">App needs a reset</h2>
+          <p style="margin:0 0 20px;color:#bbb;line-height:1.5;">
+            The app couldn't recover automatically (${reason || 'unknown issue'}).
+            Tap below to clear cached data and reload.
+          </p>
+          <button id="ps-heal-reset" style="background:#00a2ff;color:#fff;border:none;border-radius:10px;padding:14px 28px;font-size:16px;cursor:pointer;font-weight:600;">
+            Reset & Reload
+          </button>
+          <p style="margin:16px 0 0;font-size:12px;color:#777;">
+            You will be signed out and the latest version will load.
+          </p>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    document.getElementById('ps-heal-reset').addEventListener('click', async () => {
+      await SelfHeal.deepHeal('manual-reset');
+    });
+  },
+  async deepHeal(reason) {
+    console.warn('[heal] deep heal triggered:', reason);
+    sessionStorage.setItem('ps_deep_heal_reason', reason || 'unknown');
+    await SelfHeal.unregisterServiceWorkers();
+    await SelfHeal.clearCaches();
+    await SelfHeal.clearIndexedDB();
+    SelfHeal.clearStorage();
+    const url = new URL(location.href);
+    url.searchParams.set('heal', 'done');
+    try { location.replace(url.toString()); } catch (_) { location.reload(true); }
+  },
+  async bootHeal() {
+    const attempts = parseInt(sessionStorage.getItem('ps_heal_attempts') || '0', 10);
+    if (attempts >= HEAL_MAX_ATTEMPTS) {
+      console.warn('[heal] too many heal attempts; showing manual reset');
+      SelfHeal.showManualReset('too-many-auto-attempts');
+      return { healed: false, reason: 'too-many-attempts' };
+    }
+
+    const [health, version] = await Promise.all([
+      SelfHeal.probeApiHealth(),
+      SelfHeal.probeSwVersion(),
+    ]);
+
+    const healthOk = health.ok;
+    const versionOk = version.ok;
+
+    if (healthOk && versionOk) {
+      sessionStorage.removeItem('ps_heal_attempts');
+      return { healed: false, healthy: true };
+    }
+
+    const reason = !healthOk
+      ? ('health:' + (health.error || health.status || 'fail'))
+      : ('version:' + (version.reason || 'mismatch'));
+
+    sessionStorage.setItem('ps_heal_attempts', String(attempts + 1));
+    await SelfHeal.deepHeal(reason);
+    return { healed: true, reason };
+  },
+  startPeriodicCheck() {
+    // After boot, keep an eye on API health. If it disappears while the tab
+    // is active, it may be a wedged SW; try a lighter heal (clear caches,
+    // unregister SW, reload) once per session.
+    let lastHealthy = true;
+    setInterval(async () => {
+      if (document.hidden) return;
+      const h = await SelfHeal.probeApiHealth();
+      if (h.ok) {
+        lastHealthy = true;
+        return;
+      }
+      if (lastHealthy) {
+        lastHealthy = false;
+        console.warn('[heal] periodic check detected API loss');
+        const attempts = parseInt(sessionStorage.getItem('ps_periodic_heal_attempts') || '0', 10);
+        if (attempts < 1) {
+          sessionStorage.setItem('ps_periodic_heal_attempts', String(attempts + 1));
+          await SelfHeal.deepHeal('periodic-api-loss');
+        }
+      }
+    }, 30000);
+  },
+};
 
 let _installPrompt = null;
 function bindInstallPrompt() {
@@ -7882,33 +8083,11 @@ function boot() {
   const yr = $('#yr');
   if (yr) yr.textContent = String(new Date().getFullYear());
 
-  // v67: Self-heal broken app state. If a previous deploy left a stale SW
-  // or empty caches, the user sees a broken app (empty feed, no members,
-  // no messages). On boot, do a quick liveness check and force-recover
-  // by unregistering the SW + clearing all caches + hard reloading.
-  try {
-    const healFlag = sessionStorage.getItem('ps_heal_v67');
-    if (!healFlag) {
-      sessionStorage.setItem('ps_heal_v67', '1');
-      fetch('/api/health', { cache: 'no-store' }).then(r => {
-        if (r && r.ok) return; // health check passed, nothing to do
-        // Health failed despite us fetching — SW might be broken
-      }).catch(() => {
-        // Network failed entirely. If a SW is active, unregister it and
-        // hard-reload to recover from broken cache state.
-        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-          console.warn('[heal] network failed with active SW; unregistering + reloading');
-          navigator.serviceWorker.getRegistrations().then(regs => {
-            for (const r of regs) r.unregister();
-          });
-          if (window.caches && caches.keys) {
-            caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
-          }
-          setTimeout(() => { try { window.location.reload(true); } catch (_) { window.location.reload(); } }, 800);
-        }
-      });
-    }
-  } catch (_) { /* don't block boot on heal logic */ }
+  // v68-improved self-heal: detect both API unreachability AND stale SW/app
+  // version mismatches. Deep-heal by unregistering SWs, clearing caches,
+  // wiping app storage/IDB, and reloading. Caps attempts to avoid loops and
+  // falls back to a manual reset overlay if auto-heal keeps failing.
+  try { SelfHeal.bootHeal(); } catch (_) {}
 
   // Hard anti-stuck guard: if any startup/network/cache problem leaves the splash
   // visible, move to the login screen instead of showing an endless loader.
@@ -7921,52 +8100,6 @@ function boot() {
       toast('Startup was slow. Showing login screen now.', 'info');
     }
   }, 5000);
-
-  // v68-self-heal: if the previous service worker is stuck serving an old
-  // app.js, /api/health will still respond (it's never cached) but our
-  // network-first JS+CSS will keep returning the old version. Detect this
-  // mismatch once at boot, then unregister all SWs, wipe every Cache
-  // Storage, and hard-reload so the new app ships.
-  // Runs unconditionally, but only DOES the destructive cleanup when the
-  // health probe fails (i.e. we can't even reach our own API). That's
-  // a strong signal the SW is wedged (correctly: /api/* is never cached
-  // by our SW).
-  (function selfHealOnce() {
-    if (sessionStorage.getItem('ps_selfHeal_v68_attempted') === '1') return;
-    sessionStorage.setItem('ps_selfHeal_v68_attempted', '1');
-    let didHeal = false;
-    const onHealthy = () => {
-      if (didHeal) return;
-      didHeal = true;
-      // Stash a flag so post-boot flows know we self-healed in this session
-      sessionStorage.setItem('ps_selfHeal_v68_clean', '1');
-    };
-    const onBroken = async () => {
-      if (didHeal) return;
-      didHeal = true;
-      console.warn('[self-heal] /api/health unreachable, wiping SW + caches');
-      try {
-        if (navigator.serviceWorker) {
-          const regs = await navigator.serviceWorker.getRegistrations().catch(() => []);
-          await Promise.all(regs.map(r => r.unregister().catch(() => {})));
-        }
-        if (window.caches && caches.keys) {
-          const keys = await caches.keys().catch(() => []);
-          await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
-        }
-      } catch (_) {}
-      // Hard-reload bypassing HTTP cache
-      try { sessionStorage.setItem('ps_selfHeal_v68_clean', '1'); } catch (_) {}
-      const url = new URL(location.href);
-      url.searchParams.set('heal', 'v68');
-      location.replace(url.toString());
-    };
-    // Hard cap: 4s. If health doesn't respond in time, assume SW is wedged.
-    const timer = setTimeout(() => { onBroken(); }, 4000);
-    fetch('/api/health', { cache: 'no-store' })
-      .then(r => { clearTimeout(timer); if (r && r.ok) onHealthy(); else onBroken(); })
-      .catch(() => { clearTimeout(timer); onBroken(); });
-  })();
 
   bindAuth();
   // Wrap each UI-binding step so a bug in any single one (e.g. a missing
@@ -7982,6 +8115,7 @@ function boot() {
     try { step(); } catch (e) { console.error('[boot] ' + (step.name || 'bind step') + ' failed:', e); }
   }
   try { registerServiceWorker(); } catch (e) { console.error('[boot] registerServiceWorker failed:', e); }
+  try { SelfHeal.startPeriodicCheck(); } catch (e) { console.error('[boot] startPeriodicCheck failed:', e); }
   try { applyStoredTheme(); } catch (e) { console.error('[boot] applyStoredTheme failed:', e); }
   try { refreshIcons(); } catch (e) { console.error('[boot] refreshIcons failed:', e); }
 
