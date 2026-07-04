@@ -34,7 +34,7 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v72-rtc-fix';
+const APP_VERSION = 'priv-spaca-v73-call-icon-fix';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -8309,13 +8309,23 @@ function onCallConnected() {
 }
 
 function resetCallControlBtns() {
+  // v73-icon-fix: query by [data-lucide] instead of the 'i' tag name. Lucide's
+  // createIcons() (run once at boot, before any call is ever placed) replaces
+  // every <i data-lucide="..."> placeholder with a real <svg data-lucide="...">
+  // element. After that runs, querySelector('i') finds nothing and .setAttribute()
+  // on null throws a TypeError — which used to happen synchronously inside
+  // showCallUI() -> resetCallControlBtns(), i.e. BEFORE the caller ever created
+  // or sent the WebRTC offer. That is why the caller's screen showed "Calling..."
+  // while the callee never received anything: the call was aborted by this
+  // exception before signaling even started. [data-lucide] matches both the
+  // original <i> placeholder and Lucide's rendered <svg> replacement.
   _callMuted = false; _callSpeakerOn = false; _callFacingMode = 'user';
   const muteBtn = $('#callMuteBtn');
-  if (muteBtn) { muteBtn.classList.remove('active'); muteBtn.querySelector('i').setAttribute('data-lucide', 'mic'); muteBtn.querySelector('span').textContent = 'Mute'; }
+  if (muteBtn) { muteBtn.classList.remove('active'); muteBtn.querySelector('[data-lucide]')?.setAttribute('data-lucide', 'mic'); muteBtn.querySelector('span').textContent = 'Mute'; }
   const speakerBtn = $('#callSpeakerBtn');
-  if (speakerBtn) { speakerBtn.classList.remove('active'); speakerBtn.querySelector('i').setAttribute('data-lucide', 'volume-2'); speakerBtn.querySelector('span').textContent = 'Speaker'; }
+  if (speakerBtn) { speakerBtn.classList.remove('active'); speakerBtn.querySelector('[data-lucide]')?.setAttribute('data-lucide', 'volume-2'); speakerBtn.querySelector('span').textContent = 'Speaker'; }
   const videoBtn = $('#callVideoToggleBtn');
-  if (videoBtn) { videoBtn.classList.add('hidden'); videoBtn.classList.remove('active'); videoBtn.querySelector('i').setAttribute('data-lucide', 'video'); videoBtn.querySelector('span').textContent = 'Camera'; }
+  if (videoBtn) { videoBtn.classList.add('hidden'); videoBtn.classList.remove('active'); videoBtn.querySelector('[data-lucide]')?.setAttribute('data-lucide', 'video'); videoBtn.querySelector('span').textContent = 'Camera'; }
   const flipBtn = $('#callFlipBtn');
   if (flipBtn) { flipBtn.classList.add('hidden'); }
 }
@@ -8655,7 +8665,7 @@ function toggleMute() {
   const btn = $('#callMuteBtn');
   if (btn) {
     btn.classList.toggle('active', _callMuted);
-    btn.querySelector('i').setAttribute('data-lucide', _callMuted ? 'mic-off' : 'mic');
+    btn.querySelector('[data-lucide]')?.setAttribute('data-lucide', _callMuted ? 'mic-off' : 'mic');
     btn.querySelector('span').textContent = _callMuted ? 'Unmute' : 'Mute';
     refreshIcons();
   }
@@ -8678,7 +8688,7 @@ function toggleSpeaker() {
   const btn = $('#callSpeakerBtn');
   if (btn) {
     btn.classList.toggle('active', _callSpeakerOn);
-    btn.querySelector('i').setAttribute('data-lucide', _callSpeakerOn ? 'volume-x' : 'volume-2');
+    btn.querySelector('[data-lucide]')?.setAttribute('data-lucide', _callSpeakerOn ? 'volume-x' : 'volume-2');
     btn.querySelector('span').textContent = _callSpeakerOn ? 'Earpiece' : 'Speaker';
     refreshIcons();
   }
@@ -8694,7 +8704,7 @@ async function toggleVideoUpgrade() {
       const btn = $('#callVideoToggleBtn');
       if (btn) {
         btn.classList.toggle('active', !tracks[0].enabled);
-        btn.querySelector('i').setAttribute('data-lucide', tracks[0].enabled ? 'video' : 'video-off');
+        btn.querySelector('[data-lucide]')?.setAttribute('data-lucide', tracks[0].enabled ? 'video' : 'video-off');
         btn.querySelector('span').textContent = tracks[0].enabled ? 'Camera' : 'Cam Off';
         refreshIcons();
       }
@@ -8718,7 +8728,7 @@ async function toggleVideoUpgrade() {
     $('#callOverlay').classList.add('video-active');
     $('#callFlipBtn').classList.remove('hidden');
     const btn = $('#callVideoToggleBtn');
-    if (btn) { btn.querySelector('i').setAttribute('data-lucide', 'video'); btn.querySelector('span').textContent = 'Camera'; }
+    if (btn) { btn.querySelector('[data-lucide]')?.setAttribute('data-lucide', 'video'); btn.querySelector('span').textContent = 'Camera'; }
     refreshIcons();
   } catch (err) {
     toast('Could not access camera', 'error');
