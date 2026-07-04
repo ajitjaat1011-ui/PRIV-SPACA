@@ -2690,12 +2690,11 @@ function startPolls() {
     _lastNotifPollAt = now;
     pollNotifications();
   }, 2000);
-  // RTC call signaling — poll every 2.5s when active (skip when idle > 30s)
+  // RTC call signaling — poll every 1.5s for fast call pickup regardless of idle state
   State.pollTimers.rtc = setInterval(() => {
     if (isStorySurfaceOpen()) return;
-    if (isUserIdle()) return;
     pollRTCSignals();
-  }, 2500);
+  }, 1500);
   // Try SSE — it'll auto-fall-back if not supported
   connectSSE();
 }
@@ -8523,6 +8522,11 @@ async function handleRTCSignal(data) {
     }
 
   } else if (signal.type === 'candidate') {
+    if (window._rtcPendingOffer && rtcCurrentPeer === peerId && !rtcPeerConnection) {
+      window._pendingIceCandidates = window._pendingIceCandidates || [];
+      window._pendingIceCandidates.push(signal.candidate);
+      return;
+    }
     if (!rtcPeerConnection || rtcCurrentPeer !== peerId) return;
     try {
       await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
@@ -8564,6 +8568,12 @@ async function acceptCall() {
 
   try {
     await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(window._rtcPendingOffer));
+    if (window._pendingIceCandidates) {
+      for (const c of window._pendingIceCandidates) {
+        try { await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
+      }
+      window._pendingIceCandidates = null;
+    }
     const answer = await rtcPeerConnection.createAnswer();
     await rtcPeerConnection.setLocalDescription(answer);
     sendRTCSignal(rtcCurrentPeer, { type: 'answer', answer });
@@ -8767,6 +8777,7 @@ function endCall(remote) {
   _callMuted = false; _callSpeakerOn = false; _callFacingMode = 'user';
   _callConnected = false; _callConnecting = false;
   window._rtcPendingOffer = null;
+  window._pendingIceCandidates = null;
   isVideoCall = false;
   const overlay = $('#callOverlay');
   if (overlay) { overlay.classList.add('hidden'); overlay.classList.remove('video-active'); }
