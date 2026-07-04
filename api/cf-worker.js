@@ -34,6 +34,7 @@ const _b64decode = (b64) => {
 // of WebSockets and does not exhibit this hang, while providing an
 // identical execute()/batch()/executeMultiple() API — a safe drop-in swap.
 import { createClient as createTursoClient } from '@libsql/client/http';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 const app = new Hono();
 
@@ -451,36 +452,61 @@ function mergeDatabase(remoteRaw, localRaw) {
   };
 }
 
-// v74-turso-per-request-client-fix: previously `_turso` was a module-level
-// singleton created once and reused by every subsequent request handled by
-// this Worker isolate. Cloudflare Workers explicitly forbid reusing I/O
-// objects (fetches, streams, and anything that holds a reference to one)
-// across different requests' execution contexts — each incoming request gets
-// its own context, and once that context ends, any pending I/O tied to it is
-// torn down. @libsql/client's HttpClient keeps exactly this kind of
-// cross-request state internally: a lazily-resolving `_endpointPromise` for
-// protocol negotiation and a shared `promiseLimit` concurrency queue. Reusing
-// the same HttpClient instance across requests meant a later request could
-// end up waiting on a promise/queue slot that belonged to an earlier,
-// possibly already-torn-down request context. That is precisely what the
-// Workers runtime was killing (confirmed live via `wrangler pages deployment
-// tail`: exceptions "Promise will never complete" and "The Workers runtime
-// canceled this request because it detected that your Worker's code had
-// hung..."), and it got worse under concurrent load because a single stuck
-// request could back up every other request sharing that same client's
-// internal queue — exactly matching the intermittent /api/rtc/signals,
-// /api/messages, and /api/notifications 500s reported in production.
-// Fix: create a fresh, request-scoped Turso client every time instead of
-// caching one at module scope. @libsql/client/http is a thin fetch()-based
-// wrapper with no real "connection" to keep alive, so this has no meaningful
-// performance cost while eliminating the cross-request I/O reuse entirely.
+// v74/v75-turso-per-request-client-fix:
+//
+// v74 problem: `_turso` was a module-level singleton created once and reused
+// by every subsequent request handled by this Worker isolate. Cloudflare
+// Workers explicitly forbid reusing I/O objects (fetches, streams, and
+// anything that holds a reference to one) across different requests'
+// execution contexts — each incoming request gets its own context, and once
+// that context ends, any pending I/O tied to it is torn down.
+// @libsql/client's HttpClient keeps exactly this kind of cross-request state
+// internally: a lazily-resolving `_endpointPromise` for protocol negotiation
+// and a shared `promiseLimit` concurrency queue. Reusing the same HttpClient
+// instance across requests meant a later request could end up waiting on a
+// promise/queue slot that belonged to an earlier, possibly already-torn-down
+// request context. That is precisely what the Workers runtime was killing
+// (confirmed live via `wrangler pages deployment tail`: exceptions "Promise
+// will never complete" and "The Workers runtime canceled this request
+// because it detected that your Worker's code had hung...").
+//
+// v74 fix (creating a brand new client on every tursoClient() call) solved
+// the hangs, but overcorrected: many request handlers call tursoClient()
+// several times (e.g. fetchDatabase()'s 3-statement batch, then again later
+// in the same handler), and constructing a fresh HttpClient + its internal
+// promiseLimit() queue on every single call added enough CPU overhead under
+// load to trip Cloudflare's per-request CPU-time limit (confirmed live:
+// "error code: 1102" / exceededCpu on some requests).
+//
+// v75 fix: scope exactly ONE Turso client per incoming request using
+// AsyncLocalStorage (available via the nodejs_compat flag already set in
+// wrangler.toml). The very first middleware run for each request creates one
+// client and stores it in ALS; every tursoClient() call within that same
+// request's async call graph reuses that one instance; the next incoming
+// request gets an entirely fresh one. This keeps the safety property from
+// v74 (no I/O object ever crosses a request boundary) while restoring the
+// low per-request overhead of "create once, reuse within this request".
 let _tursoReady = false;
 let _tursoBootstrapped = false;
+const _tursoAls = new AsyncLocalStorage();
 function isTursoConfigured() {
   return !!(TURSO_DATABASE_URL && TURSO_AUTH_TOKEN);
 }
 function tursoClient() {
+  const store = _tursoAls.getStore();
+  if (store) {
+    if (!store.client) store.client = createTursoClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
+    return store.client;
+  }
+  // Fallback for any code path that runs outside the per-request ALS context
+  // (e.g. scheduled/background work). Still request-scoped in spirit: a new
+  // client each time, never cached at module level.
   return createTursoClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
+}
+// Runs `fn` inside a fresh per-request Turso-client scope. Wired into the
+// global '*' middleware below so every request gets exactly one scope.
+function runWithTursoRequestScope(fn) {
+  return _tursoAls.run({ client: null }, fn);
 }
 async function tursoEnsure() {
   if (!isTursoConfigured()) return false;
@@ -1629,6 +1655,12 @@ function normalizeRoomId(roomId, currentUserId) {
   return 'general-group';
 }
 function dmRoomFor(a, b) { return 'dm:' + [a, b].sort().join(':'); }
+
+// ---------- Middleware: per-request Turso client scope (must run first — see
+// the v75-turso-per-request-client-fix comment above tursoClient()) ----------
+app.use('*', async (c, next) => {
+  await runWithTursoRequestScope(next);
+});
 
 // ---------- Middleware: load config + security headers + global rate limit ----------
 app.use('*', async (c, next) => {
