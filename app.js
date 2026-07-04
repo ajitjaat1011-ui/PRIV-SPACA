@@ -34,7 +34,7 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v73-call-icon-fix';
+const APP_VERSION = 'priv-spaca-v76-answer-dedup-fix';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -8522,6 +8522,21 @@ async function handleRTCSignal(data) {
 
   } else if (signal.type === 'answer') {
     if (!rtcPeerConnection || rtcCurrentPeer !== peerId) return;
+    // v76-fix: the SAME answer signal can be delivered twice — once via SSE
+    // and once via the 1.5s pollRTCSignals() fallback (both are active at
+    // once; see _sseNeedsPollingBackstop). The first delivery correctly
+    // moves the connection to 'stable'. Calling setRemoteDescription()
+    // again with that same (now stale) answer while already 'stable' is
+    // invalid per the WebRTC spec and throws "Called in wrong state:
+    // stable" — which the old code treated as fatal and used to hang up an
+    // otherwise healthy, already-connected call right after pickup. An
+    // answer is only ever valid to apply once, while we're still waiting
+    // for one (signalingState === 'have-local-offer'); any other state
+    // means this is a stale duplicate we should just ignore.
+    if (rtcPeerConnection.signalingState !== 'have-local-offer') {
+      console.warn('[RTC] ignoring duplicate/stale answer signal (signalingState=' + rtcPeerConnection.signalingState + ')');
+      return;
+    }
     try {
       await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
       if (window._pendingIceCandidates) {
@@ -8536,7 +8551,10 @@ async function handleRTCSignal(data) {
       }
     } catch (e) {
       console.warn('[RTC] setRemoteDescription(answer) failed', e.message);
-      endCall(false);
+      // Only tear down the call if we aren't already connected — a failure
+      // here while already connected/stable would otherwise kill a working
+      // call over what is, in practice, always a stale/duplicate signal.
+      if (!_callConnected) endCall(false);
     }
 
   } else if (signal.type === 'candidate') {
