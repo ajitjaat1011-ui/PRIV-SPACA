@@ -100,9 +100,8 @@ const JWT_EXPIRES_DAYS = 7;
 // continue to validate at their original cost. We do a transparent upgrade
 // to rounds=6 the first time a user signs in successfully.
 const PASSWORD_HASH_ROUNDS = 6;
-// Lower cache TTL on Cloudflare since each request can hit a different isolate
-// (no shared memory). Faster TTL = better consistency across concurrent users.
-const CACHE_TTL_MS = 500;
+// Cache TTL on Cloudflare tuned for up to 100 concurrent users (absorbs polling spikes across isolates)
+const CACHE_TTL_MS = 2500;
 const EPHEMERAL_WRITE_INTERVAL_MS = 30000;
 
 // ---------- In-memory cache + DB ----------
@@ -691,11 +690,11 @@ async function fetchTursoMirror(fallbackDb = null) {
       }
     }
     let usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
-    let postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC');
+    let postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300');
     if ((!usersRows.rows?.length && !postsRows.rows?.length) && fallbackDb) {
       await syncTursoMirror(fallbackDb);
       usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
-      postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC');
+      postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300');
     }
     return normalizeDb({
       users: (usersRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
@@ -863,7 +862,7 @@ async function fetchPrimaryDatabase() {
       // v66: batch reads in a single round trip
       const batchRs = await tu.batch([
         { sql: 'SELECT data_json FROM ps_users' },
-        { sql: 'SELECT data_json FROM ps_posts' },
+        { sql: 'SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300' },
       ], 'read');
       const uRows = (batchRs[0] && batchRs[0].rows) || [];
       const pRows = (batchRs[1] && batchRs[1].rows) || [];
@@ -908,7 +907,7 @@ async function fetchDatabase({ fresh = false, includeTurso = true } = {}) {
       // /users, and any endpoint that needs to read the in-memory db shape.
       const batchRs = await tu.batch([
         { sql: 'SELECT data_json FROM ps_users' },
-        { sql: 'SELECT data_json FROM ps_posts' },
+        { sql: 'SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300' },
       ], 'read');
       const uRows = (batchRs[0] && batchRs[0].rows) || [];
       const pRows = (batchRs[1] && batchRs[1].rows) || [];
@@ -946,8 +945,10 @@ async function saveDatabase(data, isEphemeral = false, opts = {}) {
     return true;
   }
   if (isEphemeral && isTursoPrimary()) {
-    // Same CAS strategy as durable writes, but best-effort: losing one
-    // heartbeat/typing tick is acceptable; clobbering a real user/message is not.
+    const now = nowMs();
+    if (now - lastEphemeralWrite < 10000) return true;
+    lastEphemeralWrite = now;
+    // Throttled CAS strategy for ephemeral data: avoids ps_kv lock contention under 100 concurrent users
     try {
       const versioned = await tursoReadDbVersioned();
       const merged = mergeDatabase(versioned.db, data);
@@ -2267,33 +2268,20 @@ app.get('/api/user/typing', requireAuth, async (c) => {
 
 // ---------- Messages ----------
 app.get('/api/messages', requireAuth, async (c) => {
-  cacheTimestamp = 0; // force fresh primary read for chat reliability across Cloudflare isolates
   const roomId = normalizeRoomId(c.req.query('roomId') || 'general-group', c.get('userId'));
   if (roomId.startsWith('dm:')) {
     const parts = roomId.slice(3).split(':');
     if (!parts.includes(c.get('userId'))) return c.json({ error: 'Forbidden' }, 403);
   }
-  let db = await fetchDatabase({ fresh: true });
+  let db = await fetchDatabase();
   let now = nowMs();
   const dbRoomMessages = () => db.messages
     .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-200);
   let list = await fetchTursoMessages(roomId, now);
-  // If the structured Turso read layer is empty/stale for a room that the
-  // primary JSON store definitely has, fall back to primary instead of
-  // returning an empty chat during/after migration.
   if (!Array.isArray(list) || (list.length === 0 && db.messages.some(m => m.roomId === roomId && !m.deletedAt))) {
     list = dbRoomMessages();
-  }
-  if (list.length === 0 && roomId.startsWith('dm:')) {
-    await sleepMs(900); cacheTimestamp = 0; db = await fetchDatabase({ fresh: true }); now = nowMs();
-    const mirrorRetry = await fetchTursoMessages(roomId, now);
-    const primaryRetry = db.messages
-      .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .slice(-200);
-    list = (Array.isArray(mirrorRetry) && (mirrorRetry.length > 0 || primaryRetry.length === 0)) ? mirrorRetry : primaryRetry;
   }
   const enriched = list.map(m => {
     const author = db.users.find(u => u.id === m.userId);
@@ -2500,7 +2488,6 @@ app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
 
 // ---------- Notifications ----------
 app.get('/api/notifications', requireAuth, async (c) => {
-  cacheTimestamp = 0; // force fresh read so badges/notifications appear immediately
   const db = await fetchDatabase();
   const myId = c.get('userId');
   const sourceUsers = db.users || [];
@@ -2630,8 +2617,7 @@ app.post('/api/user/unblock', requireAuth, async (c) => {
 app.get('/api/user/:id/profile', requireAuth, async (c) => {
   const targetId = c.req.param('id');
   const myId = c.get('userId');
-  cacheTimestamp = 0; // profile counts/posts must be fresh immediately after follow/post
-  const sdb = isTursoConfigured() ? await fetchTursoMirror() : await fetchDatabase({ fresh: true });
+  const sdb = await fetchDatabase();
   const sourceUsers = sdb.users || [];
   const sourcePosts = sdb.posts || [];
   const target = sourceUsers.find(u => u.id === targetId);
@@ -2669,8 +2655,7 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
 
 // ---------- Posts ----------
 app.get('/api/posts', requireAuth, async (c) => {
-  cacheTimestamp = 0; // force fresh feed read after posts/likes/comments
-  const sdb = isTursoConfigured() ? await fetchTursoMirror() : await fetchDatabase();
+  const sdb = await fetchDatabase();
   const sourceUsers = sdb.users || [];
   const sourcePosts = sdb.posts || [];
   const myId = c.get('userId');
@@ -2820,10 +2805,9 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
 });
 
 app.get('/api/rtc/signals', requireAuth, async (c) => {
-  cacheTimestamp = 0; // ALWAYS force fresh read — signals must arrive immediately
   const since = Number(c.req.query('since') || 0) || 0;
   const myId = c.get('userId');
-  const db = await fetchDatabase({ fresh: true });
+  const db = await fetchDatabase();
   const now = nowMs();
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
   let signals = db.rtcSignals
@@ -2831,19 +2815,6 @@ app.get('/api/rtc/signals', requireAuth, async (c) => {
     .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
     .slice(-30)
     .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
-  // Retry once after short delay if empty (covers cross-isolate write lag)
-  if (signals.length === 0) {
-    await sleepMs(500);
-    cacheTimestamp = 0;
-    const db2 = await fetchDatabase({ fresh: true });
-    const now2 = nowMs();
-    db2.rtcSignals = Array.isArray(db2.rtcSignals) ? db2.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now2) : [];
-    signals = db2.rtcSignals
-      .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now2 - (x.createdAt || 0) <= 45000))
-      .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
-      .slice(-30)
-      .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
-  }
   return c.json({ signals, now });
 });
 
@@ -3224,12 +3195,9 @@ app.get('/api/feed', requireAuth, async (c) => {
   // showing the poster's real name. Prefer the live user record (so a
   // display-name/photo change shows up immediately) and fall back to the
   // frozen snapshot if the user record is unavailable for any reason.
-  // We need the full users array here (not just the single fetched me) so
-  // each post's author can be resolved to a real username/displayName.
-  const allUsers = await tc.execute('SELECT data_json FROM ps_users').catch(() => ({ rows: [] }));
-  const usersById = new Map((allUsers.rows || []).map(r => {
-    try { const u = JSON.parse(r.data_json); return [u.id, u]; } catch { return [null, null]; }
-  }).filter(([k]) => k));
+  // We use cached users array from fetchDatabase (db.users) so
+  // each post's author can be resolved without scanning ps_users over network.
+  const usersById = new Map((db.users || []).map(u => [u.id, u]));
   const posts = postData.rows?.map(r => {
     try { return JSON.parse(r.data_json); } catch { return null; }
   }).filter(Boolean).filter(p => !p.deletedAt).map(p => {
