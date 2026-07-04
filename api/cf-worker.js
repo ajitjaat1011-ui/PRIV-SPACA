@@ -451,15 +451,36 @@ function mergeDatabase(remoteRaw, localRaw) {
   };
 }
 
-let _turso = null;
+// v74-turso-per-request-client-fix: previously `_turso` was a module-level
+// singleton created once and reused by every subsequent request handled by
+// this Worker isolate. Cloudflare Workers explicitly forbid reusing I/O
+// objects (fetches, streams, and anything that holds a reference to one)
+// across different requests' execution contexts — each incoming request gets
+// its own context, and once that context ends, any pending I/O tied to it is
+// torn down. @libsql/client's HttpClient keeps exactly this kind of
+// cross-request state internally: a lazily-resolving `_endpointPromise` for
+// protocol negotiation and a shared `promiseLimit` concurrency queue. Reusing
+// the same HttpClient instance across requests meant a later request could
+// end up waiting on a promise/queue slot that belonged to an earlier,
+// possibly already-torn-down request context. That is precisely what the
+// Workers runtime was killing (confirmed live via `wrangler pages deployment
+// tail`: exceptions "Promise will never complete" and "The Workers runtime
+// canceled this request because it detected that your Worker's code had
+// hung..."), and it got worse under concurrent load because a single stuck
+// request could back up every other request sharing that same client's
+// internal queue — exactly matching the intermittent /api/rtc/signals,
+// /api/messages, and /api/notifications 500s reported in production.
+// Fix: create a fresh, request-scoped Turso client every time instead of
+// caching one at module scope. @libsql/client/http is a thin fetch()-based
+// wrapper with no real "connection" to keep alive, so this has no meaningful
+// performance cost while eliminating the cross-request I/O reuse entirely.
 let _tursoReady = false;
 let _tursoBootstrapped = false;
 function isTursoConfigured() {
   return !!(TURSO_DATABASE_URL && TURSO_AUTH_TOKEN);
 }
 function tursoClient() {
-  if (!_turso) _turso = createTursoClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
-  return _turso;
+  return createTursoClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
 }
 async function tursoEnsure() {
   if (!isTursoConfigured()) return false;
