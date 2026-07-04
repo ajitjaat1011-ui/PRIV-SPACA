@@ -8193,6 +8193,8 @@ const ICE_SERVERS = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
     {
       urls: [
         'turn:openrelay.metered.ca:80',
@@ -8215,8 +8217,11 @@ let _callConnected = false;   // single source of truth
 let _callConnecting = false;
 let _incomingCallAlertTimer = null;
 let _incomingCallAudioCtx = null;
+let _rtcInitialized = false;
 
 function initWebRTC() {
+  if (_rtcInitialized) return;
+  _rtcInitialized = true;
   const callBtn = $('#rtcCallBtn');
   const chooser = $('#rtcCallChooser');
   if (callBtn && chooser) {
@@ -8511,18 +8516,23 @@ async function handleRTCSignal(data) {
     if (!rtcPeerConnection || rtcCurrentPeer !== peerId) return;
     try {
       await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      if (window._pendingIceCandidates) {
+        for (const c of window._pendingIceCandidates) {
+          try { await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
+        }
+        window._pendingIceCandidates = null;
+      }
       if (signal.video) {
         isVideoCall = true;
         showVideoCallChrome({ localCamera: !!(rtcLocalStream && rtcLocalStream.getVideoTracks().length) });
       }
-      // Connection will be confirmed by oniceconnectionstatechange → 'connected'
     } catch (e) {
       console.warn('[RTC] setRemoteDescription(answer) failed', e.message);
       endCall(false);
     }
 
   } else if (signal.type === 'candidate') {
-    if (window._rtcPendingOffer && rtcCurrentPeer === peerId && !rtcPeerConnection) {
+    if ((window._rtcPendingOffer || !rtcPeerConnection || !rtcPeerConnection.remoteDescription) && rtcCurrentPeer === peerId) {
       window._pendingIceCandidates = window._pendingIceCandidates || [];
       window._pendingIceCandidates.push(signal.candidate);
       return;
