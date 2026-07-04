@@ -5,8 +5,7 @@
   "main": "api/index.js",
   "scripts": {
     "start": "node api/index.js",
-    "dev": "node api/index.js",
-    "monitor": "node scripts/monitor.js"
+    "dev": "node api/index.js"
   },
   "engines": {
     "node": ">=18.x"

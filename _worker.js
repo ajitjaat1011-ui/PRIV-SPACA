@@ -1,4 +1,4 @@
-import app, { runAndStoreDiagnostics } from './api/cf-worker.js';
+import app from './api/cf-worker.js';
 
 function isBlockedAssetPath(pathname) {
   if (!pathname || pathname === '/') return false;
@@ -40,16 +40,5 @@ export default {
     }
 
     return new Response('Not found', { status: 404 });
-  },
-
-  async scheduled(event, env, ctx) {
-    // Periodic health / diagnostics run. Stores detected problems in Turso
-    // so the agent (or an admin) can inspect them without needing a live server.
-    try {
-      await runAndStoreDiagnostics();
-      console.log('[scheduled] diagnostics run completed');
-    } catch (e) {
-      console.error('[scheduled] diagnostics run failed:', e && e.message);
-    }
   }
 };
