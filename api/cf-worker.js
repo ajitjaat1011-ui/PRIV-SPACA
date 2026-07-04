@@ -18,7 +18,22 @@ const _b64decode = (b64) => {
   return new TextDecoder().decode(bytes);
 };
 
-import { createClient as createTursoClient } from '@libsql/client/web';
+// NOTE (v73-libsql-http-fix): '@libsql/client/web' uses libsql's WebSocket/Hrana
+// transport, which has a known, reproducible bug on Cloudflare Workers: under
+// concurrent load it can hang a request indefinitely instead of resolving or
+// throwing. The Workers runtime then kills the request itself after its own
+// hang-detector fires, returning a bare "error code: 1101" / 500 with NO
+// worker-side try/catch ever getting a chance to run (confirmed live via
+// `wrangler pages deployment tail`: exceptions named "The Workers runtime
+// canceled this request because it detected that your Worker's code had
+// hung..."). This intermittently broke /api/messages, /api/notifications,
+// /api/stream (SSE) and — critically — /api/rtc/signals, which is exactly
+// why call recipients would sometimes never see the incoming-call popup:
+// their poll (or SSE) request silently died before it could deliver the
+// offer. '@libsql/client/http' uses plain fetch() (Hrana-over-HTTP) instead
+// of WebSockets and does not exhibit this hang, while providing an
+// identical execute()/batch()/executeMultiple() API — a safe drop-in swap.
+import { createClient as createTursoClient } from '@libsql/client/http';
 
 const app = new Hono();
 
