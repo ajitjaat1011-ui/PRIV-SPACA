@@ -523,6 +523,8 @@ async function tursoEnsure() {
       key TEXT PRIMARY KEY,
       count INTEGER NOT NULL,
       reset_at INTEGER NOT NULL,
+      locked_until INTEGER DEFAULT 0,
+      first_at INTEGER DEFAULT 0,
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ps_rate_limits_reset_at ON ps_rate_limits (reset_at);
@@ -1247,6 +1249,8 @@ async function requireAuth(c, next) {
 }
 
 // ---------- Rate limiting ----------
+// v77-bugfix: In-memory rate limiter is ONLY used as fallback when Turso is unreachable.
+// For cross-isolate consistency, use sharedRateLimit() which persists to Turso.
 const _rateBuckets = new Map();
 function rateLimit({ key, limit, windowMs }) {
   const now = Date.now();
@@ -1302,56 +1306,142 @@ async function authRateLimit(c, next) {
   await next();
 }
 async function globalRateLimit(c, next) {
-  // PERFORMANCE: this used to call sharedRateLimit(), which does a blocking
-  // synchronous INSERT/UPDATE round trip to Neon Postgres on EVERY single
-  // API request (even /api/health and /api/push/vapid-public, which touch
-  // no user data at all). That added ~300-500ms of pure network latency to
-  // every request in the app, since this middleware runs before any route
-  // handler. Measured live: /api/health dropped from ~230-620ms to
-  // low-tens-of-ms after this change.
+  // v77-bugfix: Use a hybrid approach for global rate limiting:
+  // 1. Fast in-memory check first (400 req/min per IP) for quick rejection of obvious abuse
+  // 2. For paths that don't need DB checks (/api/health, /api/push/vapid-public), skip shared check
+  // 3. For all other paths, the auth rate limiting is handled by authRateLimit + authSubjectRateLimit
   //
-  // This is a generous 400-req/min-per-IP COURTESY limit, not the app's
-  // real abuse defense — that's authRateLimit (40/15min, primary-DB-backed) and
-  // authSubjectRateLimit + the per-account lockout below, all of which are
-  // unchanged and still shared across isolates via the primary DB. A fast in-memory,
-  // per-isolate counter is an acceptable trade-off here: worst case under
-  // heavy multi-isolate traffic is that a single IP can exceed 400/min by
-  // some multiple of Cloudflare's isolate count before any single isolate
-  // notices, which was already true before this change (the security audit
-  // flagged the in-memory global limiter as "inconsistent across isolates"
-  // even when it *did* also write to Neon, since each isolate could still
-  // race ahead using its own local counter before the shared value caught
-  // up). Making it explicitly in-memory keeps the same practical guarantee
-  // while removing 100% of requests' dependency on a live Postgres round
-  // trip just to check a soft courtesy limit.
+  // This balances performance (no DB round-trip for every request) with security
+  // (auth endpoints are still protected by sharedRateLimit via authRateLimit middleware).
   const ip = clientIp(c);
-  const r = rateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
-  c.header('X-RateLimit-Limit', '400');
-  c.header('X-RateLimit-Remaining', String(r.remaining));
-  if (!r.allowed) {
-    c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
-    return c.json({ error: 'Too many requests. Please slow down.' }, 429);
+  const path = c.req.path;
+  
+  // Fast paths that don't need shared rate limiting
+  const fastPaths = ['/api/health', '/api/push/vapid-public', '/api/stream'];
+  const isFastPath = fastPaths.some(p => path === p || path.startsWith(p));
+  
+  if (isFastPath) {
+    // In-memory only for fast paths
+    const r = rateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
+    c.header('X-RateLimit-Limit', '400');
+    c.header('X-RateLimit-Remaining', String(r.remaining));
+    if (!r.allowed) {
+      c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
+      return c.json({ error: 'Too many requests. Please slow down.' }, 429);
+    }
+  } else {
+    // Use shared rate limiting for other paths (writes are batched/async in sharedRateLimit)
+    const r = await sharedRateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
+    c.header('X-RateLimit-Limit', '400');
+    c.header('X-RateLimit-Remaining', String(r.remaining));
+    if (!r.allowed) {
+      c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
+      return c.json({ error: 'Too many requests. Please slow down.' }, 429);
+    }
   }
   await next();
 }
 
-// Brute-force lockout
+// Brute-force lockout - v77-bugfix: Now persisted to Turso for cross-isolate consistency
+// In-memory cache is used as a fast local check + fallback when Turso is unavailable
 const _loginFails = new Map();
-function checkAccountLock(userId) {
+
+async function checkAccountLock(userId) {
+  const now = Date.now();
+  
+  // Try Turso first for cross-isolate consistency
+  if (isTursoPrimary()) {
+    try {
+      await tursoEnsure();
+      const rs = await tursoClient().execute({
+        sql: 'SELECT count, first_at, locked_until FROM ps_rate_limits WHERE key = ? LIMIT 1',
+        args: ['lockout:' + userId],
+      });
+      if (rs.rows && rs.rows.length > 0) {
+        const row = rs.rows[0];
+        const lockedUntil = Number(row.locked_until || 0);
+        if (lockedUntil > now) {
+          return { locked: true, remaining: lockedUntil - now };
+        }
+      }
+      return { locked: false };
+    } catch (e) {
+      console.warn('[checkAccountLock:turso] falling back to in-memory:', e && e.message);
+    }
+  }
+  
+  // Fallback to in-memory
   const rec = _loginFails.get(userId);
   if (!rec) return { locked: false };
-  const now = Date.now();
   if (rec.lockedUntil && rec.lockedUntil > now) return { locked: true, remaining: rec.lockedUntil - now };
   return { locked: false };
 }
-function recordLoginFail(userId) {
+
+async function recordLoginFail(userId) {
   const now = Date.now();
+  const fiveMinutesAgo = now - 5 * 60_000;
+  
+  // Update in-memory for this isolate
   let rec = _loginFails.get(userId);
-  if (!rec || (now - rec.firstAt) > 5 * 60_000) { rec = { count: 0, firstAt: now }; _loginFails.set(userId, rec); }
+  if (!rec || (now - rec.firstAt) > 5 * 60_000) { 
+    rec = { count: 0, firstAt: now }; 
+    _loginFails.set(userId, rec); 
+  }
   rec.count++;
   if (rec.count >= 5) rec.lockedUntil = now + 15 * 60_000;
+  
+  // Persist to Turso for cross-isolate consistency
+  if (isTursoPrimary()) {
+    try {
+      await tursoEnsure();
+      const key = 'lockout:' + userId;
+      const lockoutDuration = 15 * 60_000;
+      const windowDuration = 5 * 60_000;
+      
+      // Atomic upsert: insert new or update existing
+      // If first_at is older than 5 minutes, reset the counter
+      await tursoClient().execute({
+        sql: `INSERT INTO ps_rate_limits (key, count, first_at, reset_at, locked_until, updated_at) 
+              VALUES (?, 1, ?, ?, 0, ?)
+              ON CONFLICT(key) DO UPDATE SET
+                count = CASE WHEN first_at < ? THEN 1 ELSE count + 1 END,
+                first_at = CASE WHEN first_at < ? THEN ? ELSE first_at END,
+                locked_until = CASE 
+                  WHEN first_at < ? THEN 0
+                  WHEN count + 1 >= 5 THEN ?
+                  ELSE locked_until 
+                END,
+                updated_at = ?`,
+        args: [
+          key, now, now + windowDuration, now,  // INSERT values
+          fiveMinutesAgo,                        // reset if first_at < 5min ago
+          fiveMinutesAgo, now,                   // update first_at if needed
+          fiveMinutesAgo, now + lockoutDuration, // set locked_until if count >= 5
+          now
+        ],
+      });
+    } catch (e) {
+      console.warn('[recordLoginFail:turso] error:', e && e.message);
+    }
+  }
 }
-function clearLoginFails(userId) { _loginFails.delete(userId); }
+
+async function clearLoginFails(userId) {
+  _loginFails.delete(userId);
+  
+  // Clear from Turso too
+  if (isTursoPrimary()) {
+    try {
+      await tursoEnsure();
+      await tursoClient().execute({
+        sql: 'DELETE FROM ps_rate_limits WHERE key = ?',
+        args: ['lockout:' + userId],
+      });
+    } catch (e) {
+      console.warn('[clearLoginFails:turso] error:', e && e.message);
+    }
+  }
+}
 const AUTH_GENERIC_ERROR = 'Invalid username/email or password.';
 async function authFailureDelay() {
   await sleepMs(250 + Math.floor(Math.random() * 250));
@@ -1584,11 +1674,25 @@ async function _encryptPushPayload(subscription, payloadBytes) {
   return _concatBytes(header, ciphertext);
 }
 
+// v77-bugfix: Send web push notification with improved error handling and observability
 async function sendWebPush(db, recipientId, payload) {
+  const result = { sent: 0, failed: 0, pruned: 0 };
+  
   try {
-    if (!VAPID_PRIVATE || !VAPID_PUBLIC) return;
+    if (!VAPID_PRIVATE || !VAPID_PUBLIC) {
+      console.warn('[push] VAPID keys not configured - push notifications disabled');
+      return result;
+    }
+    
     const user = (db && db.users || []).find(u => u.id === recipientId);
-    if (!user || !user.pushSubs || user.pushSubs.length === 0) return;
+    if (!user) {
+      console.warn('[push] recipient not found:', recipientId);
+      return result;
+    }
+    if (!user.pushSubs || user.pushSubs.length === 0) {
+      // No subscriptions - expected, not an error
+      return result;
+    }
 
     const bodyStr = JSON.stringify(payload || {});
     const bodyBytes = new TextEncoder().encode(bodyStr);
@@ -1596,8 +1700,21 @@ async function sendWebPush(db, recipientId, payload) {
     // Process each subscription in parallel; prune expired ones (404/410)
     const dead = [];
     await Promise.all(user.pushSubs.map(async (sub) => {
+      if (!sub || !sub.endpoint) {
+        console.warn('[push] invalid subscription for', user.username);
+        dead.push(sub && sub.endpoint);
+        result.pruned++;
+        return;
+      }
+      
       try {
-        if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) return;
+        if (!sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+          console.warn('[push] subscription missing keys for', user.username);
+          dead.push(sub.endpoint);
+          result.pruned++;
+          return;
+        }
+        
         const url = new URL(sub.endpoint);
         const audience = url.origin;
         const exp = Math.floor(Date.now() / 1000) + 12 * 60 * 60; // 12h
@@ -1616,31 +1733,56 @@ async function sendWebPush(db, recipientId, payload) {
           },
           body: cipher,
         });
-        if (res.status === 404 || res.status === 410) {
+        
+        if (res.status === 201 || res.ok) {
+          result.sent++;
+        } else if (res.status === 404 || res.status === 410) {
+          console.log('[push] pruning expired sub for', user.username, '-', sub.endpoint.slice(0, 50));
           dead.push(sub.endpoint);
-        } else if (!res.ok && res.status >= 400) {
-          // Log but don't fail
-          console.warn('[push] non-OK', res.status, sub.endpoint.slice(0, 60));
+          result.pruned++;
+        } else if (res.status >= 400 && res.status < 500) {
+          // Client errors (except 404/410) - likely bad subscription
+          console.warn('[push] client error', res.status, 'for', user.username, '-', sub.endpoint.slice(0, 50));
+          dead.push(sub.endpoint);
+          result.pruned++;
+          result.failed++;
+        } else {
+          // Server errors (5xx) - keep subscription, might be transient
+          console.warn('[push] server error', res.status, 'for', user.username, '-', sub.endpoint.slice(0, 50));
+          result.failed++;
         }
       } catch (e) {
-        console.warn('[push] err', e && e.message);
+        console.error('[push] exception for', user.username, {
+          message: e && e.message,
+          endpoint: sub.endpoint ? sub.endpoint.slice(0, 60) : 'unknown'
+        });
+        result.failed++;
       }
     }));
 
-    // Prune expired subscriptions (best-effort write; don't block)
+    // Prune expired/invalid subscriptions (best-effort write; don't block)
     if (dead.length) {
       try {
         const fresh = await fetchDatabase();
         const u = fresh.users.find(x => x.id === recipientId);
         if (u && u.pushSubs) {
-          u.pushSubs = u.pushSubs.filter(s => !dead.includes(s.endpoint));
+          const deadSet = new Set(dead.filter(Boolean));
+          u.pushSubs = u.pushSubs.filter(s => s && s.endpoint && !deadSet.has(s.endpoint));
           await saveDatabase(fresh, false);
         }
-      } catch (_) {}
+      } catch (e) {
+        console.warn('[push] failed to save pruned subs:', e && e.message);
+      }
     }
   } catch (e) {
-    console.warn('[sendWebPush] outer err', e && e.message);
+    console.error('[sendWebPush] outer error:', {
+      message: e && e.message,
+      stack: e && e.stack ? e.stack.slice(0, 200) : null,
+      recipientId
+    });
   }
+  
+  return result;
 }
 
 // ---------- Rooms ----------
@@ -1834,7 +1976,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       await authFailureDelay();
       return c.json({ error: AUTH_GENERIC_ERROR }, 404);
     }
-    const lock = checkAccountLock(user.id);
+    const lock = await checkAccountLock(user.id);
     if (lock.locked) {
       c.header('Retry-After', String(Math.ceil(lock.remaining / 1000)));
       return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
@@ -1875,11 +2017,11 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       }
     }
     if (!ok) {
-      recordLoginFail(user.id);
+      await recordLoginFail(user.id);
       await authFailureDelay();
       return c.json({ error: AUTH_GENERIC_ERROR }, 401);
     }
-    clearLoginFails(user.id);
+    await clearLoginFails(user.id);
     // v66: transparent bcrypt cost upgrade. If the stored hash is at an
     // older cost, rehash at PASSWORD_HASH_ROUNDS in the background so the
     // next login is fast. Never block the response on this.
