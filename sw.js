@@ -5,15 +5,15 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v77-bugfix';
-const STATIC_CACHE = 'priv-spaca-static-v77-bugfix';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v77-bugfix';
+const SW_VERSION = 'priv-spaca-v78-bugfixes';
+const STATIC_CACHE = 'priv-spaca-static-v78-bugfixes';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v78-bugfixes';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=77-bugfix',
-  '/app.js?v=77-bugfix',
+  '/style.css?v=78-bugfixes',
+  '/app.js?v=78-bugfixes',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',

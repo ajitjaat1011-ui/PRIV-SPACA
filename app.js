@@ -34,7 +34,7 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v77-bugfix';
+const APP_VERSION = 'priv-spaca-v78-bugfixes';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -7828,19 +7828,30 @@ const SelfHeal = {
         signal: controller ? controller.signal : undefined,
       });
       if (timer) clearTimeout(timer);
-      if (!res || !res.ok) return { ok: false, reason: 'fetch-failed' };
+      if (!res || !res.ok) return { ok: false, reason: 'fetch-failed', status: res?.status };
       const text = await res.text();
-      const match = text.match(/SW_VERSION\s*=\s*['"]([^'"]+)['"]/);
+      // Bug #6 fix: More robust SW_VERSION extraction with multiple pattern variants
+      const match = text.match(/SW_VERSION\s*=\s*['"`]([^'"`]+)['"`]/) ||
+                    text.match(/const\s+SW_VERSION\s*=\s*['"`]([^'"`]+)['"`]/) ||
+                    text.match(/SW_VERSION\s*:\s*['"`]([^'"`]+)['"`]/);
       const swVersion = match ? match[1] : null;
+      // Only consider it a valid mismatch if both versions are present and differ
+      const appVersionValid = APP_VERSION && typeof APP_VERSION === 'string' && APP_VERSION.length > 0;
+      const swVersionValid = swVersion && typeof swVersion === 'string' && swVersion.length > 0;
+      const versionsMatch = appVersionValid && swVersionValid && swVersion === APP_VERSION;
+      // Be lenient if we can't find SW_VERSION in the file — might be a network issue
+      // or minification changed the format. Don't trigger heal in ambiguous cases.
+      const isOk = versionsMatch || (!swVersionValid && appVersionValid);
       return {
-        ok: swVersion === APP_VERSION,
-        swVersion,
-        appVersion: APP_VERSION,
-        reason: swVersion === APP_VERSION ? null : (swVersion ? 'version-mismatch' : 'no-version'),
+        ok: isOk,
+        swVersion: swVersion || '(unknown)',
+        appVersion: APP_VERSION || '(unknown)',
+        reason: isOk ? null : (swVersionValid ? 'version-mismatch' : 'no-version-found'),
       };
     } catch (e) {
       if (timer) clearTimeout(timer);
-      return { ok: false, reason: 'exception', error: e && e.name };
+      // Network errors should not trigger heal — user might be offline
+      return { ok: true, reason: 'exception-ignored', error: e && e.name };
     }
   },
   showManualReset(reason) {

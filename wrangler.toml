@@ -19,7 +19,9 @@ GH_REPO = "ajitjaat1011-ui/PRIV-SPACA"
 GH_BRANCH = "data"
 GH_FILE = "db.json"
 # Turso/libSQL is the only primary store. Neon has been removed.
-ADMIN_USERS = "Arvindjaat1011,ajitjaat1011@gmail.com,arvindjaat1011@gmail.com"
-OWNER_EMAIL = "ajitjaat1011@gmail.com"
-OWNER_USERNAME = "Arvindjaat1011"
+# Bug #11 fix: Admin users should be set as encrypted Pages secrets, not here
+# in plaintext. Use: wrangler pages secret put ADMIN_USERS --project-name priv-spaca
+# ADMIN_USERS = "" # Set via encrypted secret
+# OWNER_EMAIL = "" # Set via encrypted secret
+# OWNER_USERNAME = "" # Set via encrypted secret
 
