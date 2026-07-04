@@ -889,6 +889,58 @@ async function fetchTursoMessages(roomId, now = nowMs()) {
   }
 }
 
+// Bug #8 fix: Use UPSERT instead of DELETE+INSERT to avoid race conditions
+// when multiple concurrent requests refresh DM index for the same owner.
+async function tursoRefreshDmIndexForOwners(db, ownerIds) {
+  if (!isTursoConfigured()) return false;
+  const owners = Array.from(new Set((ownerIds || []).filter(Boolean)));
+  if (!owners.length) return true;
+  await tursoEnsure();
+  const ts = nowMs();
+  const stmts = [];
+  for (const ownerId of owners) {
+    const dmIndex = new Map();
+    for (const m of (db.messages || [])) {
+      if (!m || m.deletedAt || typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
+      const parts = m.roomId.slice(3).split(':').filter(Boolean);
+      if (!parts.includes(ownerId) || parts.length !== 2) continue;
+      const peerId = parts.find(id => id !== ownerId);
+      if (!peerId) continue;
+      const prev = dmIndex.get(peerId);
+      if (prev && Number(prev.createdAt || 0) >= Number(m.createdAt || 0)) continue;
+      let preview;
+      if (m.encrypted) preview = '🔒 Encrypted message';
+      else if (m.storyReply) preview = 'Replied to a story';
+      else if (m.imageUrl) preview = '📷 Photo';
+      else preview = String(m.text || '').slice(0, 60);
+      dmIndex.set(peerId, {
+        ownerUserId: ownerId,
+        peerUserId: peerId,
+        roomId: m.roomId,
+        createdAt: Number(m.createdAt || 0),
+        fromMe: m.userId === ownerId,
+        text: preview,
+      });
+    }
+    // Use UPSERT: only update if new message is more recent to avoid race clobbering
+    for (const row of dmIndex.values()) {
+      stmts.push({
+        sql: `INSERT INTO ps_dm_index (owner_user_id, peer_user_id, room_id, created_at, from_me, updated_at, data_json) 
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(owner_user_id, peer_user_id) DO UPDATE SET
+                room_id = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.room_id ELSE ps_dm_index.room_id END,
+                created_at = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.created_at ELSE ps_dm_index.created_at END,
+                from_me = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.from_me ELSE ps_dm_index.from_me END,
+                updated_at = excluded.updated_at,
+                data_json = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.data_json ELSE ps_dm_index.data_json END`,
+        args: [row.ownerUserId, row.peerUserId, row.roomId, row.createdAt, row.fromMe ? 1 : 0, ts, JSON.stringify(row)],
+      });
+    }
+  }
+  if (stmts.length) await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] dm index refresh failed', e && e.message); });
+  return true;
+}
+
 async function fetchPrimaryDatabase() {
   const remote = await persistRead();
   if (remote && typeof remote === 'object') return normalizeDb(remote);
@@ -2053,6 +2105,10 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       _broadcastEvent('new_message', { roomId, message: enrichedMsg }, req.userId);
     }
     await saveDatabase(db, false);
+    // Bug #8 fix: Update DM index with UPSERT to avoid race conditions
+    if (typeof roomId === 'string' && roomId.startsWith('dm:')) {
+      tursoRefreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean)).catch(() => {});
+    }
     res.json({ message: enrichedMsg });
   } catch (e) {
     console.error(e);
@@ -2071,6 +2127,10 @@ app.post('/api/messages/delete', authMiddleware, async (req, res) => {
     // Soft delete — keeps the row for 30 days so we can undo
     m.deletedAt = nowMs();
     await saveDatabase(db, false);
+    // Bug #8 fix: Update DM index with UPSERT to avoid race conditions
+    if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) {
+      tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean)).catch(() => {});
+    }
     res.json({ ok: true, undoUntil: m.deletedAt + 30 * 24 * 3600 * 1000 });
   } catch (e) {
     console.error(e);
@@ -2752,6 +2812,8 @@ app.post('/api/stories/:id/reply', authMiddleware, async (req, res) => {
   _pushEvent(p.userId, 'new_message', { roomId, message: enriched });
   pushNotification(db, p.userId, 'story_reply', myId, { text: bodyText.slice(0, 80), postId: p.id });
   await saveDatabase(db, false);
+  // Bug #8 fix: Update DM index with UPSERT to avoid race conditions
+  tursoRefreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean)).catch(() => {});
   res.json({ ok: true, message: enriched });
 });
 
