@@ -64,7 +64,10 @@ self.addEventListener('fetch', (event) => {
       fetch(req).then((res) => {
         if (res && res.ok) {
           const copy = res.clone();
-          caches.open(STATIC_CACHE).then((c) => c.put(req, copy));
+          caches.open(STATIC_CACHE).then(async (c) => {
+            await c.put(req, copy);
+            await trimCache(STATIC_CACHE, 200);
+          });
         }
         return res;
       }).catch(() => caches.match(req))
@@ -79,7 +82,10 @@ self.addEventListener('fetch', (event) => {
         cached || fetch(req).then((res) => {
           if (res && res.ok && res.type !== 'opaque') {
             const copy = res.clone();
-            caches.open(RUNTIME_CACHE).then((c) => c.put(req, copy));
+            caches.open(RUNTIME_CACHE).then(async (c) => {
+              await c.put(req, copy);
+              await trimCache(RUNTIME_CACHE, 300);
+            });
           }
           return res;
         }).catch(() => cached)
@@ -95,7 +101,10 @@ self.addEventListener('fetch', (event) => {
       fetch(req).then((res) => {
         if (res && res.ok) {
           const copy = res.clone();
-          caches.open(STATIC_CACHE).then((c) => c.put(req, copy));
+          caches.open(STATIC_CACHE).then(async (c) => {
+            await c.put(req, copy);
+            await trimCache(STATIC_CACHE, 200);
+          });
         }
         return res;
       }).catch(() => caches.match(req).then((c) => c || caches.match('/index.html')))
@@ -142,5 +151,36 @@ self.addEventListener('notificationclick', (event) => {
 
 
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+  if (!event.data) return;
+  if (event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+  if (event.data.type === 'CLEAR_CACHES') {
+    event.waitUntil(
+      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
+        .then(() => event.source && event.source.postMessage({ type: 'CACHES_CLEARED' }))
+    );
+  }
+  if (event.data.type === 'GET_VERSION') {
+    if (event.source && event.source.postMessage) {
+      event.source.postMessage({ type: 'VERSION', version: SW_VERSION });
+    }
+  }
+});
+
+// Limit runtime cache bloat: evict oldest entries when a cache grows too large.
+async function trimCache(cacheName, maxEntries = 300) {
+  const cache = await caches.open(cacheName).catch(() => null);
+  if (!cache) return;
+  const keys = await cache.keys();
+  if (keys.length <= maxEntries) return;
+  const toDelete = keys.slice(0, keys.length - maxEntries);
+  await Promise.all(toDelete.map(req => cache.delete(req)));
+}
+
+// Periodic background cleanup of stale runtime cache entries.
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'trim-caches') {
+    event.waitUntil(Promise.all([trimCache(RUNTIME_CACHE, 300), trimCache(STATIC_CACHE, 200)]));
+  }
 });
