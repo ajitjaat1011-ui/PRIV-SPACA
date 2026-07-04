@@ -2309,35 +2309,56 @@ app.post('/api/rtc/signal', authMiddleware, async (req, res) => {
   const me = db.users.find(u => u.id === req.userId);
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: req.userId, displayName: 'Member', username: 'member' };
   const payload = { fromId: req.userId, author, signal };
-  // Persist the signal so a client relying on the /api/rtc/signals poll
-  // fallback (when SSE is unavailable) still receives it. Mirrors cf-worker.js.
+  const now = nowMs();
+  _pushEvent(targetId, 'rtc_signal', payload);
+
+  if (isTursoConfigured()) {
+    const rtcId = uid('rtc');
+    const fullRow = { id: rtcId, createdAt: now, ...payload };
+    await tursoClient().execute({
+      sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?)',
+      args: [rtcId, targetId, 'rtc_signal', JSON.stringify(fullRow), now]
+    }).catch(e => console.warn('[rtc] event insert failed:', e && e.message));
+    if (Math.random() < 0.1) {
+      tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ? AND kind = ?', args: [now - 60000, 'rtc_signal'] }).catch(() => {});
+    }
+    return res.json({ ok: true });
+  }
+
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals : [];
   if (signalType === 'end' || signalType === 'reject' || signalType === 'busy') {
-    // Terminal signals also clear any pending offer/answer between the pair.
     db.rtcSignals = db.rtcSignals.filter(x => !(
       (x.targetId === targetId && x.payload && x.payload.fromId === req.userId) ||
       (x.targetId === req.userId && x.payload && x.payload.fromId === targetId)
     ));
   }
-  const expiresAt = nowMs() + (signalType === 'offer' ? 20000 : 60000);
-  db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt });
+  const expiresAt = now + (signalType === 'offer' ? 20000 : 60000);
+  db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: now, expiresAt });
   if (db.rtcSignals.length > 200) db.rtcSignals = db.rtcSignals.slice(-200);
-  // Fan out instantly to any live SSE subscriber too.
-  _pushEvent(targetId, 'rtc_signal', payload);
-  // Signaling must be durable but is high-frequency; ephemeral save keeps
-  // in-memory instant while throttling remote writes.
   await saveDatabase(db, true);
   res.json({ ok: true });
 });
 
-// GET /api/rtc/signals — poll fallback for WebRTC signaling when SSE is down.
-// Returns recent signals addressed to the caller since `?since=<ms>`, matching
-// the cf-worker.js contract the frontend's pollRTCSignals() expects.
 app.get('/api/rtc/signals', authMiddleware, async (req, res) => {
   const since = Number(req.query.since || 0) || 0;
   const myId = req.userId;
-  const db = await fetchDatabase();
   const now = nowMs();
+
+  if (isTursoConfigured()) {
+    const rs = await tursoClient().execute({
+      sql: 'SELECT id, data, created_at FROM ps_events WHERE user_id = ? AND kind = ? AND created_at > ? AND created_at >= ? ORDER BY created_at ASC LIMIT 50',
+      args: [myId, 'rtc_signal', since, now - 45000]
+    }).catch(() => ({ rows: [] }));
+    const signals = (rs.rows || []).map(r => {
+      try {
+        const obj = JSON.parse(r.data);
+        return { id: r.id, createdAt: Number(r.created_at || now), ...obj };
+      } catch { return null; }
+    }).filter(Boolean);
+    return res.json({ signals, now });
+  }
+
+  const db = await fetchDatabase();
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
   const signals = db.rtcSignals
     .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 20000))

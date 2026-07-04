@@ -2812,14 +2812,29 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
   const me = db.users.find(u => u.id === myId);
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: myId, displayName: 'Member', username: 'member' };
   const payload = { fromId: myId, author, signal };
+  const now = nowMs();
+  _pushEvent(targetId, 'rtc_signal', payload);
+
+  if (isTursoConfigured()) {
+    const rtcId = uid('rtc');
+    const fullRow = { id: rtcId, createdAt: now, ...payload };
+    await tursoClient().execute({
+      sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?)',
+      args: [rtcId, targetId, 'rtc_signal', JSON.stringify(fullRow), now]
+    }).catch(e => console.warn('[rtc] event insert failed:', e && e.message));
+    if (Math.random() < 0.1) {
+      tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ? AND kind = ?', args: [now - 60000, 'rtc_signal'] }).catch(() => {});
+    }
+    return c.json({ ok: true });
+  }
+
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals : [];
   if (signalType === 'end' || signalType === 'reject' || signalType === 'busy') {
     db.rtcSignals = db.rtcSignals.filter(x => !( (x.targetId === targetId && x.payload?.fromId === myId) || (x.targetId === myId && x.payload?.fromId === targetId) ));
   }
-  const expiresAt = nowMs() + (signalType === 'offer' ? 20000 : 60000);
-  db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: nowMs(), expiresAt });
+  const expiresAt = now + (signalType === 'offer' ? 20000 : 60000);
+  db.rtcSignals.push({ id: uid('rtc'), targetId, payload, createdAt: now, expiresAt });
   if (db.rtcSignals.length > 200) db.rtcSignals = db.rtcSignals.slice(-200);
-  _pushEvent(targetId, 'rtc_signal', payload);
   const persisted = await saveDatabaseVerified(db, d => (d.rtcSignals || []).some(x => x.id === db.rtcSignals[db.rtcSignals.length - 1].id));
   if (isPersist() && !persisted) return c.json({ error: 'Call signal storage unavailable. Please retry.' }, 503);
   return c.json({ ok: true });
@@ -2828,8 +2843,23 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
 app.get('/api/rtc/signals', requireAuth, async (c) => {
   const since = Number(c.req.query('since') || 0) || 0;
   const myId = c.get('userId');
-  const db = await fetchDatabase();
   const now = nowMs();
+
+  if (isTursoConfigured()) {
+    const rs = await tursoClient().execute({
+      sql: 'SELECT id, data, created_at FROM ps_events WHERE user_id = ? AND kind = ? AND created_at > ? AND created_at >= ? ORDER BY created_at ASC LIMIT 50',
+      args: [myId, 'rtc_signal', since, now - 45000]
+    }).catch(() => ({ rows: [] }));
+    const signals = (rs.rows || []).map(r => {
+      try {
+        const obj = JSON.parse(r.data);
+        return { id: r.id, createdAt: Number(r.created_at || now), ...obj };
+      } catch { return null; }
+    }).filter(Boolean);
+    return c.json({ signals, now });
+  }
+
+  const db = await fetchDatabase();
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
   let signals = db.rtcSignals
     .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 45000))
