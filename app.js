@@ -8266,14 +8266,12 @@ function showCallUI(status, user, incoming) {
   // Reset control button states
   resetCallControlBtns();
 
-  // SHOW controls immediately for ALL calls (outgoing + incoming)
-  // User needs mute/speaker from the moment the overlay appears
-  $('#callActiveControls').classList.remove('hidden');
-
-  // Bottom bar
+  // Hide controls during incoming ring so accept/reject buttons fit cleanly on mobile screens
   if (incoming) {
+    $('#callActiveControls').classList.add('hidden');
     $('#rtcAcceptBtn').classList.remove('hidden');
   } else {
+    $('#callActiveControls').classList.remove('hidden');
     $('#rtcAcceptBtn').classList.add('hidden');
   }
   $('#rtcRejectBtn').classList.remove('hidden');
