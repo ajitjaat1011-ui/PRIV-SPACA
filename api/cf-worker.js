@@ -859,18 +859,21 @@ async function fetchPrimaryDatabase() {
   if (isTursoConfigured() && isTursoPrimary()) {
     try {
       const tu = tursoClient();
-      // v66: batch reads in a single round trip
       const batchRs = await tu.batch([
+        { sql: 'SELECT value FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] },
         { sql: 'SELECT data_json FROM ps_users' },
         { sql: 'SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300' },
       ], 'read');
-      const uRows = (batchRs[0] && batchRs[0].rows) || [];
-      const pRows = (batchRs[1] && batchRs[1].rows) || [];
+      const kvRow = (batchRs[0] && batchRs[0].rows && batchRs[0].rows[0]) ? batchRs[0].rows[0].value : '{}';
+      const baseDb = safeJson(String(kvRow || '{}'), normalizeDb(localCache || {}));
+      const uRows = (batchRs[1] && batchRs[1].rows) || [];
+      const pRows = (batchRs[2] && batchRs[2].rows) || [];
       const users = uRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
       const posts = pRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
-      if (users.length > 0 || posts.length > 0) {
-        return normalizeDb({ ...(localCache || {}), users, posts });
-      }
+      if (users.length > 0) baseDb.users = users;
+      if (posts.length > 0) baseDb.posts = posts;
+      localCache = normalizeDb(baseDb);
+      return localCache;
     } catch (e) {
       console.warn('[fetchPrimary] structured read failed, falling back:', e && e.message);
     }
@@ -889,39 +892,41 @@ async function fetchDatabase({ fresh = false, includeTurso = true } = {}) {
     runScheduler(localCache);
     return localCache;
   }
+  if (isTursoConfigured() && isTursoPrimary()) {
+    try {
+      const tu = tursoClient();
+      if (includeTurso) {
+        const batchRs = await tu.batch([
+          { sql: 'SELECT value FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] },
+          { sql: 'SELECT data_json FROM ps_users' },
+          { sql: 'SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300' },
+        ], 'read');
+        const kvRow = (batchRs[0] && batchRs[0].rows && batchRs[0].rows[0]) ? batchRs[0].rows[0].value : '{}';
+        localCache = normalizeDb(safeJson(String(kvRow || '{}'), normalizeDb(localCache || {})));
+        const uRows = (batchRs[1] && batchRs[1].rows) || [];
+        const pRows = (batchRs[2] && batchRs[2].rows) || [];
+        const users = uRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
+        const posts = pRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
+        if (users.length > 0) localCache.users = users;
+        if (posts.length > 0) localCache.posts = posts;
+        localCache.meta = { ...(localCache.meta || {}), secondaryPersistence: 'turso-structured' };
+      } else {
+        const rs = await tu.execute({ sql: 'SELECT value FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
+        const kvRow = (rs.rows && rs.rows[0]) ? rs.rows[0].value : '{}';
+        localCache = normalizeDb(safeJson(String(kvRow || '{}'), normalizeDb(localCache || {})));
+      }
+      const ownerSeeded = await ensureOwnerAccount(localCache);
+      cacheTimestamp = nowMs();
+      const changed = runScheduler(localCache) || ownerSeeded;
+      if (changed) await saveDatabase(localCache, false);
+      return localCache;
+    } catch (e) {
+      console.warn('[fetchDatabase] Turso batch read failed, falling back:', e && e.message);
+    }
+  }
   const remote = await repoRead();
   if (remote && typeof remote === 'object' && !remote._httpError && !remote._err) {
     localCache = normalizeDb(remote);
-  }
-  // v65: when Turso is the primary persistence layer, also pull user/post
-  // records from the structured tables so that direct ps_users/ps_posts
-  // writes (e.g. via admin scripts or future endpoints) become visible
-  // without waiting for the ps_kv mirror to be rewritten. This is the
-  // "structured overrides mirror" read pattern that keeps both layers
-  // consistent from the consumer's perspective.
-  if (includeTurso && isTursoConfigured()) {
-    try {
-      const tu = tursoClient();
-      // v66: batch the two SELECTs in a single round trip. This halves the
-      // latency for fetchDatabase() which is the hot path for /feed, /posts,
-      // /users, and any endpoint that needs to read the in-memory db shape.
-      const batchRs = await tu.batch([
-        { sql: 'SELECT data_json FROM ps_users' },
-        { sql: 'SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300' },
-      ], 'read');
-      const uRows = (batchRs[0] && batchRs[0].rows) || [];
-      const pRows = (batchRs[1] && batchRs[1].rows) || [];
-      const users = uRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
-      const posts = pRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
-      if (users.length > 0) localCache.users = users;
-      if (posts.length > 0) localCache.posts = posts;
-      localCache.meta = { ...(localCache.meta || {}), secondaryPersistence: 'turso-structured' };
-    } catch (e) {
-      console.warn('[fetchDatabase] structured-merge failed, falling back to mirror:', e && e.message);
-      const mirror = await fetchTursoMirror(localCache);
-      if ((mirror.users || []).length > 0) localCache.users = mirror.users;
-      if ((mirror.posts || []).length > 0) localCache.posts = mirror.posts;
-    }
   }
   const ownerSeeded = await ensureOwnerAccount(localCache);
   cacheTimestamp = now;
@@ -1673,8 +1678,10 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     const reserved = new Set(['admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root']);
     if (reserved.has(usernameLower)) return c.json({ error: 'That username is reserved' }, 403);
 
-    const passwordHash = await bcrypt.hash(password, PASSWORD_HASH_ROUNDS);
-    const pinHash = await bcrypt.hash(pin, PASSWORD_HASH_ROUNDS);
+    const [passwordHash, pinHash] = await Promise.all([
+      bcrypt.hash(password, PASSWORD_HASH_ROUNDS),
+      bcrypt.hash(pin, PASSWORD_HASH_ROUNDS)
+    ]);
     const newUser = {
       id: uid('usr'), email: emailLower, username, displayName: cleanDN,
       bio: '', photoUrl: '', passwordHash, pinHash, tokenVersion: 0,
