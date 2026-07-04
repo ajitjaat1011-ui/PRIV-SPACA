@@ -300,6 +300,9 @@ const GH_BRANCH  = process.env.GH_BRANCH  || 'data';
 const GH_FILE    = process.env.GH_FILE    || 'db.json';
 const ADMIN_USERS = process.env.ADMIN_USERS || process.env.OWNER_USERNAME || process.env.OWNER_EMAIL || '';
 const VIP_UNLOCK_KEY = process.env.VIP_UNLOCK_KEY || '';
+const STREAM_API_KEY = process.env.STREAM_API_KEY || '';
+const STREAM_API_SECRET = process.env.STREAM_API_SECRET || '';
+const STREAM_APP_ID = process.env.STREAM_APP_ID || '';
 // Legacy gist support (still works if configured)
 const GIST_ID    = process.env.GIST_ID || '';
 const GIST_FILE  = 'db.json';
@@ -966,6 +969,23 @@ if (webpush && VAPID_PUBLIC && VAPID_PRIVATE) {
   catch (e) { console.error('[push] setVapidDetails failed', e.message); }
 }
 
+// ---------- GetStream.io integration endpoints ----------
+app.get('/api/stream/config', (req, res) => {
+  res.json({
+    enabled: !!(STREAM_API_KEY && STREAM_API_SECRET),
+    apiKey: STREAM_API_KEY || null,
+    appId: STREAM_APP_ID || null
+  });
+});
+
+app.get('/api/stream/token', authMiddleware, (req, res) => {
+  if (!STREAM_API_KEY || !STREAM_API_SECRET) {
+    return res.status(501).json({ error: 'GetStream API credentials are not configured on this server.' });
+  }
+  const token = jwt.sign({ user_id: String(req.userId) }, STREAM_API_SECRET, { algorithm: 'HS256' });
+  res.json({ token, userId: req.userId, apiKey: STREAM_API_KEY, appId: STREAM_APP_ID });
+});
+
 // GET /api/push/vapid-public — frontend fetches the public key
 app.get('/api/push/vapid-public', (req, res) => {
   res.json({ key: VAPID_PUBLIC || '' });
@@ -1230,8 +1250,10 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
     const reserved = new Set(['admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root']);
     if (reserved.has(usernameLower)) return res.status(403).json({ error: 'That username is reserved' });
 
-    const passwordHash = await bcrypt.hash(password, 12);  // bumped from 10 → 12 rounds
-    const pinHash = await bcrypt.hash(pin, 12);
+    const [passwordHash, pinHash] = await Promise.all([
+      bcrypt.hash(password, 10),
+      bcrypt.hash(pin, 10)
+    ]);
 
     const newUser = {
       id: uid('usr'),

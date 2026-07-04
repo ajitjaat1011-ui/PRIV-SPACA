@@ -41,6 +41,9 @@ let CLOUDINARY_CLOUD_NAME = '';
 let CLOUDINARY_API_KEY = '';
 let CLOUDINARY_API_SECRET = '';
 let CLOUDINARY_FOLDER = 'priv-spaca';
+let STREAM_API_KEY = '';
+let STREAM_API_SECRET = '';
+let STREAM_APP_ID = '';
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true; // curl/server/API agents send no Origin
   try {
@@ -90,6 +93,9 @@ function loadConfig(env) {
   if (env.CLOUDINARY_API_KEY) CLOUDINARY_API_KEY = env.CLOUDINARY_API_KEY;
   if (env.CLOUDINARY_API_SECRET) CLOUDINARY_API_SECRET = env.CLOUDINARY_API_SECRET;
   if (env.CLOUDINARY_FOLDER) CLOUDINARY_FOLDER = env.CLOUDINARY_FOLDER;
+  if (env.STREAM_API_KEY) STREAM_API_KEY = String(env.STREAM_API_KEY).trim();
+  if (env.STREAM_API_SECRET) STREAM_API_SECRET = String(env.STREAM_API_SECRET).trim();
+  if (env.STREAM_APP_ID) STREAM_APP_ID = String(env.STREAM_APP_ID).trim();
 }
 
 const JWT_EXPIRES_DAYS = 7;
@@ -2965,6 +2971,29 @@ app.post('/api/stories/:id/reply', requireAuth, async (c) => {
     await tursoRefreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean));
   }
   return c.json({ ok: true, message: enriched });
+});
+
+// ---------- GetStream.io integration endpoints ----------
+app.get('/api/stream/config', (c) => {
+  return c.json({
+    enabled: !!(STREAM_API_KEY && STREAM_API_SECRET),
+    apiKey: STREAM_API_KEY || null,
+    appId: STREAM_APP_ID || null
+  });
+});
+
+app.get('/api/stream/token', requireAuth, async (c) => {
+  if (!STREAM_API_KEY || !STREAM_API_SECRET) {
+    return c.json({ error: 'GetStream API credentials are not configured on this server.' }, 501);
+  }
+  const myId = c.get('userId');
+  // Generate Stream user JWT signed with STREAM_API_SECRET
+  const header = _b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const payload = _b64url(JSON.stringify({ user_id: String(myId) }));
+  const signingInput = header + '.' + payload;
+  const signature = await hmacSha256(STREAM_API_SECRET, signingInput);
+  const token = signingInput + '.' + signature;
+  return c.json({ token, userId: myId, apiKey: STREAM_API_KEY, appId: STREAM_APP_ID });
 });
 
 // ---------- Admin panel removed by owner request ----------
