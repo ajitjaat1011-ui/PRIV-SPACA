@@ -34,7 +34,7 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v78-bugfixes';
+const APP_VERSION = 'priv-spaca-v79';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -7772,6 +7772,8 @@ const SelfHeal = {
     } catch (_) {}
   },
   clearStorage() {
+    // Keys that must survive a heal cycle to prevent reload loops
+    const PROTECTED_KEYS = ['ps_sw_reload_once', 'ps_heal_attempts', 'ps_deep_heal_reason'];
     try {
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const key = localStorage.key(i);
@@ -7783,7 +7785,7 @@ const SelfHeal = {
     try {
       for (let i = sessionStorage.length - 1; i >= 0; i--) {
         const key = sessionStorage.key(i);
-        if (key && HEAL_STORAGE_PREFIXES.some(p => key.startsWith(p))) {
+        if (key && HEAL_STORAGE_PREFIXES.some(p => key.startsWith(p)) && !PROTECTED_KEYS.includes(key)) {
           sessionStorage.removeItem(key);
         }
       }
@@ -7877,12 +7879,26 @@ const SelfHeal = {
     `;
     document.body.appendChild(overlay);
     document.getElementById('ps-heal-reset').addEventListener('click', async () => {
-      await SelfHeal.deepHeal('manual-reset');
+      // Manual reset: clear everything and reload, but only once
+      try { await SelfHeal.unregisterServiceWorkers(); } catch (_) {}
+      try { await SelfHeal.clearCaches(); } catch (_) {}
+      try { await SelfHeal.clearIndexedDB(); } catch (_) {}
+      // Clear ALL app storage (no protection needed for manual reset)
+      try { localStorage.clear(); } catch (_) {}
+      try { sessionStorage.clear(); } catch (_) {}
+      // Set guard so we don't loop
+      sessionStorage.setItem('ps_sw_reload_once', '1');
+      const url = new URL(location.href);
+      url.searchParams.set('heal', 'manual');
+      try { location.replace(url.toString()); } catch (_) { location.reload(true); }
     });
   },
   async deepHeal(reason) {
     console.warn('[heal] deep heal triggered:', reason);
     sessionStorage.setItem('ps_deep_heal_reason', reason || 'unknown');
+    // Set the SW reload guard BEFORE clearing storage, so after reload
+    // the SW update handler won't trigger yet another reload
+    sessionStorage.setItem('ps_sw_reload_once', '1');
     await SelfHeal.unregisterServiceWorkers();
     await SelfHeal.clearCaches();
     await SelfHeal.clearIndexedDB();
@@ -7894,8 +7910,9 @@ const SelfHeal = {
   async bootHeal() {
     const attempts = parseInt(sessionStorage.getItem('ps_heal_attempts') || '0', 10);
     if (attempts >= HEAL_MAX_ATTEMPTS) {
-      console.warn('[heal] too many heal attempts; showing manual reset');
-      SelfHeal.showManualReset('too-many-auto-attempts');
+      // Too many attempts — stop trying, just log and reset counter
+      console.warn('[heal] too many heal attempts; resetting counter (no more auto-reloads)');
+      sessionStorage.removeItem('ps_heal_attempts');
       return { healed: false, reason: 'too-many-attempts' };
     }
 
@@ -7912,36 +7929,47 @@ const SelfHeal = {
       return { healed: false, healthy: true };
     }
 
-    const reason = !healthOk
-      ? ('health:' + (health.error || health.status || 'fail'))
-      : ('version:' + (version.reason || 'mismatch'));
+    // Version mismatch: just log, clear caches/SW, but do NOT reload.
+    // The next natural navigation or SW update will fix it.
+    if (healthOk && !versionOk) {
+      console.warn('[heal] version mismatch detected (app=' + APP_VERSION + ', sw=' + (version.swVersion || 'unknown') + ') — clearing caches only, no reload');
+      try { await SelfHeal.clearCaches(); } catch (_) {}
+      try { await SelfHeal.unregisterServiceWorkers(); } catch (_) {}
+      sessionStorage.removeItem('ps_heal_attempts');
+      return { healed: false, reason: 'version-mismatch-soft' };
+    }
 
+    // API health failure: this is more serious, try deepHeal but with
+    // the attempt counter so we don't loop forever.
+    const reason = 'health:' + (health.error || health.status || 'fail');
+    console.warn('[heal] API health failure, attempt ' + (attempts + 1) + ': ' + reason);
     sessionStorage.setItem('ps_heal_attempts', String(attempts + 1));
     await SelfHeal.deepHeal(reason);
     return { healed: true, reason };
   },
   startPeriodicCheck() {
     // After boot, keep an eye on API health. If it disappears while the tab
-    // is active, it may be a wedged SW; try a lighter heal (clear caches,
-    // unregister SW, reload) once per session.
+    // is active, log it but do NOT trigger deepHeal/reload. The user can
+    // manually refresh if needed. This prevents reload loops.
     let lastHealthy = true;
     setInterval(async () => {
       if (document.hidden) return;
-      const h = await SelfHeal.probeApiHealth();
-      if (h.ok) {
-        lastHealthy = true;
-        return;
-      }
-      if (lastHealthy) {
-        lastHealthy = false;
-        console.warn('[heal] periodic check detected API loss');
-        const attempts = parseInt(sessionStorage.getItem('ps_periodic_heal_attempts') || '0', 10);
-        if (attempts < 1) {
-          sessionStorage.setItem('ps_periodic_heal_attempts', String(attempts + 1));
-          await SelfHeal.deepHeal('periodic-api-loss');
+      try {
+        const h = await SelfHeal.probeApiHealth();
+        if (h.ok) {
+          lastHealthy = true;
+          return;
         }
+        if (lastHealthy) {
+          lastHealthy = false;
+          console.warn('[heal] periodic check detected API loss — NOT reloading (user can refresh manually)');
+          // Light cleanup only: clear caches so next load is fresh, but no reload
+          try { await SelfHeal.clearCaches(); } catch (_) {}
+        }
+      } catch (e) {
+        console.warn('[heal] periodic check error:', e);
       }
-    }, 30000);
+    }, 60000); // Check every 60s instead of 30s to reduce noise
   },
 };
 
