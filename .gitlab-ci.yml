@@ -55,11 +55,21 @@ test_backend_suite:
   allow_failure: false
 
 test_playwright_suite:
-  extends: .node_defaults
   stage: test
   needs: ["install_deps"]
+  # mcr.microsoft.com/playwright/python images ship Python + browsers but NOT
+  # Node.js, and dev-server.js needs Node to run. Install Node 20 via
+  # NodeSource instead of relying on the (Node-only) .node_defaults image.
   image: mcr.microsoft.com/playwright/python:v1.44.0-jammy
+  cache:
+    key: "$CI_COMMIT_REF_SLUG-node"
+    paths:
+      - .npm-cache/
+      - node_modules/
   script:
+    - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    - apt-get install -y -qq nodejs
+    - node --version && npm --version
     - npm install --no-audit --no-fund
     - node dev-server.js &
     - sleep 3
