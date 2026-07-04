@@ -1604,7 +1604,7 @@ app.use('*', async (c, next) => {
   }
   const origin = c.req.header('origin') || '';
   if (origin && !isAllowedCorsOrigin(origin)) return c.json({ error: 'CORS origin denied' }, 403);
-  if (isProductionRequest(c) && isDefaultJwtSecret() && c.req.path.startsWith('/api/') && c.req.path !== '/api/health') {
+  if (isProductionRequest(c) && isDefaultJwtSecret() && c.req.path.startsWith('/api/') && !['/api/health', '/api/stream/config', '/api/push/vapid-public'].includes(c.req.path)) {
     return c.json({ error: 'Server auth secret is not configured' }, 503);
   }
   c.header('X-Content-Type-Options', 'nosniff');
@@ -2975,25 +2975,32 @@ app.post('/api/stories/:id/reply', requireAuth, async (c) => {
 
 // ---------- GetStream.io integration endpoints ----------
 app.get('/api/stream/config', (c) => {
+  if (c.env) loadConfig(c.env);
+  const apiKey = STREAM_API_KEY || (c.env && c.env.STREAM_API_KEY) || null;
+  const appId = STREAM_APP_ID || (c.env && c.env.STREAM_APP_ID) || null;
+  const apiSecret = STREAM_API_SECRET || (c.env && c.env.STREAM_API_SECRET) || null;
   return c.json({
-    enabled: !!(STREAM_API_KEY && STREAM_API_SECRET),
-    apiKey: STREAM_API_KEY || null,
-    appId: STREAM_APP_ID || null
+    enabled: !!(apiKey && apiSecret),
+    apiKey: apiKey || null,
+    appId: appId || null
   });
 });
 
 app.get('/api/stream/token', requireAuth, async (c) => {
-  if (!STREAM_API_KEY || !STREAM_API_SECRET) {
+  if (c.env) loadConfig(c.env);
+  const apiKey = STREAM_API_KEY || (c.env && c.env.STREAM_API_KEY) || null;
+  const appId = STREAM_APP_ID || (c.env && c.env.STREAM_APP_ID) || null;
+  const apiSecret = STREAM_API_SECRET || (c.env && c.env.STREAM_API_SECRET) || null;
+  if (!apiKey || !apiSecret) {
     return c.json({ error: 'GetStream API credentials are not configured on this server.' }, 501);
   }
   const myId = c.get('userId');
-  // Generate Stream user JWT signed with STREAM_API_SECRET
   const header = _b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = _b64url(JSON.stringify({ user_id: String(myId) }));
   const signingInput = header + '.' + payload;
-  const signature = await hmacSha256(STREAM_API_SECRET, signingInput);
+  const signature = await hmacSha256(apiSecret, signingInput);
   const token = signingInput + '.' + signature;
-  return c.json({ token, userId: myId, apiKey: STREAM_API_KEY, appId: STREAM_APP_ID });
+  return c.json({ token, userId: myId, apiKey, appId });
 });
 
 // ---------- Admin panel removed by owner request ----------
