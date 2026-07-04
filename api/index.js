@@ -2159,6 +2159,29 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
   res.json({ posts: list });
 });
 
+app.get('/api/feed', authMiddleware, async (req, res) => {
+  const limit = Math.min(50, Math.max(5, parseInt(req.query.limit || '20')));
+  const db = await fetchDatabase();
+  const me = (db.users || []).find(u => u.id === req.userId);
+  const following = (me && Array.isArray(me.following)) ? me.following : [];
+  const allFollowing = [...following, req.userId];
+  const usersById = new Map((db.users || []).map(u => [u.id, u]));
+  const posts = (db.posts || [])
+    .filter(p => !p.deletedAt && allFollowing.includes(p.userId) && !p.story)
+    .sort((a,b) => {
+      const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
+      const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
+      return ((b.createdAt||0) * 0.7 + engB * 0.3) - ((a.createdAt||0) * 0.7 + engA * 0.3);
+    })
+    .slice(0, limit)
+    .map(p => {
+      const liveUser = usersById.get(p.userId);
+      const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
+      return { ...p, author: authorObj };
+    });
+  res.json({ posts, source: 'full-db-fallback' });
+});
+
 app.post('/api/posts/create', authMiddleware, async (req, res) => {
   try {
     const { text, imageUrl, images, videoUrl, isScratch, music, style, story, storyExpiresAt, audience } = req.body || {};
