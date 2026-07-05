@@ -2473,16 +2473,19 @@ app.post('/api/user/close-friends', requireAuth, async (c) => {
 
 // ---------- Users list ----------
 app.get('/api/users', requireAuth, async (c) => {
-  const db = await fetchDatabase();
+  const myId = c.get('userId');
   // perf: fetchDatabase() already reads ps_users + ps_posts fresh from Turso
   // (via a single batched read alongside ps_kv) and populates db.users /
-  // db.posts from those exact same structured tables. Calling
-  // fetchTursoMirror(db) here used to re-read ps_users + ps_posts AGAIN as
-  // two extra, non-batched, serial network round trips to Turso — tripling
-  // this endpoint's latency for no benefit, since the data was identical.
-  // db.users is already the freshest available source; use it directly.
+  // db.posts from those exact same structured tables — no need for a
+  // separate fetchTursoMirror() re-read (removed; see below). The DM-index
+  // fetch (fetchTursoDmIndex) only needs myId, not db, so it's fully
+  // independent of the db fetch — run both concurrently instead of
+  // sequentially to avoid paying two round trips back-to-back.
+  const [db, tursoLastByPeer] = await Promise.all([
+    fetchDatabase(),
+    isTursoConfigured() ? fetchTursoDmIndex(myId) : Promise.resolve(null),
+  ]);
   const sourceUsers = db.users || [];
-  const myId = c.get('userId');
   const me = sourceUsers.find(u => u.id === myId);
   const myBlocked = new Set((me && me.blocked) || []);
   const blockedMe = new Set();
@@ -2495,7 +2498,7 @@ app.get('/api/users', requireAuth, async (c) => {
   const myIncomingRequests = new Set((me && Array.isArray(me.followRequests) ? me.followRequests : []));
   let lastByPeer = {};
   if (isTursoConfigured()) {
-    lastByPeer = await fetchTursoDmIndex(myId);
+    lastByPeer = tursoLastByPeer;
   } else {
     for (const m of (db.messages || [])) {
       if (typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
@@ -2628,13 +2631,21 @@ app.get('/api/messages', requireAuth, async (c) => {
     const parts = roomId.slice(3).split(':');
     if (!parts.includes(c.get('userId'))) return c.json({ error: 'Forbidden' }, 403);
   }
-  let db = await fetchDatabase();
   let now = nowMs();
+  // perf: fetchDatabase() and fetchTursoMessages() are two independent Turso
+  // round trips that don't depend on each other's results (fetchTursoMessages
+  // only needs roomId/now, not the db object). They used to run sequentially,
+  // each paying the same network round-trip cost — running them concurrently
+  // via Promise.all cuts this endpoint's wait roughly in half on any request
+  // that isn't served entirely from the in-memory cache.
+  let [db, list] = await Promise.all([
+    fetchDatabase(),
+    fetchTursoMessages(roomId, now),
+  ]);
   const dbRoomMessages = () => db.messages
     .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-200);
-  let list = await fetchTursoMessages(roomId, now);
   if (!Array.isArray(list) || (list.length === 0 && db.messages.some(m => m.roomId === roomId && !m.deletedAt))) {
     list = dbRoomMessages();
   }
@@ -2644,6 +2655,7 @@ app.get('/api/messages', requireAuth, async (c) => {
     if (m.authorSnapshot) return { ...m, author: m.authorSnapshot };
     return { ...m, author: { id: m.userId, displayName: 'Member', username: (m.userId || 'member').slice(-6) } };
   });
+
   return c.json({ messages: enriched, roomId });
 });
 
@@ -2847,11 +2859,17 @@ app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
 
 // ---------- Notifications ----------
 app.get('/api/notifications', requireAuth, async (c) => {
-  const db = await fetchDatabase();
   const myId = c.get('userId');
+  // perf: same independent-round-trips pattern as /api/messages — run the
+  // db fetch and the Turso notifications fetch concurrently instead of
+  // sequentially since neither depends on the other's result.
+  const [db, tursoNotifs] = await Promise.all([
+    fetchDatabase(),
+    isTursoConfigured() ? fetchTursoNotifications(myId) : Promise.resolve(null),
+  ]);
   const sourceUsers = db.users || [];
   const mine = isTursoConfigured()
-    ? await fetchTursoNotifications(myId)
+    ? tursoNotifs
     : (db.notifications || []).filter(n => n.userId === myId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
   const enriched = mine.map(n => {
     const author = sourceUsers.find(u => u.id === n.fromUserId);
