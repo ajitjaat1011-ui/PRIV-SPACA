@@ -34,7 +34,7 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v79';
+const APP_VERSION = 'priv-spaca-v80';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -196,6 +196,16 @@ function ownerBadgeHtml(user, extraClass = 'inline') {
 function displayNameWithOwnerBadge(user, fallback = '', extraClass = 'inline') {
   const label = fallback || (user && (user.displayName || user.username)) || 'Member';
   return `${escapeHtml(label)}${ownerBadgeHtml(user, extraClass)}`;
+}
+
+function privateBadgeHtml(user, extraClass = 'inline') {
+  if (!(user && user.isPrivate)) return '';
+  return `<span class="private-account-badge ${extraClass}" title="Private account" aria-label="Private account"><i data-lucide="lock"></i></span>`;
+}
+
+function displayNameWithProfileBadges(user, fallback = '', extraClass = 'inline') {
+  const label = fallback || (user && (user.displayName || user.username)) || 'Member';
+  return `${escapeHtml(label)}${ownerBadgeHtml(user, extraClass)}${privateBadgeHtml(user, extraClass)}`;
 }
 
 // In-memory cache of broken photo URLs (so we don't keep retrying within the session)
@@ -449,7 +459,7 @@ function hydrateMeChips() {
   if ($('#feedMeAvatar')) renderAvatar($('#feedMeAvatar'), State.user);
   if ($('#profileAvatarPreview')) renderAvatar($('#profileAvatarPreview'), State.user);
   const profileTitle = $('#profileTitleUsername');
-  if (profileTitle) profileTitle.innerHTML = `${escapeHtml(State.user.username || State.user.displayName || 'me')}${ownerBadgeHtml(State.user, 'title')}`;
+  if (profileTitle) profileTitle.innerHTML = displayNameWithProfileBadges(State.user, State.user.username || State.user.displayName || 'me', 'title');
   const profileUserLine = $('#profileUsername');
   if (profileUserLine) profileUserLine.innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || State.user.displayName || 'me'), 'inline');
   // Bottom-nav avatar (uses the same broken-URL detection as renderAvatar)
@@ -6343,6 +6353,35 @@ async function pollRTCSignals() {
 }
 
 /* ====== Settings sheet ====== */
+function ensurePrivateAccountSettingRow() {
+  let row = $('#settingsPrivateAccountRow');
+  if (row) return row;
+  const anchor = $('#settingsEditProfile');
+  const strip = anchor && anchor.parentElement;
+  if (!strip) return null;
+  row = document.createElement('label');
+  row.id = 'settingsPrivateAccountRow';
+  row.className = 'settings-row settings-toggle-row';
+  row.innerHTML = `
+    <span class="settings-toggle-meta"><i data-lucide="lock"></i><span>Private account</span></span>
+    <span class="settings-toggle-hint">Anyone can view</span>
+    <input id="privateAccountToggle" class="settings-toggle-input" type="checkbox" aria-label="Private account">
+    <span class="settings-switch" aria-hidden="true"><span class="settings-switch-knob"></span></span>
+  `;
+  strip.insertBefore(row, anchor);
+  refreshIcons();
+  return row;
+}
+function syncPrivateAccountToggle() {
+  const row = ensurePrivateAccountSettingRow();
+  if (!row) return;
+  const toggle = $('#privateAccountToggle');
+  const hint = row.querySelector('.settings-toggle-hint');
+  const isPrivate = !!(State.user && State.user.isPrivate);
+  if (toggle) toggle.checked = isPrivate;
+  row.classList.toggle('active', isPrivate);
+  if (hint) hint.textContent = isPrivate ? 'Followers only' : 'Anyone can view';
+}
 function openSettings() {
   const sheet = $('#settingsSheet');
   sheet.classList.remove('hidden');
@@ -6353,6 +6392,8 @@ function openSettings() {
   );
   // Sync visual state of theme + accent inside the sheet
   const stored = localStorage.getItem('ps_theme') || 'auto';
+  ensurePrivateAccountSettingRow();
+  syncPrivateAccountToggle();
   const cvs = $('#cardVisibilitySelect'); if (cvs && State.user) cvs.value = State.user.cardVisibility || 'everyone';
   $$('#settingsSheet [data-theme-set]').forEach(b => b.classList.toggle('active', b.dataset.themeSet === stored));
   const accent = localStorage.getItem('ps_accent') || '#00a2ff';
@@ -6428,6 +6469,42 @@ function bindSettingsSheet() {
     switchTab('profile');
     setTimeout(() => { const btn = $('#editProfileBtn'); if (btn) btn.click(); }, 200);
   });
+  const privateRow = ensurePrivateAccountSettingRow();
+  const privateToggle = $('#privateAccountToggle');
+  if (privateToggle && !privateToggle.dataset.bound) {
+    privateToggle.dataset.bound = '1';
+    privateToggle.addEventListener('change', async () => {
+      const nextValue = !!privateToggle.checked;
+      privateToggle.disabled = true;
+      try {
+        const data = await api('/user/update', { method: 'POST', body: { isPrivate: nextValue } });
+        State.user = { ...State.user, ...data.user };
+        try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+        const selfMember = (State.members || []).find(u => u.id === State.user.id);
+        if (selfMember) Object.assign(selfMember, data.user);
+        syncPrivateAccountToggle();
+        hydrateMeChips();
+        if (State.currentTab === 'profile') renderOwnProfile();
+        if (State.currentTab === 'search') renderSearch($('#searchInput')?.value || '');
+        renderMembers();
+        toast(nextValue ? 'Private account enabled' : 'Private account disabled', 'success');
+      } catch (e) {
+        privateToggle.checked = !nextValue;
+        syncPrivateAccountToggle();
+        toast(e.message || 'Privacy update failed', 'error');
+      } finally {
+        privateToggle.disabled = false;
+      }
+    });
+  }
+  if (privateRow && !privateRow.dataset.bound) {
+    privateRow.dataset.bound = '1';
+    privateRow.addEventListener('click', (e) => {
+      if (e.target === privateToggle) return;
+      e.preventDefault();
+      if (privateToggle && !privateToggle.disabled) privateToggle.click();
+    });
+  }
   const cvs = $('#cardVisibilitySelect');
   if (cvs) {
     cvs.value = (State.user && State.user.cardVisibility) || 'everyone';
@@ -6753,6 +6830,19 @@ function bindNotifSheet() {
 // ============================================================
 let _activeOtherProfile = null;
 
+function ensurePrivateProfileNotice() {
+  let notice = $('#upPrivateNotice');
+  if (notice) return notice;
+  const body = $('#userProfileSheet .up-body');
+  const grid = $('#upPostsGrid');
+  if (!body || !grid) return null;
+  notice = document.createElement('div');
+  notice.id = 'upPrivateNotice';
+  notice.className = 'private-profile-notice hidden';
+  body.insertBefore(notice, grid);
+  return notice;
+}
+
 async function openUserProfile(userId) {
   if (!userId || userId === (State.user && State.user.id)) {
     switchTab('profile'); return;
@@ -6768,6 +6858,8 @@ async function openUserProfile(userId) {
   $('#upStatFollowers').textContent = '·';
   $('#upStatFollowing').textContent = '·';
   $('#upPostsGrid').innerHTML = '';
+  const privateNotice = ensurePrivateProfileNotice();
+  if (privateNotice) privateNotice.classList.add('hidden');
   renderAvatar($('#upAvatar'), null);
   try {
     const data = await api('/user/' + encodeURIComponent(userId) + '/profile');
@@ -6787,13 +6879,19 @@ function closeUserProfile() {
 
 function renderOtherProfile(data) {
   const u = data.user;
-  $('#upHeaderUsername').innerHTML = displayNameWithOwnerBadge(u, '@' + u.username, 'inline');
+  const profileLocked = !!(data.relationship && data.relationship.profileLocked);
+  $('#upHeaderUsername').innerHTML = displayNameWithProfileBadges(u, '@' + u.username, 'inline');
   $('#upDisplayName').textContent = u.displayName || '';
   $('#upBio').textContent = u.bio || '';
   $('#upStatPosts').textContent = String(u.postsCount || 0);
   $('#upStatFollowers').textContent = String(u.followers || 0);
   $('#upStatFollowing').textContent = String(u.following || 0);
   renderAvatar($('#upAvatar'), u);
+  const privateNotice = ensurePrivateProfileNotice();
+  if (privateNotice) {
+    privateNotice.innerHTML = `<i data-lucide="lock"></i><div><strong>This account is private</strong><span>Follow ${escapeHtml(u.username || 'this user')} to see their photos, followers and profile card.</span></div>`;
+    privateNotice.classList.toggle('hidden', !profileLocked);
+  }
   // Follow button
   const fb = $('#upFollowBtn');
   if (data.relationship.iFollow) {
@@ -6843,7 +6941,9 @@ function renderOtherProfile(data) {
   // Posts grid
   const grid = $('#upPostsGrid');
   grid.innerHTML = '';
-  if (!data.posts || data.posts.length === 0) {
+  if (profileLocked) {
+    // The notice above the grid is the primary UI; keep the grid empty.
+  } else if (!data.posts || data.posts.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'ig-grid-empty';
     empty.innerHTML = '<i data-lucide="camera" style="width:36px;height:36px;color:var(--muted-2);display:block;margin:0 auto 8px"></i>No posts yet';
@@ -7157,7 +7257,7 @@ async function renderOwnProfile() {
   const cachedUsername = State.user.username || State.user.displayName || 'me';
   const titleU = $('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
-  if (titleU) titleU.innerHTML = `${escapeHtml(cachedUsername)}${ownerBadgeHtml(State.user, 'title')}`;
+  if (titleU) titleU.innerHTML = displayNameWithProfileBadges(State.user, cachedUsername, 'title');
   if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
   if ($('#profileUsername')) $('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
@@ -7184,7 +7284,7 @@ async function renderOwnProfile() {
     const realUsername = u.username || State.user.username || cachedUsername;
     $('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
     $('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
-    if (titleU) titleU.innerHTML = `${escapeHtml(realUsername)}${ownerBadgeHtml(u, 'title')}`;
+    if (titleU) titleU.innerHTML = displayNameWithProfileBadges(u, realUsername, 'title');
     const mb = $('#profileMoodBubble');
     if (mb) {
       const note = activeNote(u);
@@ -7723,7 +7823,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=72-rtc-fix').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=80-private-profile').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
