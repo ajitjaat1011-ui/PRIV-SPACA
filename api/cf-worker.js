@@ -249,6 +249,29 @@ function canViewerAccessPrivateProfile(owner, viewerId, db) {
   if (!isPrivateAccount(owner)) return true;
   return viewerFollowsUser(viewerId, owner, db);
 }
+function normalizeFollowRequests(user) {
+  if (!user) return { incoming: [], outgoing: [] };
+  user.followRequests = Array.isArray(user.followRequests) ? Array.from(new Set(user.followRequests.filter(Boolean))) : [];
+  user.sentFollowRequests = Array.isArray(user.sentFollowRequests) ? Array.from(new Set(user.sentFollowRequests.filter(Boolean))) : [];
+  return { incoming: user.followRequests, outgoing: user.sentFollowRequests };
+}
+function clearFollowRequestPair(requester, target) {
+  if (requester) normalizeFollowRequests(requester).outgoing;
+  if (target) normalizeFollowRequests(target).incoming;
+  if (requester && target) {
+    requester.sentFollowRequests = requester.sentFollowRequests.filter(id => id !== target.id);
+    target.followRequests = target.followRequests.filter(id => id !== requester.id);
+  }
+}
+function hasPendingFollowRequest(requester, target) {
+  if (!requester || !target) return false;
+  normalizeFollowRequests(requester);
+  normalizeFollowRequests(target);
+  return requester.sentFollowRequests.includes(target.id) || target.followRequests.includes(requester.id);
+}
+function canRequestFollow(target, requesterId) {
+  return !!(target && target.isPrivate && target.id !== requesterId);
+}
 function canViewerSeeStory(post, viewerId, db) {
   if (!isStoryRecord(post)) return true; // non-stories always visible
   if (!post || post.deletedAt) return false;
@@ -2450,6 +2473,8 @@ app.get('/api/users', requireAuth, async (c) => {
   });
   const now = nowMs();
   const myFollowing = new Set((me && me.following) || []);
+  const myOutgoingRequests = new Set((me && Array.isArray(me.sentFollowRequests) ? me.sentFollowRequests : []));
+  const myIncomingRequests = new Set((me && Array.isArray(me.followRequests) ? me.followRequests : []));
   let lastByPeer = {};
   if (isTursoConfigured()) {
     lastByPeer = await fetchTursoDmIndex(myId);
@@ -2478,6 +2503,8 @@ app.get('/api/users', requireAuth, async (c) => {
       lastSeen: (db.heartbeat && db.heartbeat[u.id]) || 0,
       iFollow: myFollowing.has(u.id),
       followsMe: Array.isArray(u.following) && u.following.includes(myId),
+      requestedByMe: myOutgoingRequests.has(u.id),
+      requestedMe: myIncomingRequests.has(u.id),
       lastMessage: lastByPeer[u.id] || null,
     }));
   return c.json({ users: list });
@@ -2854,6 +2881,22 @@ app.post('/api/user/follow', requireAuth, async (c) => {
   if (Array.isArray(me.blocked) && me.blocked.includes(targetId)) return c.json({ error: 'Unblock this user first' }, 403);
   me.following = me.following || [];
   target.followers = target.followers || [];
+  normalizeFollowRequests(me);
+  normalizeFollowRequests(target);
+
+  if (canRequestFollow(target, myId) && !me.following.includes(targetId) && !target.followers.includes(myId)) {
+    if (!target.followRequests.includes(myId)) target.followRequests.push(myId);
+    if (!me.sentFollowRequests.includes(targetId)) me.sentFollowRequests.push(targetId);
+    await saveDatabase(db, false);
+    if (isTursoConfigured()) {
+      await tursoUpsertUser(me);
+      await tursoUpsertUser(target);
+    }
+    _pushEvent(targetId, 'follow_request', { fromUserId: myId, fromSnapshot: sanitizeUser(me) });
+    return c.json({ ok: true, requested: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers, followRequestIds: target.followRequests });
+  }
+
+  clearFollowRequestPair(me, target);
   if (!me.following.includes(targetId)) me.following.push(targetId);
   if (!target.followers.includes(myId)) target.followers.push(myId);
   pushNotification(db, targetId, 'follow', myId);
@@ -2877,7 +2920,7 @@ app.post('/api/user/follow', requireAuth, async (c) => {
       }
     } catch (_) { /* best-effort; don't fail the follow */ }
   }
-  return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
+  return c.json({ ok: true, requested: false, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
 app.post('/api/user/unfollow', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
@@ -2886,6 +2929,10 @@ app.post('/api/user/unfollow', requireAuth, async (c) => {
   const me = db.users.find(u => u.id === c.get('userId'));
   const target = db.users.find(u => u.id === targetId);
   if (!me || !target) return c.json({ error: 'User not found' }, 404);
+  normalizeFollowRequests(me);
+  normalizeFollowRequests(target);
+  const cancelledRequest = hasPendingFollowRequest(me, target);
+  clearFollowRequestPair(me, target);
   me.following = (me.following || []).filter(id => id !== targetId);
   target.followers = (target.followers || []).filter(id => id !== c.get('userId'));
   await saveDatabase(db, false);
@@ -2893,8 +2940,63 @@ app.post('/api/user/unfollow', requireAuth, async (c) => {
     await tursoUpsertUser(me);
     await tursoUpsertUser(target);
   }
-  return c.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
+  return c.json({ ok: true, requested: false, cancelledRequest, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
+app.get('/api/user/follow-requests', requireAuth, async (c) => {
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === c.get('userId'));
+  if (!me) return c.json({ error: 'Not found' }, 404);
+  normalizeFollowRequests(me);
+  const incoming = me.followRequests
+    .map(id => db.users.find(u => u.id === id))
+    .filter(Boolean)
+    .map(u => sanitizeUser(u));
+  return c.json({ incoming, count: incoming.length, isPrivate: !!me.isPrivate });
+});
+
+app.post('/api/user/follow-requests/respond', requireAuth, async (c) => {
+  const { requesterId, action } = await c.req.json().catch(() => ({}));
+  if (!requesterId || !['accept', 'reject'].includes(String(action || ''))) {
+    return c.json({ error: 'requesterId and valid action required' }, 400);
+  }
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === c.get('userId'));
+  const requester = db.users.find(u => u.id === requesterId);
+  if (!me || !requester) return c.json({ error: 'User not found' }, 404);
+  normalizeFollowRequests(me);
+  normalizeFollowRequests(requester);
+  if (!me.followRequests.includes(requesterId)) return c.json({ error: 'Request not found' }, 404);
+  clearFollowRequestPair(requester, me);
+  if (action === 'accept') {
+    me.followers = Array.isArray(me.followers) ? me.followers : [];
+    requester.following = Array.isArray(requester.following) ? requester.following : [];
+    if (!me.followers.includes(requesterId)) me.followers.push(requesterId);
+    if (!requester.following.includes(me.id)) requester.following.push(me.id);
+  }
+  await saveDatabase(db, false);
+  if (isTursoConfigured()) {
+    await tursoUpsertUser(me);
+    await tursoUpsertUser(requester);
+    if (action === 'accept') {
+      try {
+        const tc = tursoClient();
+        const recentPosts = await tc.execute({
+          sql: `SELECT id, created_at FROM ps_posts WHERE user_id = ? AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT 50`,
+          args: [me.id]
+        }).catch(() => ({ rows: [] }));
+        if (recentPosts.rows?.length) {
+          const feedRows = recentPosts.rows.map(r => ({
+            userId: requesterId, postId: r.id, createdAt: Number(r.created_at) || nowMs()
+          }));
+          await tursoUpsertUserFeeds(feedRows);
+        }
+      } catch (_) {}
+    }
+  }
+  _pushEvent(requesterId, 'follow_request_updated', { targetId: me.id, action, targetSnapshot: sanitizeUser(me) });
+  return c.json({ ok: true, action, incoming: me.followRequests.map(id => db.users.find(u => u.id === id)).filter(Boolean).map(u => sanitizeUser(u)) });
+});
+
 app.post('/api/user/block', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
   const myId = c.get('userId');
@@ -2905,6 +3007,10 @@ app.post('/api/user/block', requireAuth, async (c) => {
   if (!me || !target) return c.json({ error: 'User not found' }, 404);
   me.blocked = me.blocked || [];
   if (!me.blocked.includes(targetId)) me.blocked.push(targetId);
+  normalizeFollowRequests(me);
+  normalizeFollowRequests(target);
+  clearFollowRequestPair(me, target);
+  clearFollowRequestPair(target, me);
   me.following = (me.following || []).filter(id => id !== targetId);
   target.followers = (target.followers || []).filter(id => id !== myId);
   target.following = (target.following || []).filter(id => id !== myId);
@@ -2966,6 +3072,8 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
       isMe: targetId === myId,
       iFollow: !!(me && (me.following || []).includes(targetId)),
       followsMe: Array.isArray(target.following) && target.following.includes(myId),
+      requestedByMe: !!(me && Array.isArray(me.sentFollowRequests) && me.sentFollowRequests.includes(targetId)),
+      requestedMe: Array.isArray(target.sentFollowRequests) && target.sentFollowRequests.includes(myId),
       iBlocked,
       profileLocked,
     },

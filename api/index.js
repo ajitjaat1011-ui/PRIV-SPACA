@@ -404,6 +404,29 @@ function canViewerAccessPrivateProfile(owner, viewerId, db) {
   if (!isPrivateAccount(owner)) return true;
   return viewerFollowsUser(viewerId, owner, db);
 }
+function normalizeFollowRequests(user) {
+  if (!user) return { incoming: [], outgoing: [] };
+  user.followRequests = Array.isArray(user.followRequests) ? Array.from(new Set(user.followRequests.filter(Boolean))) : [];
+  user.sentFollowRequests = Array.isArray(user.sentFollowRequests) ? Array.from(new Set(user.sentFollowRequests.filter(Boolean))) : [];
+  return { incoming: user.followRequests, outgoing: user.sentFollowRequests };
+}
+function clearFollowRequestPair(requester, target) {
+  if (requester) normalizeFollowRequests(requester).outgoing;
+  if (target) normalizeFollowRequests(target).incoming;
+  if (requester && target) {
+    requester.sentFollowRequests = requester.sentFollowRequests.filter(id => id !== target.id);
+    target.followRequests = target.followRequests.filter(id => id !== requester.id);
+  }
+}
+function hasPendingFollowRequest(requester, target) {
+  if (!requester || !target) return false;
+  normalizeFollowRequests(requester);
+  normalizeFollowRequests(target);
+  return requester.sentFollowRequests.includes(target.id) || target.followRequests.includes(requester.id);
+}
+function canRequestFollow(target, requesterId) {
+  return !!(target && target.isPrivate && target.id !== requesterId);
+}
 function canViewerSeeStory(post, viewerId, db) {
   if (!isStoryRecord(post)) return true; // non-stories always visible
   if (!post || post.deletedAt) return false;
@@ -1887,6 +1910,8 @@ app.get('/api/users', authMiddleware, async (req, res) => {
     }
   });
   const myFollowing = new Set((me && me.following) || []);
+  const myOutgoingRequests = new Set((me && Array.isArray(me.sentFollowRequests) ? me.sentFollowRequests : []));
+  const myIncomingRequests = new Set((me && Array.isArray(me.followRequests) ? me.followRequests : []));
   let lastByPeer = {};
   if (isTursoConfigured()) {
     lastByPeer = await fetchTursoDmIndex(req.userId);
@@ -1917,6 +1942,8 @@ app.get('/api/users', authMiddleware, async (req, res) => {
         lastSeen: hb,
         iFollow: myFollowing.has(u.id),
         followsMe: Array.isArray(u.following) && u.following.includes(req.userId),
+        requestedByMe: myOutgoingRequests.has(u.id),
+        requestedMe: myIncomingRequests.has(u.id),
         lastMessage: lastByPeer[u.id] || null,
       };
     });
@@ -2381,11 +2408,31 @@ app.post('/api/user/follow', authMiddleware, async (req, res) => {
   }
   me.following = Array.isArray(me.following) ? me.following : [];
   target.followers = Array.isArray(target.followers) ? target.followers : [];
+  normalizeFollowRequests(me);
+  normalizeFollowRequests(target);
+
+  if (canRequestFollow(target, req.userId) && !me.following.includes(targetId) && !target.followers.includes(req.userId)) {
+    if (!target.followRequests.includes(req.userId)) target.followRequests.push(req.userId);
+    if (!me.sentFollowRequests.includes(targetId)) me.sentFollowRequests.push(targetId);
+    await saveDatabase(db, false);
+    _pushEvent(targetId, 'follow_request', { fromUserId: req.userId, fromSnapshot: sanitizeUser(me) });
+    return res.json({
+      ok: true,
+      requested: true,
+      following: me.following.length,
+      followers: target.followers.length,
+      followingIds: me.following,
+      targetFollowerIds: target.followers,
+      followRequestIds: target.followRequests,
+    });
+  }
+
+  clearFollowRequestPair(me, target);
   if (!me.following.includes(targetId)) me.following.push(targetId);
   if (!target.followers.includes(req.userId)) target.followers.push(req.userId);
   pushNotification(db, targetId, 'follow', req.userId);
   await saveDatabase(db, false);
-  res.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
+  res.json({ ok: true, requested: false, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
 
 app.post('/api/user/unfollow', authMiddleware, async (req, res) => {
@@ -2395,10 +2442,54 @@ app.post('/api/user/unfollow', authMiddleware, async (req, res) => {
   const me = db.users.find(u => u.id === req.userId);
   const target = db.users.find(u => u.id === targetId);
   if (!me || !target) return res.status(404).json({ error: 'User not found' });
+  normalizeFollowRequests(me);
+  normalizeFollowRequests(target);
+  const cancelledRequest = hasPendingFollowRequest(me, target);
+  clearFollowRequestPair(me, target);
   me.following = (me.following || []).filter(id => id !== targetId);
   target.followers = (target.followers || []).filter(id => id !== req.userId);
   await saveDatabase(db, false);
-  res.json({ ok: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
+  res.json({ ok: true, requested: false, cancelledRequest, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
+});
+
+app.get('/api/user/follow-requests', authMiddleware, async (req, res) => {
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  if (!me) return res.status(404).json({ error: 'Not found' });
+  normalizeFollowRequests(me);
+  const incoming = me.followRequests
+    .map(id => db.users.find(u => u.id === id))
+    .filter(Boolean)
+    .map(u => sanitizeUser(u));
+  res.json({ incoming, count: incoming.length, isPrivate: !!me.isPrivate });
+});
+
+app.post('/api/user/follow-requests/respond', authMiddleware, async (req, res) => {
+  const { requesterId, action } = req.body || {};
+  if (!requesterId || !['accept', 'reject'].includes(String(action || ''))) {
+    return res.status(400).json({ error: 'requesterId and valid action required' });
+  }
+  const db = await fetchDatabase();
+  const me = db.users.find(u => u.id === req.userId);
+  const requester = db.users.find(u => u.id === requesterId);
+  if (!me || !requester) return res.status(404).json({ error: 'User not found' });
+  normalizeFollowRequests(me);
+  normalizeFollowRequests(requester);
+  if (!me.followRequests.includes(requesterId)) return res.status(404).json({ error: 'Request not found' });
+  clearFollowRequestPair(requester, me);
+  if (action === 'accept') {
+    me.followers = Array.isArray(me.followers) ? me.followers : [];
+    requester.following = Array.isArray(requester.following) ? requester.following : [];
+    if (!me.followers.includes(requesterId)) me.followers.push(requesterId);
+    if (!requester.following.includes(me.id)) requester.following.push(me.id);
+  }
+  await saveDatabase(db, false);
+  _pushEvent(requesterId, 'follow_request_updated', { targetId: me.id, action, targetSnapshot: sanitizeUser(me) });
+  res.json({
+    ok: true,
+    action,
+    incoming: me.followRequests.map(id => db.users.find(u => u.id === id)).filter(Boolean).map(u => sanitizeUser(u)),
+  });
 });
 
 app.post('/api/user/block', authMiddleware, async (req, res) => {
@@ -2410,6 +2501,10 @@ app.post('/api/user/block', authMiddleware, async (req, res) => {
   if (!me || !target) return res.status(404).json({ error: 'User not found' });
   me.blocked = Array.isArray(me.blocked) ? me.blocked : [];
   if (!me.blocked.includes(targetId)) me.blocked.push(targetId);
+  normalizeFollowRequests(me);
+  normalizeFollowRequests(target);
+  clearFollowRequestPair(me, target);
+  clearFollowRequestPair(target, me);
   // Mutual unfollow
   me.following = (me.following || []).filter(id => id !== targetId);
   target.followers = (target.followers || []).filter(id => id !== req.userId);
@@ -2485,6 +2580,8 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
       isMe: targetId === req.userId,
       iFollow: !!(me && (me.following || []).includes(targetId)),
       followsMe: Array.isArray(target.following) && target.following.includes(req.userId),
+      requestedByMe: !!(me && Array.isArray(me.sentFollowRequests) && me.sentFollowRequests.includes(targetId)),
+      requestedMe: Array.isArray(target.sentFollowRequests) && target.sentFollowRequests.includes(req.userId),
       iBlocked,
       profileLocked,
     }

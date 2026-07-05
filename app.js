@@ -23,6 +23,7 @@ const State = {
   posts: [],
   scheduled: [],
   typingUsers: [],
+  followRequests: [],
   closeFriends: safeJsonParse(safeLocalGet('ps_closeFriends', '[]'), []),
   replyTo: null,
   attach: null,
@@ -34,7 +35,7 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v80';
+const APP_VERSION = 'priv-spaca-v81';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -447,6 +448,7 @@ function showApp() {
   startPolls();
   loadAll();
   loadCloseFriends().catch(() => {});
+  loadFollowRequests(true).catch(() => {});
   // Part 3: publish E2E public key so peers can DM us with Secret Chat
   if (window.crypto && crypto.subtle && window.indexedDB) {
     setTimeout(() => { E2E.publishPublicKey().catch(() => {}); }, 800);
@@ -506,6 +508,7 @@ function logout(silent) {
   State.messages = [];
   State.members = [];
   State.posts = [];
+  State.followRequests = [];
   State.closeFriends = [];
   _previousMessageIds = new Set();
   _previousPostIds = new Set();
@@ -1094,6 +1097,7 @@ function renderMembers() {
   }
 
   renderNotesRail();
+  updateFollowRequestsBanner();
   requestAnimationFrame(() => {
     if (roomsPane) roomsPane.scrollTop = prevPaneScroll;
     if (list) list.scrollTop = prevListScroll;
@@ -1340,6 +1344,134 @@ async function searchNoteSongs(q) {
     }
     if (box) box.innerHTML = '<div class="note-song-empty">Search failed — check your connection.</div>';
   }
+}
+
+function ensureFollowRequestsUi() {
+  const section = $('#dmsPaneSection');
+  const notes = $('#notesRail');
+  if (!section || !notes) return null;
+  let banner = $('#followRequestsBanner');
+  if (!banner) {
+    banner = document.createElement('button');
+    banner.type = 'button';
+    banner.id = 'followRequestsBanner';
+    banner.className = 'follow-requests-banner hidden';
+    banner.innerHTML = `<span class="fr-ic"><i data-lucide="user-plus"></i></span><span class="fr-meta"><span class="fr-nm">Follow requests</span><span class="fr-sub" id="followRequestsSub">Private account approvals</span></span><span class="fr-count" id="followRequestsCount">0</span><i data-lucide="chevron-right" class="fr-chev"></i>`;
+    section.insertBefore(banner, notes);
+    banner.addEventListener('click', openFollowRequestsSheet);
+  }
+  let sheet = $('#followRequestsSheet');
+  if (!sheet) {
+    sheet = document.createElement('div');
+    sheet.id = 'followRequestsSheet';
+    sheet.className = 'comments-sheet hidden';
+    sheet.setAttribute('role', 'dialog');
+    sheet.setAttribute('aria-modal', 'true');
+    sheet.innerHTML = `<div class="sheet-backdrop" data-close-follow-requests></div><div class="sheet-card"><div class="sheet-handle"></div><div class="sheet-head"><h3><i data-lucide="user-plus"></i> Follow requests</h3><button class="ghost-btn" data-close-follow-requests aria-label="Close"><i data-lucide="x"></i></button></div><div class="sheet-body"><div class="follow-requests-copy">Approve the people who can follow your private account.</div><ul id="followRequestsList" class="follow-requests-list"></ul></div></div>`;
+    document.body.appendChild(sheet);
+    sheet.querySelectorAll('[data-close-follow-requests]').forEach(btn => btn.addEventListener('click', closeFollowRequestsSheet));
+    sheet.addEventListener('click', (e) => { if (e.target === sheet) closeFollowRequestsSheet(); });
+  }
+  refreshIcons();
+  return { banner, sheet };
+}
+
+function updateFollowRequestsBanner() {
+  const ui = ensureFollowRequestsUi();
+  if (!ui) return;
+  const isPrivate = !!(State.user && State.user.isPrivate);
+  const count = (State.followRequests || []).length;
+  ui.banner.classList.toggle('hidden', !isPrivate);
+  const sub = $('#followRequestsSub');
+  const countEl = $('#followRequestsCount');
+  if (sub) sub.textContent = count ? `${count} pending approval${count === 1 ? '' : 's'}` : 'No pending approvals';
+  if (countEl) countEl.textContent = String(count);
+  ui.banner.classList.toggle('has-requests', count > 0);
+}
+
+let _lastFollowRequestsLoadedAt = 0;
+let _loadFollowRequestsPromise = null;
+async function loadFollowRequests(force = false) {
+  if (!State.token || !State.user) return [];
+  if (!State.user.isPrivate) {
+    State.followRequests = [];
+    updateFollowRequestsBanner();
+    return [];
+  }
+  if (_loadFollowRequestsPromise) return _loadFollowRequestsPromise;
+  if (!force && _lastFollowRequestsLoadedAt && (Date.now() - _lastFollowRequestsLoadedAt) < 4000) {
+    updateFollowRequestsBanner();
+    return State.followRequests || [];
+  }
+  _loadFollowRequestsPromise = (async () => {
+    try {
+      const data = await api('/user/follow-requests');
+      State.followRequests = Array.isArray(data.incoming) ? data.incoming : [];
+      _lastFollowRequestsLoadedAt = Date.now();
+      updateFollowRequestsBanner();
+      renderFollowRequestsSheet();
+      return State.followRequests;
+    } catch (_) {
+      updateFollowRequestsBanner();
+      return State.followRequests || [];
+    } finally {
+      _loadFollowRequestsPromise = null;
+    }
+  })();
+  return _loadFollowRequestsPromise;
+}
+
+function openFollowRequestsSheet() {
+  const ui = ensureFollowRequestsUi();
+  if (!ui) return;
+  renderFollowRequestsSheet();
+  ui.sheet.classList.remove('hidden');
+  const card = ui.sheet.querySelector('.sheet-card');
+  if (card) motionAnimate(card,
+    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
+    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
+  );
+  refreshIcons();
+}
+function closeFollowRequestsSheet() {
+  const sheet = $('#followRequestsSheet');
+  if (sheet) sheet.classList.add('hidden');
+}
+async function respondToFollowRequest(requesterId, action) {
+  try {
+    const data = await api('/user/follow-requests/respond', { method: 'POST', body: { requesterId, action } });
+    State.followRequests = Array.isArray(data.incoming) ? data.incoming : [];
+    _lastFollowRequestsLoadedAt = Date.now();
+    updateFollowRequestsBanner();
+    renderFollowRequestsSheet();
+    loadMembers(true).catch(() => {});
+    if (State.currentTab === 'profile') renderOwnProfile();
+    toast(action === 'accept' ? 'Follow request accepted' : 'Follow request rejected', 'success');
+  } catch (e) {
+    toast(e.message || 'Request update failed', 'error');
+  }
+}
+function renderFollowRequestsSheet() {
+  const list = $('#followRequestsList');
+  if (!list) return;
+  const items = State.followRequests || [];
+  list.innerHTML = '';
+  if (!items.length) {
+    list.innerHTML = `<li class="follow-requests-empty"><i data-lucide="shield-check"></i><div><strong>All caught up</strong><span>No pending follow requests right now.</span></div></li>`;
+    refreshIcons();
+    return;
+  }
+  items.forEach(u => {
+    const li = document.createElement('li');
+    li.className = 'follow-request-row';
+    li.innerHTML = `<span class="avatar md"></span><div class="meta"><strong>${displayNameWithProfileBadges(u, u.displayName || u.username, 'inline')}</strong><span>@${escapeHtml(u.username || '')}</span></div><div class="actions"><button type="button" class="accept">Accept</button><button type="button" class="reject">Reject</button></div>`;
+    renderAvatar(li.querySelector('.avatar'), u, { showStatus: true, online: !!u.online });
+    li.querySelector('.meta').addEventListener('click', () => openUserProfile(u.id));
+    li.querySelector('.accept').addEventListener('click', () => respondToFollowRequest(u.id, 'accept'));
+    li.querySelector('.reject').addEventListener('click', () => respondToFollowRequest(u.id, 'reject'));
+    list.appendChild(li);
+  });
+  refreshIcons();
 }
 
 function bindNotes() {
@@ -2658,6 +2790,7 @@ function startPolls() {
   State.pollTimers.members = setInterval(() => {
     if (isStorySurfaceOpen()) return;
     loadMembers();
+    loadFollowRequests();
   }, 15000);
   // MESSAGES: keep a polling backstop on Cloudflare Pages/Workers because an
   // EventSource connection and the write request can land on different isolates.
@@ -2763,7 +2896,7 @@ function connectSSE() {
     if (!data) return;
     handleRealtimeEvent(type, data);
   };
-  ['notification','new_message','new_post','presence','typing','rtc_signal'].forEach(t => {
+  ['notification','new_message','new_post','presence','typing','rtc_signal','follow_request','follow_request_updated'].forEach(t => {
     _sseSource.addEventListener(t, (e) => onAny(t, e));
   });
   _sseSource.addEventListener('error', () => {
@@ -2831,6 +2964,9 @@ function handleRealtimeEvent(type, evt) {
   } else if (type === 'presence' || type === 'typing') {
     // Refresh members
     loadMembers();
+  } else if (type === 'follow_request' || type === 'follow_request_updated') {
+    loadFollowRequests(true).catch(() => {});
+    loadMembers(true).catch(() => {});
   } else if (type === 'rtc_signal') {
     handleRTCSignal(data);
   }
@@ -6486,6 +6622,9 @@ function bindSettingsSheet() {
         hydrateMeChips();
         if (State.currentTab === 'profile') renderOwnProfile();
         if (State.currentTab === 'search') renderSearch($('#searchInput')?.value || '');
+        if (!nextValue) State.followRequests = [];
+        updateFollowRequestsBanner();
+        loadFollowRequests(true).catch(() => {});
         renderMembers();
         toast(nextValue ? 'Private account enabled' : 'Private account disabled', 'success');
       } catch (e) {
@@ -6889,13 +7028,17 @@ function renderOtherProfile(data) {
   renderAvatar($('#upAvatar'), u);
   const privateNotice = ensurePrivateProfileNotice();
   if (privateNotice) {
-    privateNotice.innerHTML = `<i data-lucide="lock"></i><div><strong>This account is private</strong><span>Follow ${escapeHtml(u.username || 'this user')} to see their photos, followers and profile card.</span></div>`;
+    privateNotice.innerHTML = `<span class="private-profile-lock"><i data-lucide="lock"></i></span><strong>This profile is private</strong><span>Follow ${escapeHtml(u.username || 'this user')} to see their posts, followers, stories and profile card.</span>`;
     privateNotice.classList.toggle('hidden', !profileLocked);
   }
   // Follow button
   const fb = $('#upFollowBtn');
+  const requestedByMe = !!(data.relationship && data.relationship.requestedByMe);
   if (data.relationship.iFollow) {
     fb.textContent = 'Following';
+    fb.classList.remove('primary'); fb.classList.add('following');
+  } else if (requestedByMe) {
+    fb.textContent = 'Requested';
     fb.classList.remove('primary'); fb.classList.add('following');
   } else {
     fb.textContent = data.relationship.followsMe ? 'Follow back' : 'Follow';
@@ -6904,16 +7047,19 @@ function renderOtherProfile(data) {
   fb.onclick = async () => {
     fb.disabled = true;
     try {
-      const action = data.relationship.iFollow ? 'unfollow' : 'follow';
+      const action = (data.relationship.iFollow || requestedByMe) ? 'unfollow' : 'follow';
       const result = await api('/user/' + action, { method: 'POST', body: { targetId: u.id }});
       State.user.following = Array.isArray(State.user.following) ? State.user.following : [];
-      if (action === 'follow') {
+      if (action === 'follow' && !result.requested) {
         if (!State.user.following.includes(u.id)) State.user.following.push(u.id);
-      } else {
+      } else if (action === 'unfollow') {
         State.user.following = State.user.following.filter(id => id !== u.id);
       }
       const member = (State.members || []).find(m => m.id === u.id);
-      if (member) member.iFollow = action === 'follow';
+      if (member) {
+        member.iFollow = action === 'follow' && !result.requested;
+        member.requestedByMe = action === 'follow' && !!result.requested;
+      }
       if (Array.isArray(result.followingIds)) State.user.following = result.followingIds;
       updateOwnProfileStatCounts(State.user);
       // Reload
@@ -6921,22 +7067,29 @@ function renderOtherProfile(data) {
       _activeOtherProfile = fresh;
       renderOtherProfile(fresh);
       pollNotifications();
+      loadFollowRequests(true).catch(() => {});
+      const followMsg = result.requested ? 'Follow request sent' : (action === 'unfollow' && requestedByMe ? 'Follow request cancelled' : '');
+      if (followMsg) toast(followMsg, 'success');
     } catch (e) { toast(e.message || 'Failed', 'error'); }
     finally { fb.disabled = false; }
   };
   // Message
   const mb = $('#upMessageBtn');
-  mb.onclick = () => {
-    closeUserProfile();
-    const member = (State.members || []).find(m => m.id === u.id) || u;
-    openDM(member); switchTab('chat');
-  };
+  if (mb) {
+    mb.style.display = profileLocked ? 'none' : '';
+    mb.onclick = () => {
+      closeUserProfile();
+      const member = (State.members || []).find(m => m.id === u.id) || u;
+      openDM(member); switchTab('chat');
+    };
+  }
   const cb = $('#upCardBtn');
   if (cb) {
-    const canCard = !u.card || u.card.canView !== false;
+    const canCard = !profileLocked && (!u.card || u.card.canView !== false);
+    cb.style.display = profileLocked ? 'none' : '';
     cb.disabled = !canCard;
     cb.title = canCard ? 'View profile card' : 'Profile card is private';
-    cb.onclick = () => openProfileCard(data, u);
+    cb.onclick = () => { if (canCard) openProfileCard(data, u); };
   }
   // Posts grid
   const grid = $('#upPostsGrid');
@@ -7823,7 +7976,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=80-private-profile').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=81-private-follow-requests').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
@@ -8271,6 +8424,7 @@ function boot() {
 
   if (State.token && State.user) {
         loadMembers();
+        loadFollowRequests(true).catch(() => {});
         pollNotifications();
         if (State.currentTab === 'chat') loadMessages(false);
         if (State.currentTab === 'feed') loadFeed(true);
