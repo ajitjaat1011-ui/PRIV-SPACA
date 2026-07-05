@@ -35,7 +35,7 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v81';
+const APP_VERSION = 'priv-spaca-v82';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -43,6 +43,83 @@ const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
 const API_BASE = '/api';
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+// ====== Robust file-type detection (HEIC/HEIF fix) ======
+// Browsers frequently report file.type as an EMPTY STRING for HEIC/HEIF
+// photos (the default format for iPhone camera shots since iOS 11) — this
+// is a well-documented cross-browser quirk, not a PRIV-SPACA bug, but every
+// upload path in this file used to gate on `file.type.startsWith('image/')`
+// alone, which silently rejected every HEIC/HEIF photo with "Only image
+// files" even though it plainly was one. Same class of issue can affect
+// some Android camera videos and older/rare video containers whose type
+// also comes back blank. These helpers fall back to the file extension
+// whenever the browser-reported MIME type is missing or unrecognized.
+const HEIC_EXTENSIONS = ['heic', 'heif', 'heics', 'heifs'];
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'avif', ...HEIC_EXTENSIONS];
+const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov', 'm4v', '3gp', 'mkv', 'avi'];
+function fileExt(file) {
+  const name = (file && file.name) || '';
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+function isHeicFile(file) {
+  if (!file) return false;
+  const mime = String(file.type || '').toLowerCase();
+  if (mime === 'image/heic' || mime === 'image/heif' || mime === 'image/heic-sequence' || mime === 'image/heif-sequence') return true;
+  if (!mime) return HEIC_EXTENSIONS.includes(fileExt(file));
+  return false;
+}
+function isImageFile(file) {
+  if (!file) return false;
+  const mime = String(file.type || '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+  if (!mime) return IMAGE_EXTENSIONS.includes(fileExt(file));
+  return false;
+}
+function isVideoFile(file) {
+  if (!file) return false;
+  const mime = String(file.type || '').toLowerCase();
+  if (mime.startsWith('video/')) return true;
+  if (!mime) return VIDEO_EXTENSIONS.includes(fileExt(file));
+  return false;
+}
+// heic2any is loaded on demand (only when a HEIC file is actually picked)
+// so users who never touch an iPhone photo never pay for the extra script.
+let _heic2anyLoadPromise = null;
+function loadHeic2Any() {
+  if (window.heic2any) return Promise.resolve(window.heic2any);
+  if (_heic2anyLoadPromise) return _heic2anyLoadPromise;
+  _heic2anyLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+    s.onload = () => resolve(window.heic2any);
+    s.onerror = () => reject(new Error('Could not load HEIC converter'));
+    document.head.appendChild(s);
+  });
+  return _heic2anyLoadPromise;
+}
+// Converts a HEIC/HEIF File into a JPEG File in-browser (iPhone photos are
+// HEIC by default and no mainstream browser can decode/render/canvas them
+// natively — Safari can display them but Chrome/Firefox/Edge cannot, and
+// none of them support drawImage()-ing a HEIC blob onto a <canvas>, which
+// every resize/upload path here relies on). Returns the original file
+// unchanged if it isn't HEIC, or if conversion fails (caller's existing
+// upload path will then surface a normal image-decode error instead of
+// silently doing nothing).
+async function convertHeicIfNeeded(file) {
+  if (!isHeicFile(file)) return file;
+  try {
+    const heic2any = await loadHeic2Any();
+    const convertedBlob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
+    const outBlob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+    const newName = (file.name || 'photo').replace(/\.(heic|heif|heics|heifs)$/i, '') + '.jpg';
+    return new File([outBlob], newName, { type: 'image/jpeg' });
+  } catch (e) {
+    console.warn('[heic] conversion failed, falling back to original file', e && e.message);
+    toast('Could not convert HEIC photo — try exporting it as JPEG first', 'error');
+    return file;
+  }
+}
 
 // ====== API helper ======
 function authHeaders() {
@@ -2641,8 +2718,13 @@ function bindComposer() {
 }
 
 async function handleAttach(file) {
-  if (!file.type.startsWith('image/')) { toast('Only image files', 'error'); return; }
+  if (!isImageFile(file)) { toast('Only image files', 'error'); return; }
   if (file.size > 15 * 1024 * 1024) { toast('Max 15MB', 'error'); return; }
+  if (isHeicFile(file)) {
+    $('#attachName').textContent = file.name + ' · converting…';
+    $('#attachPreview').classList.remove('hidden');
+    file = await convertHeicIfNeeded(file);
+  }
   const localUrl = URL.createObjectURL(file);
   $('#attachThumb').src = localUrl;
   $('#attachName').textContent = file.name + ' · uploading…';
@@ -2666,6 +2748,7 @@ async function handleAttach(file) {
       toast('Upload failed: ' + (err2.message || err.message), 'error');
       clearAttach();
     }
+
   }
 }
 
@@ -5448,7 +5531,7 @@ window.openStoryCreator = () => {
       e.target.value = ''; // allow re-picking the same file later
       if (!files.length) return;
       // ---- Video story path (single clip, ~15s, ≤10MB) ----
-      const vidFile = files.find(f => f.type && f.type.startsWith('video/'));
+      const vidFile = files.find(f => isVideoFile(f));
       if (vidFile) {
         await handleStoryVideoPick(vidFile, ph, prev, loadingEl);
         return;
@@ -5462,9 +5545,10 @@ window.openStoryCreator = () => {
       if (files.length > slotsLeft) toast('Added first ' + slotsLeft + ' photo(s) — max 3 per story');
       if (ph) ph.classList.add('hidden');
       if (loadingEl) loadingEl.classList.remove('hidden');
-      for (const f of batch) {
-        if (!f.type || !f.type.startsWith('image/')) { toast('Skipped a non-image file', 'error'); continue; }
+      for (let f of batch) {
+        if (!isImageFile(f)) { toast('Skipped a non-image file', 'error'); continue; }
         if (f.size > 20 * 1024 * 1024) { toast('Skipped a photo over 20MB', 'error'); continue; }
+        if (isHeicFile(f)) f = await convertHeicIfNeeded(f);
         let url = null;
         try {
           const previewDataUrl = await resizeImageToDataUrl(f, 1280, 0.82);
@@ -6025,9 +6109,17 @@ function bindFeedComposer() {
     const availableSlot = 3 - State.postAttaches.length;
     const toUpload = files.slice(0, availableSlot);
 
-    for (const f of toUpload) {
-      if (!f.type.startsWith('image/')) { toast('Only images allowed', 'error'); continue; }
+    for (let f of toUpload) {
+      if (!isImageFile(f)) { toast('Only images allowed', 'error'); continue; }
       if (f.size > 15 * 1024 * 1024) { toast('Max 15MB per image', 'error'); continue; }
+      // HEIC must be converted BEFORE creating the preview object URL too —
+      // Chrome/Firefox/Edge can't render a HEIC blob in an <img> src any
+      // more than they can draw it to a canvas, so the thumbnail would
+      // otherwise show as a broken image even once upload succeeds.
+      if (isHeicFile(f)) {
+        const st0 = $('#postAttachStatus'); if (st0) st0.textContent = 'Converting ' + f.name + '…';
+        f = await convertHeicIfNeeded(f);
+      }
       const localUrl = URL.createObjectURL(f);
       const tempItem = { localUrl, name: f.name };
       State.postAttaches.push(tempItem);
@@ -6171,11 +6263,12 @@ async function uploadPermanentImage(file, { kind = 'avatar', maxDim = 600, quali
 function bindProfile() {
   $('#profilePhotoBtn').addEventListener('click', () => $('#profilePhotoInput').click());
   $('#profilePhotoInput').addEventListener('change', async (e) => {
-    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    let f = e.target.files && e.target.files[0]; e.target.value = '';
     if (!f) return;
-    if (!f.type.startsWith('image/')) { toast('Only images', 'error'); return; }
+    if (!isImageFile(f)) { toast('Only images', 'error'); return; }
     if (f.size > 15 * 1024 * 1024) { toast('Max 15MB', 'error'); return; }
     const status = $('#profilePhotoStatus');
+    if (isHeicFile(f)) { status.textContent = 'Converting…'; f = await convertHeicIfNeeded(f); }
     status.textContent = 'Uploading 0%';
     try {
       const res = await uploadPermanentImage(f, { kind: 'avatar', maxDim: 500, quality: 0.85, onProgress: (p) => { status.textContent = 'Uploading ' + p + '%'; }});
