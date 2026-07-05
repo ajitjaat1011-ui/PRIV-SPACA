@@ -2788,22 +2788,33 @@ img{user-select:none;-webkit-user-drag:none}
 .lightbox-meta{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.08);padding:8px 14px;border-radius:999px;color:#cfe5f3;backdrop-filter:blur(10px)}
 
 /* ===== Toast ===== */
+/* Sits well clear of the floating bottom-nav pill (nav occupies ~14-70px from
+   the bottom edge) so it never covers the Home tab / avatar underneath it. */
 .toast{
-  position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
-  background:var(--text);color:#fff;padding:12px 20px;border-radius:14px;
+  position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
+  background:rgba(17,24,39,.94);color:#fff;padding:12px 18px 12px 16px;border-radius:14px;
   font-size:13.5px;font-weight:600;box-shadow:var(--shadow-lg);z-index:90;max-width:90%;
   animation:toast-in .3s cubic-bezier(.2,.8,.2,1) both;
+  backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);
+  border:1px solid rgba(255,255,255,.08);
+  border-left:3px solid rgba(255,255,255,.24);
+  display:flex;align-items:center;gap:10px;
 }
-.toast.error{background:var(--red)}
-.toast.success{background:var(--green)}
+.toast::before{
+  content:"";width:7px;height:7px;border-radius:50%;flex-shrink:0;background:rgba(255,255,255,.55);
+}
+.toast.error{border-left-color:var(--red)}
+.toast.error::before{background:var(--red);box-shadow:0 0 0 3px rgba(237,73,86,.22)}
+.toast.success{border-left-color:var(--green)}
+.toast.success::before{background:var(--green);box-shadow:0 0 0 3px rgba(35,165,90,.22)}
 .toast.with-undo{
-  display:flex;align-items:center;gap:14px;padding:10px 14px 10px 18px;
-  bottom:78px; /* keep above the bottom-nav */
+  padding:10px 14px 10px 16px;
+  bottom:calc(88px + env(safe-area-inset-bottom,0px));
 }
 .toast .toast-undo{
   background:transparent;border:0;color:#7ed5ff;font-weight:800;font-size:13px;
   letter-spacing:.6px;cursor:pointer;padding:6px 10px;border-radius:8px;
-  font-family:inherit;
+  font-family:inherit;margin-left:4px;
 }
 .toast .toast-undo:hover{background:rgba(255,255,255,.1);color:#fff}
 
