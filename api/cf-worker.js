@@ -1026,6 +1026,18 @@ async function fetchPrimaryDatabase() {
       if (users.length > 0) baseDb.users = users;
       if (posts.length > 0) baseDb.posts = posts;
       localCache = normalizeDb(baseDb);
+      // perf: this function just did a genuinely fresh 3-statement Turso
+      // batch read of ps_kv + ps_users + ps_posts. Previously it left
+      // cacheTimestamp untouched, so the very next fetchDatabase() call in
+      // the same request (e.g. requireAuth() runs fetchPrimaryDatabase() on
+      // every auth-cache-miss, then the route handler calls fetchDatabase())
+      // would see a stale cacheTimestamp, decide its cache was expired, and
+      // perform a SECOND, fully redundant Turso batch read of the exact
+      // same three tables — silently doubling the DB round trips (and
+      // therefore latency) on a large fraction of real requests. Stamping
+      // cacheTimestamp here lets fetchDatabase() correctly recognize this
+      // data as fresh and reuse it instead of re-fetching.
+      cacheTimestamp = nowMs();
       return localCache;
     } catch (e) {
       console.warn('[fetchPrimary] structured read failed, falling back:', e && e.message);
@@ -2462,8 +2474,14 @@ app.post('/api/user/close-friends', requireAuth, async (c) => {
 // ---------- Users list ----------
 app.get('/api/users', requireAuth, async (c) => {
   const db = await fetchDatabase();
-  const sdb = isTursoConfigured() ? await fetchTursoMirror(db) : db;
-  const sourceUsers = (sdb.users || []).length ? sdb.users : (db.users || []);
+  // perf: fetchDatabase() already reads ps_users + ps_posts fresh from Turso
+  // (via a single batched read alongside ps_kv) and populates db.users /
+  // db.posts from those exact same structured tables. Calling
+  // fetchTursoMirror(db) here used to re-read ps_users + ps_posts AGAIN as
+  // two extra, non-batched, serial network round trips to Turso — tripling
+  // this endpoint's latency for no benefit, since the data was identical.
+  // db.users is already the freshest available source; use it directly.
+  const sourceUsers = db.users || [];
   const myId = c.get('userId');
   const me = sourceUsers.find(u => u.id === myId);
   const myBlocked = new Set((me && me.blocked) || []);
