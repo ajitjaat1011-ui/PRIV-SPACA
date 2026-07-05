@@ -388,19 +388,36 @@ function storyExpiresAt(post) {
 }
 // Bug #10 fix: Handle edge case where viewerId is null/undefined for unauthenticated requests
 // and ensure close_friends stories require valid viewerId
+function isPrivateAccount(user) {
+  return !!(user && user.isPrivate === true);
+}
+function viewerFollowsUser(viewerId, owner, db) {
+  if (!owner || !viewerId) return false;
+  if (owner.id === viewerId) return true;
+  const ownerFollowers = Array.isArray(owner.followers) ? owner.followers : [];
+  if (ownerFollowers.includes(viewerId)) return true;
+  const viewer = (db && Array.isArray(db.users) ? db.users : []).find(u => u.id === viewerId);
+  return !!(viewer && Array.isArray(viewer.following) && viewer.following.includes(owner.id));
+}
+function canViewerAccessPrivateProfile(owner, viewerId, db) {
+  if (!owner) return false;
+  if (!isPrivateAccount(owner)) return true;
+  return viewerFollowsUser(viewerId, owner, db);
+}
 function canViewerSeeStory(post, viewerId, db) {
   if (!isStoryRecord(post)) return true; // non-stories always visible
   if (!post || post.deletedAt) return false;
   if (storyExpiresAt(post) <= nowMs()) return false;
   // Author can always see their own story
   if (viewerId && post.userId === viewerId) return true;
-  // Public stories (audience = 'all' or undefined) — anyone can see
+  const author = (db && Array.isArray(db.users) ? db.users : []).find(u => u.id === post.userId);
+  if (!author) return false; // author not found — can't verify privacy/close friends
+  if (!canViewerAccessPrivateProfile(author, viewerId, db)) return false;
+  // Public stories (audience = 'all' or undefined) — anyone allowed by account privacy can see
   const audience = post.audience || 'all';
   if (audience !== 'close_friends') return true;
   // Close friends only: must have a valid viewerId
   if (!viewerId) return false;
-  const author = (db.users || []).find(u => u.id === post.userId);
-  if (!author) return false; // author not found — can't verify close friends
   const closeFriends = Array.isArray(author.closeFriends) ? author.closeFriends : [];
   return closeFriends.includes(viewerId);
 }
@@ -1121,6 +1138,7 @@ function sanitizeUser(u, includePrivate = false) {
     createdAt: u.createdAt,
     publicKey: u.publicKey || null,
     verified: !!u.verified,
+    isPrivate: !!u.isPrivate,
     note: activeNote(u),
   };
   if (includePrivate) {
@@ -1574,6 +1592,7 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
       following: [],
       blocked: [],
       closeFriends: [],
+      isPrivate: false,
       termsAccepted: true,
       termsVersion: String(termsVersion || '1.0'),
       termsAcceptedAt: nowMs(),
@@ -1763,7 +1782,7 @@ app.post('/api/upload-photo', authMiddleware, async (req, res) => {
 });
 app.post('/api/user/update', authMiddleware, async (req, res) => {
   try {
-    const { displayName, username, bio, photoUrl, dateOfBirth, cardVisibility } = req.body || {};
+    const { displayName, username, bio, photoUrl, dateOfBirth, cardVisibility, isPrivate } = req.body || {};
     const db = await fetchDatabase();
     const user = db.users.find(u => u.id === req.userId);
     if (!user) return res.status(404).json({ error: 'Not found' });
@@ -1792,6 +1811,9 @@ app.post('/api/user/update', authMiddleware, async (req, res) => {
     if (typeof cardVisibility === 'string') {
       const cv = cardVisibility.trim();
       if (['everyone','close_friends','private'].includes(cv)) user.cardVisibility = cv;
+    }
+    if (typeof isPrivate === 'boolean') {
+      user.isPrivate = isPrivate;
     }
     await saveDatabase(db, false);
     res.json({ user: sanitizeUser(user, true) });
@@ -2419,13 +2441,14 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
   const sdb = isTursoConfigured() ? await fetchTursoMirror() : await fetchDatabase();
   const sourceUsers = sdb.users || [];
   const sourcePosts = sdb.posts || [];
+  const structuredDb = normalizeDb({ users: sourceUsers, posts: sourcePosts });
   const target = sourceUsers.find(u => u.id === targetId);
   if (!target) return res.status(404).json({ error: 'Not found' });
   const me = sourceUsers.find(u => u.id === req.userId);
   const blockedMe = Array.isArray(target.blocked) && target.blocked.includes(req.userId);
   const iBlocked = me && Array.isArray(me.blocked) && me.blocked.includes(targetId);
   if (blockedMe) return res.status(403).json({ error: 'Profile unavailable' });
-  const posts = (sourcePosts || [])
+  const allPosts = (sourcePosts || [])
     .filter(p => p.userId === targetId && !p.deletedAt && !isStoryRecord(p))
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => ({
@@ -2437,19 +2460,23 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
     ...sourceUsers.filter(u => Array.isArray(u.following) && u.following.includes(targetId)).map(u => u.id),
   ])).filter(id => id && id !== targetId);
   const followingIds = Array.from(new Set(Array.isArray(target.following) ? target.following : [])).filter(id => id && id !== targetId);
-  const canViewCard = canViewProfileCard(target, req.userId);
+  const canViewPrivateProfile = canViewerAccessPrivateProfile(target, req.userId, structuredDb);
+  const profileLocked = !!target.isPrivate && !canViewPrivateProfile && targetId !== req.userId;
+  const posts = profileLocked ? [] : allPosts;
+  const canViewCard = !profileLocked && canViewProfileCard(target, req.userId);
   const cardVisibility = ['everyone','close_friends','private'].includes(target.cardVisibility) ? target.cardVisibility : 'everyone';
   const profileUser = {
     ...sanitizeUser(target, targetId === req.userId),
     followers: followerIds.length,
     following: followingIds.length,
-    followerIds,
-    followingIds,
-    postsCount: posts.length,
+    followerIds: profileLocked ? [] : followerIds,
+    followingIds: profileLocked ? [] : followingIds,
+    postsCount: allPosts.length,
+    profileLocked,
   };
   profileUser.card = canViewCard ? {
     canView: true, visibility: cardVisibility, dateOfBirth: target.dateOfBirth || '',
-    postsCount: posts.length, followers: followerIds.length, following: followingIds.length
+    postsCount: allPosts.length, followers: followerIds.length, following: followingIds.length
   } : { canView: false, visibility: cardVisibility };
   res.json({
     user: profileUser,
@@ -2459,6 +2486,7 @@ app.get('/api/user/:id/profile', authMiddleware, async (req, res) => {
       iFollow: !!(me && (me.following || []).includes(targetId)),
       followsMe: Array.isArray(target.following) && target.following.includes(req.userId),
       iBlocked,
+      profileLocked,
     }
   });
 });
@@ -2478,7 +2506,12 @@ app.get('/api/posts', authMiddleware, async (req, res) => {
   });
   const structuredDb = normalizeDb({ users: sourceUsers, posts: sourcePosts });
   const list = sourcePosts
-    .filter(p => !p.deletedAt && !myBlocked.has(p.userId) && !blockedMe.has(p.userId) && canViewerSeeStory(p, req.userId, structuredDb))
+    .filter(p => {
+      if (!p || p.deletedAt || myBlocked.has(p.userId) || blockedMe.has(p.userId)) return false;
+      const author = sourceUsers.find(u => u.id === p.userId);
+      if (author && !canViewerAccessPrivateProfile(author, req.userId, structuredDb)) return false;
+      return canViewerSeeStory(p, req.userId, structuredDb);
+    })
     .slice()
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(p => {
@@ -2593,8 +2626,19 @@ app.post('/api/posts/create', authMiddleware, async (req, res) => {
     };
     db.posts.push(post);
     const enrichedPost = { ...post, likeCount: 0, commentCount: 0, author: snapshot || { id: req.userId, displayName: 'Member', username: 'member' } };
-    // Broadcast to other users so their feed updates instantly
-    _broadcastEvent('new_post', { post: enrichedPost }, req.userId);
+    // Private accounts only fan out to followers; public accounts keep the existing broadcast behavior.
+    if (author && author.isPrivate) {
+      const allowedUserIds = new Set([
+        ...(Array.isArray(author.followers) ? author.followers : []),
+        ...db.users.filter(u => Array.isArray(u.following) && u.following.includes(req.userId)).map(u => u.id),
+      ]);
+      allowedUserIds.delete(req.userId);
+      for (const viewerId of allowedUserIds) {
+        _pushEvent(viewerId, 'new_post', { post: enrichedPost });
+      }
+    } else {
+      _broadcastEvent('new_post', { post: enrichedPost }, req.userId);
+    }
     await saveDatabase(db, false);
     res.json({ post: enrichedPost });
   } catch (e) {
@@ -2609,6 +2653,10 @@ app.post('/api/posts/like', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
   const post = db.posts.find(p => p.id === postId);
   if (!post) return res.status(404).json({ error: 'Not found' });
+  const postAuthor = db.users.find(u => u.id === post.userId);
+  if (postAuthor && !canViewerAccessPrivateProfile(postAuthor, req.userId, db)) {
+    return res.status(403).json({ error: 'Post unavailable' });
+  }
   if (!Array.isArray(post.likes)) post.likes = [];
   const idx = post.likes.indexOf(req.userId);
   let liked;
@@ -2701,6 +2749,10 @@ app.post('/api/posts/comment', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
   const post = db.posts.find(p => p.id === postId);
   if (!post) return res.status(404).json({ error: 'Not found' });
+  const postAuthor = db.users.find(u => u.id === post.userId);
+  if (postAuthor && !canViewerAccessPrivateProfile(postAuthor, req.userId, db)) {
+    return res.status(403).json({ error: 'Post unavailable' });
+  }
   if (!Array.isArray(post.comments)) post.comments = [];
   const author = db.users.find(u => u.id === req.userId);
   const snapshot = author ? {

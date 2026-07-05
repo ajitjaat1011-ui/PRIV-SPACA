@@ -3903,6 +3903,24 @@ body{
   margin-left:auto;border:1px solid var(--line);background:var(--bg-soft);color:var(--text);
   border-radius:999px;padding:7px 28px 7px 10px;font-weight:800;font-size:12px;outline:none;
 }
+.private-account-badge{display:inline-flex;align-items:center;justify-content:center;margin-left:6px;vertical-align:middle;color:var(--muted)}
+.private-account-badge.inline i,.private-account-badge.inline svg{width:14px;height:14px}
+.private-account-badge.title i,.private-account-badge.title svg{width:16px;height:16px}
+.settings-toggle-row{position:relative;display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none}
+.settings-toggle-meta{display:flex;align-items:center;gap:10px;flex:1;min-width:0;font-weight:700;color:var(--text)}
+.settings-toggle-meta i,.settings-toggle-meta svg{width:20px;height:20px;color:var(--text-2);flex-shrink:0}
+.settings-toggle-hint{font-size:12px;font-weight:800;color:var(--muted);white-space:nowrap}
+.settings-toggle-input{position:absolute;opacity:0;pointer-events:none}
+.settings-switch{margin-left:auto;display:inline-flex;align-items:center;width:46px;height:28px;padding:3px;border-radius:999px;border:1px solid var(--line);background:var(--bg-soft);transition:background .2s ease,border-color .2s ease}
+.settings-switch-knob{width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 4px 10px rgba(0,0,0,.18);transition:transform .2s ease,background .2s ease}
+.settings-toggle-input:checked + .settings-switch{background:rgba(var(--accent-rgb),.22);border-color:rgba(var(--accent-rgb),.55)}
+.settings-toggle-input:checked + .settings-switch .settings-switch-knob{transform:translateX(18px);background:var(--accent)}
+.settings-toggle-row.active .settings-toggle-hint{color:var(--accent)}
+.private-profile-notice{display:flex;align-items:flex-start;gap:12px;margin:6px 18px 18px;padding:16px;border:1px solid var(--line);border-radius:18px;background:var(--surface);box-shadow:var(--shadow-xs)}
+.private-profile-notice.hidden{display:none!important}
+.private-profile-notice i,.private-profile-notice svg{width:20px;height:20px;color:var(--accent);flex-shrink:0;margin-top:2px}
+.private-profile-notice strong{display:block;font-size:15px;font-weight:900;color:var(--text)}
+.private-profile-notice span{display:block;margin-top:4px;font-size:13px;color:var(--muted);line-height:1.45}
 .ig-action-btn.icon-only{flex:0 0 56px;min-width:56px;padding:0}.ig-action-btn.icon-only i,.ig-action-btn.icon-only svg{width:22px;height:22px}
 .profile-card-sheet{position:fixed;inset:0;z-index:10020;display:flex;align-items:center;justify-content:center;padding:22px;background:rgba(5,10,24,.42);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .profile-card-sheet.hidden{display:none!important}.profile-card-backdrop{position:absolute;inset:0}.profile-card-stage{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:min(100%,380px)}
