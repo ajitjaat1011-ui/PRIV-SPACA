@@ -6,8 +6,8 @@
  *  - /api/*           -> NEVER cached (live data only)
  */
 const SW_VERSION = 'priv-spaca-v83';
-const STATIC_CACHE = 'priv-spaca-static-v82';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v82';
+const STATIC_CACHE = 'priv-spaca-static-v83';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v83';
 
 const APP_SHELL = [
   '/',

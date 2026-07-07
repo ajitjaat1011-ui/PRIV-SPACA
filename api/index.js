@@ -25,8 +25,9 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { neon } = require('@neondatabase/serverless');
 const { createClient: createTursoClient } = require('@libsql/client');
+// NOTE: @neondatabase/serverless import removed — Neon was deprecated per wrangler.toml.
+// Any leftover DATABASE_URL handling is intentionally inert.
 
 // Bug #14 fix: Robust fetch polyfill with proper error handling
 // node-fetch v2 (CommonJS). Falls back to globalThis.fetch (Node 18+).
@@ -80,7 +81,12 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Last-Event-ID');
   res.setHeader('Access-Control-Max-Age', '86400');
   if (req.method === 'OPTIONS') return res.status(204).end();
-  if (isProductionHost(req) && isDefaultJwtSecret() && req.path.startsWith('/api/') && req.path !== '/api/health') {
+  // SECURITY: fail closed on ANY non-localhost request when JWT_SECRET is unset
+  // or still the legacy default. Previously this check was host-based (only
+  // *.priv-spaca.pages.dev) which left custom-domain deploys vulnerable to
+  // JWT forgery using the public default secret.
+  const isLocal = req.headers.host && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host);
+  if (!isLocal && isDefaultJwtSecret() && req.path.startsWith('/api/') && req.path !== '/api/health') {
     return res.status(503).json({ error: 'Server auth secret is not configured' });
   }
   next();
@@ -169,8 +175,16 @@ async function sharedRateLimit({ key, limit, windowMs }) {
   }
 }
 function clientIp(req) {
-  return (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim()
+  // Prefer Cloudflare's authoritative header (set at the edge, unspoofable).
+  // Then x-real-ip (set by trusted reverse proxies), then the LAST hop of
+  // x-forwarded-for (since the leftmost entry is client-controlled on misconfigured
+  // proxies), then socket. Previously this took the FIRST xff hop, which let
+  // attackers rotate the header per request to bypass rate limits.
+  const xff = (req.headers['x-forwarded-for'] || '').toString();
+  const xffLast = xff ? xff.split(',').pop().trim() : '';
+  return req.headers['cf-connecting-ip']
       || req.headers['x-real-ip']
+      || xffLast
       || req.socket.remoteAddress
       || 'unknown';
 }
@@ -446,7 +460,11 @@ function canViewerSeeStory(post, viewerId, db) {
 }
 
 // ---------- Configuration ----------
-const JWT_SECRET = process.env.JWT_SECRET || 'priv-spaca-dev-secret-change-me-in-production';
+// SECURITY: Never default to a known public secret. If JWT_SECRET is unset
+// we use an empty string; isDefaultJwtSecret() + the global middleware will
+// refuse to serve any /api/* route (except health) so the deploy fails closed.
+// Operators must set JWT_SECRET as an encrypted Pages secret.
+const JWT_SECRET = process.env.JWT_SECRET || '';
 const JWT_EXPIRES = '7d';
 // Bug #7 fix: Consistent bcrypt rounds between index.js and cf-worker.js.
 // rounds=8 is a good balance for Node.js (~100ms/hash on typical server hardware).
@@ -775,13 +793,65 @@ async function tursoEnsure() {
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ps_rate_limits_reset_at ON ps_rate_limits (reset_at);
+    -- Defensive ALTERs: if an older migrate-neon-to-turso.mjs created
+    -- ps_rate_limits without the locked_until/first_at columns (schema drift
+    -- bug), add them here so account-lockout UPSERTs don't throw.
+    -- SQLite's ALTER TABLE ADD COLUMN is idempotent-safe via this try pattern.
+    -- Tables added in this block mirror api/cf-worker.js so the Express path
+    -- (local dev / Netlify) is no longer broken for RTC signaling.
+    CREATE TABLE IF NOT EXISTS ps_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT,
+      data TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_events_user_kind_created ON ps_events (user_id, kind, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_kv (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      version INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ps_user_feeds (
+      user_id TEXT NOT NULL,
+      post_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, post_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_user_feeds_user_created ON ps_user_feeds (user_id, created_at DESC);
+    -- UNIQUE indexes prevent TOCTOU races on concurrent signups with the same
+    -- email/username. The in-memory check in /api/auth/signup can be beaten
+    -- by two parallel requests; the DB constraint is the source of truth.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_users_username_unique ON ps_users (username_lower);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_users_email_unique ON ps_users (email_lower);
   `);
   _tursoReady = true;
   return true;
 }
+
+// Defensive column migration for ps_rate_limits: if the table was created by
+// scripts/migrate-neon-to-turso.mjs (which historically omitted locked_until
+// and first_at), add them. We can't run ALTER TABLE inside executeMultiple
+// reliably across libSQL versions, so we run them individually and swallow
+// 'duplicate column' errors.
+async function tursoEnsureRateLimitColumns() {
+  if (!isTursoConfigured() || !_tursoReady) return;
+  const c = tursoClient();
+  for (const col of ['locked_until', 'first_at']) {
+    try {
+      await c.execute(`ALTER TABLE ps_rate_limits ADD COLUMN ${col} INTEGER DEFAULT 0`);
+    } catch (e) {
+      // 'duplicate column name' is expected when the column already exists.
+      const msg = String((e && e.message) || '');
+      if (!/duplicate column/i.test(msg)) console.warn('[turso] alter ps_rate_limits:', msg);
+    }
+  }
+}
 async function syncTursoMirror(db) {
   if (!isTursoConfigured()) return false;
   await tursoEnsure();
+  await tursoEnsureRateLimitColumns();
   const c = tursoClient();
   const src = normalizeDb(db);
   const ts = nowMs();
@@ -852,7 +922,13 @@ async function syncTursoMirror(db) {
       sql: 'INSERT INTO ps_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
       args: ['bootstrap_v1', String(ts), ts],
     });
-    await c.batch(statements, 'write');
+    // Chunk the batch to stay under libSQL's per-batch statement cap (~80).
+    // The previous single unchunked c.batch(statements, 'write') would silently
+    // fail (caught + logged) on large DBs, leaving the mirror stale.
+    const CHUNK = 80;
+    for (let i = 0; i < statements.length; i += CHUNK) {
+      await c.batch(statements.slice(i, i + CHUNK), 'write');
+    }
     _tursoBootstrapped = true;
     return true;
   } catch (e) {
@@ -897,9 +973,10 @@ async function fetchTursoUserById(userId) {
   return safeJson(String(row.rows[0].data_json || '{}'), null);
 }
 async function fetchTursoNotifications(userId) {
-  if (!isTursoConfigured() || !userId) return [];
+  if (!isTursoConfigured() || !userId) return null;
   await tursoEnsure();
-  const rs = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200', args: [userId] }).catch(() => ({ rows: [] }));
+  const rs = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200', args: [userId] }).catch((e) => { console.warn('[turso] notifications read failed', e && e.message); return null; });
+  if (rs === null) return null;
   return (rs.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean);
 }
 async function fetchTursoDmIndex(ownerUserId) {
@@ -991,7 +1068,12 @@ async function fetchDatabase({ includeTurso = true } = {}) {
   const freshPrimary = !includeTurso;
   const now = nowMs();
   if (!freshPrimary && now - cacheTimestamp < CACHE_TTL_MS && cacheTimestamp !== 0) {
-    runScheduler(localCache);
+    const changed = runScheduler(localCache);
+    // Persist any scheduler mutations even on cache hit. Previously the cache-hit
+    // branch returned without saving, so promoted scheduled messages lived only
+    // in localCache and were lost on the next cache miss (which overwrote
+    // localCache from GitHub).
+    if (changed) await saveDatabase(localCache, false).catch(() => {});
     return localCache;
   }
   const remote = await persistRead();
@@ -1058,6 +1140,15 @@ function runScheduler(db) {
       if (Object.keys(map).length === 0) delete db.typing[room];
     }
   }
+  // Purge stale heartbeat entries (>5 min). Previously heartbeat was never
+  // pruned, so db.heartbeat grew unbounded and was persisted to GitHub on
+  // every ephemeral save, inflating db.json forever.
+  if (db.heartbeat && typeof db.heartbeat === 'object') {
+    const HEARTBEAT_TTL = 5 * 60 * 1000;
+    for (const id of Object.keys(db.heartbeat)) {
+      if (now - (db.heartbeat[id] || 0) > HEARTBEAT_TTL) delete db.heartbeat[id];
+    }
+  }
 
   if (!Array.isArray(db.scheduledMessages) || db.scheduledMessages.length === 0) return changed;
   const due = [];
@@ -1075,7 +1166,7 @@ function runScheduler(db) {
     const snapshot = author ? {
       id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || ''
     } : (sm.authorSnapshot || null);
-    db.messages.push({
+    const msg = {
       id: sm.id || uid('msg'),
       roomId: sm.roomId,
       userId: sm.userId,
@@ -1085,7 +1176,23 @@ function runScheduler(db) {
       authorSnapshot: snapshot,
       createdAt: now,
       scheduledOriginally: true,
-    });
+    };
+    db.messages.push(msg);
+    // DELIVERY: previously the message was pushed into db.messages but no
+    // SSE / push notification fired — so the recipient only saw it on their
+    // next manual poll. Now we fire real-time delivery + push here.
+    const enriched = { ...msg, author: snapshot || { id: sm.userId, displayName: 'Member', username: 'member' } };
+    if (typeof sm.roomId === 'string' && sm.roomId.startsWith('dm:')) {
+      const parts = sm.roomId.slice(3).split(':').filter(Boolean);
+      for (const recipId of parts) {
+        if (recipId === sm.userId) continue;
+        _pushEvent(recipId, 'new_message', { roomId: sm.roomId, message: enriched });
+        const preview = sm.text ? String(sm.text).slice(0, 80) : (sm.imageUrl ? '📷 Photo' : '');
+        pushNotification(db, recipId, 'message', sm.userId, { text: preview });
+      }
+    } else {
+      _broadcastEvent('new_message', { roomId: sm.roomId, message: enriched }, sm.userId);
+    }
   }
   db.scheduledMessages = remaining;
   return true;
@@ -1103,6 +1210,21 @@ async function saveDatabase(data, isEphemeral = false) {
     const now = nowMs();
     if (now - lastEphemeralWrite < EPHEMERAL_WRITE_INTERVAL_MS) {
       pendingEphemeral = true;
+      // Schedule a deferred flush. Previously pendingEphemeral was set but
+      // NEVER read, so heartbeats / typing / story-views that happened
+      // during the throttle window were silently dropped unless a different
+      // durable save happened within the same 30s window.
+      if (!_ephemeralFlushScheduled) {
+        _ephemeralFlushScheduled = true;
+        const wait = Math.max(1000, EPHEMERAL_WRITE_INTERVAL_MS - (now - lastEphemeralWrite));
+        setTimeout(() => {
+          _ephemeralFlushScheduled = false;
+          if (!pendingEphemeral) return;
+          pendingEphemeral = false;
+          lastEphemeralWrite = nowMs();
+          persistWrite(localCache).catch(() => {});
+        }, wait).unref?.();
+      }
       return true;
     }
     lastEphemeralWrite = now;
@@ -1116,6 +1238,7 @@ async function saveDatabase(data, isEphemeral = false) {
   if (ok && isTursoConfigured()) await syncTursoMirror(localCache);
   return ok;
 }
+let _ephemeralFlushScheduled = false;
 
 // ---------- Auth helpers ----------
 function signToken(user) {
@@ -1654,7 +1777,7 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
     }
     const db = await fetchPrimaryDatabase();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
-    if (!user) { await authFailureDelay(); return res.status(404).json({ error: AUTH_GENERIC_ERROR }); }
+    if (!user) { await authFailureDelay(); return res.status(401).json({ error: AUTH_GENERIC_ERROR }); }
     const lock = await checkAccountLock(user.id);
     if (lock.locked) {
       res.setHeader('Retry-After', String(Math.ceil(lock.remaining / 1000)));
@@ -1691,8 +1814,19 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (req, res) => {
     const db = await fetchPrimaryDatabase();
     const user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     if (!user) { await authFailureDelay(); return res.status(401).json({ error: 'Invalid reset details.' }); }
+    // SECURITY: Account lockout must apply to wrong PINs too, otherwise a small
+    // botnet can brute-force the 4-digit PIN (10,000 possibilities) in hours.
+    const lock = await checkAccountLock(user.id);
+    if (lock.locked) {
+      res.setHeader('Retry-After', String(Math.ceil(lock.remaining / 1000)));
+      return res.status(429).json({ error: 'Too many attempts. Please wait and try again.' });
+    }
     const pinOk = await bcrypt.compare(pin, user.pinHash);
-    if (!pinOk) { await authFailureDelay(); return res.status(401).json({ error: 'Invalid reset details.' }); }
+    if (!pinOk) {
+      await recordLoginFail(user.id);
+      await authFailureDelay();
+      return res.status(401).json({ error: 'Invalid reset details.' });
+    }
     const oldHash = user.passwordHash;
     const oldTokenVersion = Number(user.tokenVersion || 0);
     user.passwordHash = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
@@ -2089,6 +2223,11 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       roomId: rawRoom, text, imageUrl, replyTo, targetUserId,
       encrypted, cipher, iv, disappearAfterMs,
     } = req.body || {};
+    // SECURITY: block self-DMs. dmRoomFor would happily produce dm:<myId>:<myId>
+    // and the SSE event would loop back to the sender, creating junk threads.
+    if (targetUserId && targetUserId === req.userId) {
+      return res.status(400).json({ error: 'Cannot message yourself' });
+    }
     let roomId = rawRoom;
     if (!roomId && targetUserId) {
       roomId = dmRoomFor(req.userId, targetUserId);
@@ -2112,6 +2251,19 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       disappearAt = nowMs() + ms;
     }
     const db = await fetchDatabase();
+    // SECURITY: honor block list BEFORE pushing the SSE event. Previously
+    // _pushEvent fired first and pushNotification second; pushNotification
+    // checked the block list, but the live SSE event had already been
+    // delivered to the recipient's open chat window, so a blocked harasser
+    // could still inject live messages.
+    if (roomId.startsWith('dm:')) {
+      const parts = roomId.slice(3).split(':');
+      const recipId = parts.find(id => id !== req.userId);
+      const recip = recipId && db.users.find(u => u.id === recipId);
+      if (recip && Array.isArray(recip.blocked) && recip.blocked.includes(req.userId)) {
+        return res.status(403).json({ error: 'Cannot message this user' });
+      }
+    }
     let replyRef = null;
     if (replyTo && typeof replyTo === 'object' && replyTo.id) {
       replyRef = {
@@ -2337,6 +2489,7 @@ function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
   if (kind === 'comment') body = `${fromName} commented: ${(notif.text || '').slice(0, 80)}`;
   if (kind === 'follow')  body = `${fromName} started following you`;
   if (kind === 'message') body = `${fromName}: ${(notif.text || '').slice(0, 80)}`;
+  if (kind === 'story_reply') body = `${fromName} replied to your story`;
   if (body) {
     sendWebPush(db, recipientId, {
       title, body,
@@ -2354,9 +2507,17 @@ function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
 // GET /api/notifications — list mine, newest first
 app.get('/api/notifications', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
-  const mine = isTursoConfigured()
-    ? await fetchTursoNotifications(req.userId)
-    : (db.notifications || []).filter(n => n.userId === req.userId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
+  let mine = null;
+  if (isTursoConfigured()) {
+    mine = await fetchTursoNotifications(req.userId);
+  }
+  if (!Array.isArray(mine)) {
+    // Fall back to the in-memory/GitHub mirror whenever Turso is unconfigured
+    // or returns an error (null). Previously the helper returned [] on error,
+    // which is truthy-isArray, so the fallback was skipped and users saw an
+    // empty feed during transient Turso hiccups.
+    mine = (db.notifications || []).filter(n => n.userId === req.userId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
+  }
   // Enrich with current author data when available
   const enriched = mine.map(n => {
     const author = (db.users || []).find(u => u.id === n.fromUserId);
@@ -2374,10 +2535,29 @@ app.post('/api/notifications/seen', authMiddleware, async (req, res) => {
   const db = await fetchDatabase();
   const now = nowMs();
   let changed = 0;
+  const touched = [];
   (db.notifications || []).forEach(n => {
-    if (n.userId === req.userId && !n.seenAt) { n.seenAt = now; changed++; }
+    if (n.userId === req.userId && !n.seenAt) { n.seenAt = now; changed++; touched.push(n); }
   });
-  if (changed > 0) await saveDatabase(db, true); // ephemeral — okay if it batches
+  if (changed > 0) {
+    await saveDatabase(db, true); // ephemeral — okay if it batches
+    // Propagate seen-state to Turso. Previously this was an ephemeral save
+    // only, and the Turso mirror never got seen_at set, so the unread badge
+    // reappeared on every app reload.
+    if (isTursoConfigured() && touched.length) {
+      try {
+        const c = tursoClient();
+        const stmts = touched.map(n => ({
+          sql: 'UPDATE ps_notifications SET seen_at = ?, updated_at = ? WHERE id = ?',
+          args: [now, now, n.id],
+        }));
+        // Chunk to stay under the libSQL batch cap.
+        for (let i = 0; i < stmts.length; i += 80) {
+          await c.batch(stmts.slice(i, i + 80), 'write');
+        }
+      } catch (e) { console.warn('[turso] notif seen update failed', e && e.message); }
+    }
+  }
   res.json({ ok: true, updated: changed });
 });
 
@@ -2754,6 +2934,13 @@ app.post('/api/posts/like', authMiddleware, async (req, res) => {
   if (postAuthor && !canViewerAccessPrivateProfile(postAuthor, req.userId, db)) {
     return res.status(403).json({ error: 'Post unavailable' });
   }
+  // SECURITY: close-friends stories must not be likeable by non-close-friends.
+  // Previously only canViewerAccessPrivateProfile was checked, so anyone who
+  // could guess a story post ID could like it (and the author would be notified),
+  // defeating the close-friends story privacy model.
+  if (isStoryRecord(post) && !canViewerSeeStory(post, req.userId, db)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   if (!Array.isArray(post.likes)) post.likes = [];
   const idx = post.likes.indexOf(req.userId);
   let liked;
@@ -2775,8 +2962,18 @@ app.post('/api/rtc/signal', authMiddleware, async (req, res) => {
   if (JSON.stringify(signal).length > 20000) return res.status(413).json({ error: 'Signal too large' });
   if (targetId === req.userId) return res.status(400).json({ error: 'Invalid target' });
   const db = await fetchDatabase();
-  if (!db.users.some(u => u.id === targetId)) return res.status(404).json({ error: 'Target not found' });
+  const target = db.users.find(u => u.id === targetId);
+  if (!target) return res.status(404).json({ error: 'Target not found' });
+  // SECURITY: mutual block check. A blocked user should not be able to call-bomb
+  // the blocker with RTC offer signals. Previously the endpoint only validated
+  // targetId format + existence, then pushed the signal via _pushEvent.
   const me = db.users.find(u => u.id === req.userId);
+  if (me && Array.isArray(me.blocked) && me.blocked.includes(targetId)) {
+    return res.status(403).json({ error: 'Cannot call this user' });
+  }
+  if (Array.isArray(target.blocked) && target.blocked.includes(req.userId)) {
+    return res.status(403).json({ error: 'Cannot call this user' });
+  }
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: req.userId, displayName: 'Member', username: 'member' };
   const payload = { fromId: req.userId, author, signal };
   const now = nowMs();
@@ -2849,6 +3046,10 @@ app.post('/api/posts/comment', authMiddleware, async (req, res) => {
   const postAuthor = db.users.find(u => u.id === post.userId);
   if (postAuthor && !canViewerAccessPrivateProfile(postAuthor, req.userId, db)) {
     return res.status(403).json({ error: 'Post unavailable' });
+  }
+  // SECURITY: same close-friends IDOR fix as /api/posts/like.
+  if (isStoryRecord(post) && !canViewerSeeStory(post, req.userId, db)) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
   if (!Array.isArray(post.comments)) post.comments = [];
   const author = db.users.find(u => u.id === req.userId);
@@ -2958,6 +3159,12 @@ app.post('/api/stories/:id/reply', authMiddleware, async (req, res) => {
   };
   db.messages.push(msg);
   const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
+  // SECURITY: honor block list before delivering the reply. A blocked user
+  // should not be able to inject messages into the story author's DM thread.
+  const storyAuthor = db.users.find(u => u.id === p.userId);
+  if (storyAuthor && Array.isArray(storyAuthor.blocked) && storyAuthor.blocked.includes(myId)) {
+    return res.status(403).json({ error: 'Cannot reply to this story' });
+  }
   _pushEvent(p.userId, 'new_message', { roomId, message: enriched });
   pushNotification(db, p.userId, 'story_reply', myId, { text: bodyText.slice(0, 80), postId: p.id });
   await saveDatabase(db, false);
