@@ -745,8 +745,8 @@ img{user-select:none;-webkit-user-drag:none}
   border-radius:0;
 }
 .topbar > div:last-child {
-  grid-column: 3;
-  justify-self: end;
+  grid-column: auto;
+  justify-self: auto;
 }
 [data-theme="dark"] .topbar,
 
@@ -1549,7 +1549,7 @@ img{user-select:none;-webkit-user-drag:none}
 .search-view{background:var(--bg)}
 .search-wrap{
   max-width:600px;margin:0 auto;
-  padding:14px 12px 84px;
+  padding:24px 12px 84px;
   display:flex;flex-direction:column;gap:14px;
   box-sizing:border-box;width:100%;min-width:0;
 }
@@ -2522,7 +2522,7 @@ img{user-select:none;-webkit-user-drag:none}
 /* ===== Profile view (Exact Instagram Layout) ===== */
 .profile-view{background:var(--bg)}
 .profile-wrap{
-  max-width:600px;margin:0 auto;padding:0 0 84px;
+  max-width:600px;margin:0 auto;padding:24px 0 84px;
   box-sizing:border-box;width:100%;min-width:0;
 }
 .profile-mode{animation:fade-in .25s ease}
@@ -3958,8 +3958,8 @@ body{
   border-radius:0 !important;
 }
 .topbar > div:last-child {
-  grid-column: 3 !important;
-  justify-self: end !important;
+  grid-column: auto !important;
+  justify-self: auto !important;
 }
 /* Animated gradient accent strip along the bottom edge of the topbar */
 .topbar::after{
