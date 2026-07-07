@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v83';
+const APP_VERSION = 'priv-spaca-v85';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -49,7 +49,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 // DOM element cache for hot-path ID selectors (avoids 5-12x repeated queries)
 const _domCache = new Map();
-const $id = (id) => { let el = _domCache.get(id); if (el !== undefined) return el; el = document.getElementById(id); _domCache.set(id, el); return el; };
+const $id = (id) => { let el = _domCache.get(id); if (el !== undefined) return el; el = document.getElementById(id && id.charAt(0) === '#' ? id.slice(1) : id); _domCache.set(id, el); return el; };
 function invalidateDomCache(id) { if (id) _domCache.delete(id); else _domCache.clear(); }
 
 // ====== Robust file-type detection (HEIC/HEIF fix) ======
@@ -8115,7 +8115,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=83-private-follow-requests').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=85').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
