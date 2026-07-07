@@ -3185,7 +3185,7 @@ body{
 }
 .topbar{
   /* Keep the liquid-glass look from the .topbar rule above. */
-  height:60px;
+  height:auto;
 }
 .brand-wordmark{
   font-size:30px;
