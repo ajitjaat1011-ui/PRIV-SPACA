@@ -38,8 +38,8 @@ console.log('📄 Creating production index.html...');
 try {
   let html = fs.readFileSync(path.join(rootDir, 'index.html'), 'utf8');
   // Update references to minified files
-  html = html.replace(/style\.css(\?v=[^"']*)?/g, 'style.min.css?v=88');
-  html = html.replace(/app\.js(\?v=[^"']*)?/g, 'app.min.js?v=88');
+  html = html.replace(/style\.css(\?v=[^"']*)?/g, 'style.min.css?v=89');
+  html = html.replace(/app\.js(\?v=[^"']*)?/g, 'app.min.js?v=89');
   // Write modified HTML
   fs.writeFileSync(path.join(rootDir, 'index.html'), html, 'utf8');
   // Now minify the HTML itself
@@ -53,8 +53,8 @@ try {
 console.log('🔧 Updating service worker...');
 try {
   let sw = fs.readFileSync(path.join(rootDir, 'sw.js'), 'utf8');
-  sw = sw.replace(/style\.css(\?v=[^']*)?/g, 'style.min.css?v=88');
-  sw = sw.replace(/app\.js(\?v=[^']*)?/g, 'app.min.js?v=88');
+  sw = sw.replace(/style\.css(\?v=[^']*)?/g, 'style.min.css?v=89');
+  sw = sw.replace(/app\.js(\?v=[^']*)?/g, 'app.min.js?v=89');
   sw = sw.replace(/priv-spaca-v\d+/g, 'priv-spaca-v88');
   fs.writeFileSync(path.join(rootDir, 'sw.js'), sw, 'utf8');
   console.log('   ✅ sw.js updated\n');

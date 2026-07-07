@@ -1052,14 +1052,17 @@ function updateTopbarHeader(tab) {
   const igH = $id('#igUsernameHeader');
   const igT = $id('#igUsernameText');
   const topbar = brand ? brand.closest('.topbar') : null;
+  const appShell = document.getElementById('appShell');
   
   if (tab === 'feed') {
     if (topbar) topbar.style.display = 'grid';
+    if (appShell) appShell.style.gridTemplateRows = 'auto 1fr';
     if (brand) brand.classList.remove('hidden');
     if (igH) igH.classList.add('hidden');
   } else {
     // Hide the entire topbar header entirely on non-home pages (search, profile, chats, etc.)
     if (topbar) topbar.style.display = 'none';
+    if (appShell) appShell.style.gridTemplateRows = '1fr';
     if (brand) brand.classList.add('hidden');
     if (igH) igH.classList.add('hidden');
   }
