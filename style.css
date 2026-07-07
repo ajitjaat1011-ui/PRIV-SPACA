@@ -2849,7 +2849,7 @@ img{user-select:none;-webkit-user-drag:none}
 /* Responsive */
 @media (max-width:780px){
   .chat-view{grid-template-columns:1fr}
-  .rooms-pane{display:none;position:absolute;inset:54px 0 72px 0;z-index:10;background:var(--bg-2)}
+  .rooms-pane{display:none;position:absolute;inset:0 0 72px 0;z-index:10;background:var(--bg-2)}
   .chat-view.show-rooms .rooms-pane{display:flex}
   .row-2, .ig-row{grid-template-columns:1fr}
   .message .bubble-wrap{max-width:78%}
