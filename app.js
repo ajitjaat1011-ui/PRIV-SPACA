@@ -47,6 +47,10 @@ const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
 const API_BASE = '/api';
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+// DOM element cache for hot-path ID selectors (avoids 5-12x repeated queries)
+const _domCache = new Map();
+const $id = (id) => { let el = _domCache.get(id); if (el !== undefined) return el; el = document.getElementById(id); _domCache.set(id, el); return el; };
+function invalidateDomCache(id) { if (id) _domCache.delete(id); else _domCache.clear(); }
 
 // ====== Robust file-type detection (HEIC/HEIF fix) ======
 // Browsers frequently report file.type as an EMPTY STRING for HEIC/HEIF
@@ -357,7 +361,7 @@ function dayLabel(ts) {
 }
 
 function toast(msg, kind = '') {
-  const t = $('#toast');
+  const t = $id('#toast');
   t.textContent = msg;
   t.className = 'toast ' + kind;
   t.classList.remove('hidden');
@@ -501,7 +505,7 @@ async function uploadImage(file, onProgress) {
 
 // ====== Splash / Shells ======
 function hideSplash() {
-  const s = $('#splash');
+  const s = $id('#splash');
   if (!s) return;
   s.classList.add('fade-out');
   setTimeout(() => s.classList.add('hidden'), 320);
@@ -509,16 +513,16 @@ function hideSplash() {
 
 function showAuth() {
   if (typeof startupFallback !== 'undefined') try { clearTimeout(startupFallback); } catch (_) {}
-  $('#authShell').classList.remove('hidden');
-  $('#appShell').classList.add('hidden');
+  $id('#authShell').classList.remove('hidden');
+  $id('#appShell').classList.add('hidden');
   hideSplash();
   refreshIcons();
 }
 
 function showApp() {
   if (typeof startupFallback !== 'undefined') try { clearTimeout(startupFallback); } catch (_) {}
-  $('#authShell').classList.add('hidden');
-  $('#appShell').classList.remove('hidden');
+  $id('#authShell').classList.add('hidden');
+  $id('#appShell').classList.remove('hidden');
   hideSplash();
   refreshIcons();
   hydrateMeChips();
@@ -535,22 +539,22 @@ function showApp() {
 
 function hydrateMeChips() {
   if (!State.user) return;
-  if ($('#feedMeName')) $('#feedMeName').textContent = (State.user.displayName || State.user.username).toUpperCase();
-  if ($('#feedMeAvatar')) renderAvatar($('#feedMeAvatar'), State.user);
-  if ($('#profileAvatarPreview')) renderAvatar($('#profileAvatarPreview'), State.user);
-  const profileTitle = $('#profileTitleUsername');
+  if ($id('#feedMeName')) $id('#feedMeName').textContent = (State.user.displayName || State.user.username).toUpperCase();
+  if ($id('#feedMeAvatar')) renderAvatar($id('#feedMeAvatar'), State.user);
+  if ($id('#profileAvatarPreview')) renderAvatar($id('#profileAvatarPreview'), State.user);
+  const profileTitle = $id('#profileTitleUsername');
   if (profileTitle) profileTitle.innerHTML = displayNameWithProfileBadges(State.user, State.user.username || State.user.displayName || 'me', 'title');
-  const profileUserLine = $('#profileUsername');
+  const profileUserLine = $id('#profileUsername');
   if (profileUserLine) profileUserLine.innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || State.user.displayName || 'me'), 'inline');
   // Bottom-nav avatar — show photo or person icon
-  const bnEl = $('#bnMeAvatar');
+  const bnEl = $id('#bnMeAvatar');
   if (bnEl) {
     renderAvatar(bnEl, State.user);
     if (!State.user.photoUrl || _brokenPhotoUrls.has(State.user.photoUrl)) {
       bnEl.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
     }
   }
-  const pf = $('#profileForm');
+  const pf = $id('#profileForm');
   if (pf) {
     const dn = pf.querySelector('[name="displayName"]');
     const un = pf.querySelector('[name="username"]');
@@ -634,18 +638,18 @@ function bindAuth() {
   $$('.pin-input').forEach(g => bindPinGroup(g));
 
   // Terms modal open/close
-  const openTermsBtn = $('#openTermsBtn');
+  const openTermsBtn = $id('#openTermsBtn');
   if (openTermsBtn) openTermsBtn.addEventListener('click', () => {
-    const m = $('#termsModal');
+    const m = $id('#termsModal');
     m.classList.remove('hidden');
     const card = m.querySelector('.modal-card');
     if (card) springIn(card, { duration: 0.28 });
     refreshIcons();
   });
   $$('[data-close-terms]').forEach(b => b.addEventListener('click', () => {
-    $('#termsModal').classList.add('hidden');
+    $id('#termsModal').classList.add('hidden');
   }));
-  const tm = $('#termsModal');
+  const tm = $id('#termsModal');
   if (tm) tm.addEventListener('click', (e) => { if (e.target === tm) tm.classList.add('hidden'); });
 
   // New auth flow (Instagram-style):
@@ -677,19 +681,19 @@ function bindAuth() {
     btn.addEventListener('click', () => showAuthPanel('login'));
   });
   // Top back arrow: hide the auth and reveal the splash/landing
-  const topBack = $('#authTopBack');
+  const topBack = $id('#authTopBack');
   if (topBack) {
     topBack.addEventListener('click', () => {
-      const splash = $('#splash');
-      const auth = $('#authShell');
-      const app = $('#appShell');
+      const splash = $id('#splash');
+      const auth = $id('#authShell');
+      const app = $id('#appShell');
       if (auth) auth.classList.add('hidden');
       if (app) app.classList.add('hidden');
       if (splash) splash.classList.remove('hidden');
     });
   }
 
-  $('#loginForm').addEventListener('submit', async (e) => {
+  $id('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const errEl = e.target.querySelector('[data-error]');
@@ -707,7 +711,7 @@ function bindAuth() {
     finally { btn.disabled = false; btn.innerHTML = orig; }
   });
 
-  $('#signupForm').addEventListener('submit', async (e) => {
+  $id('#signupForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const errEl = e.target.querySelector('[data-error]');
@@ -716,7 +720,7 @@ function bindAuth() {
     if (!/^\d{4}$/.test(pin)) { errEl.textContent = 'Enter your 4-digit PIN'; return; }
 
     // ---- Terms & Conditions check (defaults checked, must be checked to proceed) ----
-    const termsBox = $('#termsCheckbox');
+    const termsBox = $id('#termsCheckbox');
     const termsRow = e.target.querySelector('.terms-row');
     if (termsBox && !termsBox.checked) {
       errEl.textContent = "You must accept the Terms & Community Guidelines to create an account.";
@@ -746,7 +750,7 @@ function bindAuth() {
     finally { btn.disabled = false; btn.innerHTML = orig; }
   });
 
-  $('#resetForm').addEventListener('submit', async (e) => {
+  $id('#resetForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const errEl = e.target.querySelector('[data-error]');
@@ -798,26 +802,26 @@ function acceptSession(data) {
 // Reuses the inline composer card already built into the feed view.
 function openPostComposer() {
   switchTab('feed');
-  const card = $('#inlineComposerCard');
+  const card = $id('#inlineComposerCard');
   if (card) {
     card.classList.remove('hidden');
-    const ta = $('#postInput');
+    const ta = $id('#postInput');
     if (ta) setTimeout(() => ta.focus(), 50);
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   refreshIcons();
 }
 function closePostComposer() {
-  const card = $('#inlineComposerCard');
+  const card = $id('#inlineComposerCard');
   if (card) card.classList.add('hidden');
-  const inp = $('#postInput');
+  const inp = $id('#postInput');
   if (inp) inp.value = '';
   _postDraftMusic = null; updatePostMusicUI();
-  const picker = $('#postSongPicker'); if (picker) picker.classList.add('hidden');
-  const chk = $('#postScratchCheckbox');
+  const picker = $id('#postSongPicker'); if (picker) picker.classList.add('hidden');
+  const chk = $id('#postScratchCheckbox');
   if (chk) chk.checked = false;
   if (typeof clearPostAttach === 'function') clearPostAttach();
-  const pm = $('#postComposerModal');
+  const pm = $id('#postComposerModal');
   if (pm) pm.classList.add('hidden');
 }
 
@@ -869,45 +873,45 @@ function rememberCurrentScroll() {
 }
 function restoreScrollForTab(tab) {
   requestAnimationFrame(() => {
-    if (tab === 'feed') { const el = $('#feedView'); if (el) el.scrollTop = _scrollMemory.feed || 0; }
-    if (tab === 'search') { const el = $('#searchView'); if (el) el.scrollTop = _scrollMemory.search || 0; }
-    if (tab === 'profile') { const el = $('#profileView'); if (el) el.scrollTop = _scrollMemory.profile || 0; }
+    if (tab === 'feed') { const el = $id('#feedView'); if (el) el.scrollTop = _scrollMemory.feed || 0; }
+    if (tab === 'search') { const el = $id('#searchView'); if (el) el.scrollTop = _scrollMemory.search || 0; }
+    if (tab === 'profile') { const el = $id('#profileView'); if (el) el.scrollTop = _scrollMemory.profile || 0; }
   if (tab === 'chat' || tab === 'groups') {
       const rooms = $('.rooms-pane'); if (rooms) rooms.scrollTop = _scrollMemory.roomsPane || 0;
-      const members = $('#membersList'); if (members) members.scrollTop = _scrollMemory.membersList || 0;
-      const msgs = $('#messagesScroll'); if (msgs && !$('#chatView').classList.contains('show-rooms')) msgs.scrollTop = _scrollMemory.messagesScroll || 0;
+      const members = $id('#membersList'); if (members) members.scrollTop = _scrollMemory.membersList || 0;
+      const msgs = $id('#messagesScroll'); if (msgs && !$id('#chatView').classList.contains('show-rooms')) msgs.scrollTop = _scrollMemory.messagesScroll || 0;
     }
   });
 }
 
 function bindTabs() {
   $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
-  const bw = $('#brandWordmarkBtn') || $('#brandWordmark');
+  const bw = $id('#brandWordmarkBtn') || $id('#brandWordmark');
   if (bw) bw.addEventListener('click', () => {
     switchTab('feed');
-    const fv = $('#feedView');
+    const fv = $id('#feedView');
     if (fv) fv.scrollTo({ top: 0, behavior: 'smooth' });
     _scrollMemory.feed = 0;
     lastPostsSignature = null;
     loadPosts(true);
   });
   // Legacy top-chat button is gone; keep guard in case markup is cached
-  const tc = $('#topChatBtn');
+  const tc = $id('#topChatBtn');
   if (tc) tc.addEventListener('click', () => switchTab('chat'));
-  const tn = $('#topNotifBtn');
+  const tn = $id('#topNotifBtn');
   if (tn) tn.addEventListener('click', openNotifications);
   // New IG-style top "+" — jump to feed, focus composer, open photo picker
-  const ta = $('#topAddBtn');
+  const ta = $id('#topAddBtn');
   if (ta) ta.addEventListener('click', openPostComposer);
-  const fa = $('#floatingAddBtn');
+  const fa = $id('#floatingAddBtn');
   if (fa) fa.addEventListener('click', openPostComposer);
-  const icb = $('#inlineComposerCloseBtn');
+  const icb = $id('#inlineComposerCloseBtn');
   if (icb) icb.addEventListener('click', closePostComposer);
-  const icab = $('#inlineComposerCancelBtn');
+  const icab = $id('#inlineComposerCancelBtn');
   if (icab) icab.addEventListener('click', closePostComposer);
-  const pmc = $('#postModalClose');
+  const pmc = $id('#postModalClose');
   if (pmc) pmc.addEventListener('click', closePostComposer);
-  const pm = $('#postComposerModal');
+  const pm = $id('#postComposerModal');
   if (pm) pm.addEventListener('click', (e) => { if (e.target === pm) closePostComposer(); });
 }
 
@@ -920,7 +924,7 @@ function shouldAutoFocusSearch() {
   }
 }
 function suppressSearchAutofillPrompt() {
-  const inp = $('#searchInput');
+  const inp = $id('#searchInput');
   if (!inp) return;
   inp.readOnly = true;
   inp.setAttribute('aria-readonly', 'true');
@@ -954,23 +958,23 @@ function switchTab(tab) {
   });
   $$('.view').forEach(v => v.classList.remove('active'));
   let activeView = null;
-  if (tab === 'feed') { activeView = $('#feedView'); activeView.classList.add('active'); loadMembers(); loadFeed(); markTabSeen('feed'); }
+  if (tab === 'feed') { activeView = $id('#feedView'); activeView.classList.add('active'); loadMembers(); loadFeed(); markTabSeen('feed'); }
   if (tab === 'search') {
-    activeView = $('#searchView');
+    activeView = $id('#searchView');
     activeView.classList.add('active');
     loadMembers();
     renderSearch('');
-    if (shouldAutoFocusSearch()) setTimeout(() => $('#searchInput').focus(), 100);
+    if (shouldAutoFocusSearch()) setTimeout(() => $id('#searchInput').focus(), 100);
     else suppressSearchAutofillPrompt();
   }
   if (tab === 'groups') {
-    activeView = $('#chatView');
+    activeView = $id('#chatView');
     activeView.classList.add('active');
     markTabSeen('groups');
     setInboxSegment('groups');
     if (window.innerWidth <= 820) {
       // Mobile: show the channel list; let the user pick (Instagram-style).
-      $('#chatView').classList.add('show-rooms');
+      $id('#chatView').classList.add('show-rooms');
     } else {
       // Desktop: both panes visible, so open the default channel.
       const r = $('#roomsList .room-item[data-room="general-group"]');
@@ -978,23 +982,23 @@ function switchTab(tab) {
     }
   }
   if (tab === 'chat') {
-    activeView = $('#chatView');
+    activeView = $id('#chatView');
     activeView.classList.add('active');
     markTabSeen('chat');
     refreshSecretChatUI();
     setInboxSegment('primary');
     if (window.innerWidth <= 820) {
-      $('#chatView').classList.add('show-rooms');
+      $id('#chatView').classList.add('show-rooms');
     } else if (State.currentRoom.kind !== 'dm') {
       const firstMember = $('#membersList .member-item');
       if (firstMember) firstMember.click();
     }
   }
   if (tab === 'profile') {
-    activeView = $('#profileView');
+    activeView = $id('#profileView');
     activeView.classList.add('active');
-    $('#profileEditMode').classList.add('hidden');
-    $('#profileViewMode').classList.remove('hidden');
+    $id('#profileEditMode').classList.add('hidden');
+    $id('#profileViewMode').classList.remove('hidden');
     renderOwnProfile();
   }
   if (tab === 'reels') {
@@ -1005,7 +1009,7 @@ function switchTab(tab) {
     $$('.bn-btn[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'feed'));
     State.currentTab = 'feed';
     $$('.view').forEach(v => v.classList.remove('active'));
-    const feedView = $('#feedView');
+    const feedView = $id('#feedView');
     if (feedView) { feedView.classList.add('active'); activeView = feedView; }
     tab = 'feed';
   }
@@ -1020,9 +1024,9 @@ function switchTab(tab) {
 // On the chat/DM tabs, show the Instagram-style username header instead of
 // the PRIV SPACA wordmark.
 function updateTopbarHeader(tab) {
-  const brand = $('#brandWordmarkBtn') || $('#brandWordmark');
-  const igH = $('#igUsernameHeader');
-  const igT = $('#igUsernameText');
+  const brand = $id('#brandWordmarkBtn') || $id('#brandWordmark');
+  const igH = $id('#igUsernameHeader');
+  const igT = $id('#igUsernameText');
   const showUsername = (tab === 'chat' || tab === 'groups');
   if (showUsername && State.user) {
     if (igT) igT.innerHTML = displayNameWithOwnerBadge(State.user, State.user.username || State.user.displayName || 'you', 'inline');
@@ -1074,9 +1078,9 @@ function _isRequestUser(u) {
 
 let _lastMembersSig = '';
 function renderMembers() {
-  const list = $('#membersList');
+  const list = $id('#membersList');
   if (!list) return;
-  const reqListEl = $('#requestsList');
+  const reqListEl = $id('#requestsList');
   const roomsPane = $('.rooms-pane');
   const prevListScroll = list.scrollTop || 0;
   const prevReqScroll = reqListEl ? (reqListEl.scrollTop || 0) : 0;
@@ -1084,21 +1088,21 @@ function renderMembers() {
   const meId = State.user && State.user.id;
   const others = State.members.filter(u => u.id !== meId);
   const me = State.members.find(u => u.id === meId);
-  if ($('#memberCount')) $('#memberCount').textContent = String(State.members.length);
+  if ($id('#memberCount')) $id('#memberCount').textContent = String(State.members.length);
 
   // Split into Primary (connected) vs Requests (not connected yet).
   const primary = others.filter(u => !_isRequestUser(u));
   const requests = others.filter(u => _isRequestUser(u));
 
   // Update segment badges.
-  const gBadge = $('#segGroupsBadge');
+  const gBadge = $id('#segGroupsBadge');
   if (gBadge) { const n = $$('#roomsList .room-item').length; gBadge.textContent = String(n); gBadge.classList.toggle('zero', n === 0); }
-  const pBadge = $('#segPrimaryBadge');
+  const pBadge = $id('#segPrimaryBadge');
   if (pBadge) { pBadge.textContent = String(primary.length); pBadge.classList.toggle('zero', primary.length === 0); }
 
   // Requests banner.
-  const banner = $('#requestsBanner');
-  const reqSub = $('#requestsSub');
+  const banner = $id('#requestsBanner');
+  const reqSub = $id('#requestsSub');
   if (banner) banner.classList.toggle('hidden', requests.length === 0 || _inboxShowRequests);
   if (reqSub) reqSub.textContent = requests.length === 1 ? '1 person wants to chat' : requests.length + ' people want to chat';
 
@@ -1146,15 +1150,15 @@ function renderMembers() {
   // Render Primary list.
   list.innerHTML = '';
   primary.forEach(u => list.appendChild(buildRow(u)));
-  const emptyEl = $('#membersEmpty');
+  const emptyEl = $id('#membersEmpty');
   if (emptyEl) emptyEl.classList.toggle('hidden', primary.length > 0 || requests.length > 0);
 
   // Render Requests sub-list.
-  const reqList = $('#requestsList');
+  const reqList = $id('#requestsList');
   if (reqList) {
     reqList.innerHTML = '';
     requests.forEach(u => reqList.appendChild(buildRow(u)));
-    const reqEmpty = $('#requestsEmpty');
+    const reqEmpty = $id('#requestsEmpty');
     if (reqEmpty) reqEmpty.classList.toggle('hidden', requests.length > 0);
   }
 
@@ -1169,7 +1173,7 @@ function renderMembers() {
 
 // ===== Notes rail (Instagram-style 24h statuses on the DM inbox) =====
 function renderNotesRail() {
-  const rail = $('#notesRail');
+  const rail = $id('#notesRail');
   if (!rail || _inboxSeg !== 'primary' || _inboxShowRequests) { if (rail) rail.innerHTML = ''; return; }
   const meId = State.user && State.user.id;
   const me = State.members.find(u => u.id === meId) || State.user;
@@ -1234,13 +1238,13 @@ let _currentNoteUser = null;
 function openNoteViewer(u) {
   if (!u) return;
   _currentNoteUser = u;
-  const modal = $('#noteViewerModal');
+  const modal = $id('#noteViewerModal');
   if (!modal) return;
-  const h = $('#noteViewerHandle');
+  const h = $id('#noteViewerHandle');
   if (h) h.innerHTML = displayNameWithOwnerBadge(u, u.username || u.displayName, 'inline') + ' • ' + escapeHtml(timeAgo(u.note?.createdAt || Date.now()));
-  renderAvatar($('#noteViewerAvatar'), u);
-  const songEl = $('#noteViewerSong');
-  const textEl = $('#noteViewerText');
+  renderAvatar($id('#noteViewerAvatar'), u);
+  const songEl = $id('#noteViewerSong');
+  const textEl = $id('#noteViewerText');
   if (songEl) {
     if (u.note?.music?.title) {
       songEl.innerHTML = `♪ ${escapeHtml(u.note.music.title)}${u.note.music.artist ? ' • ' + escapeHtml(u.note.music.artist) : ''}`;
@@ -1250,13 +1254,13 @@ function openNoteViewer(u) {
     }
   }
   if (textEl) textEl.textContent = u.note?.text || '';
-  const inp = $('#noteViewerInput');
+  const inp = $id('#noteViewerInput');
   if (inp) { inp.placeholder = 'Message ' + (u.username || u.displayName) + '...'; inp.value = ''; }
   modal.classList.remove('hidden');
   springIn(modal);
 }
 function closeNoteViewer() {
-  const modal = $('#noteViewerModal');
+  const modal = $id('#noteViewerModal');
   if (modal) modal.classList.add('hidden');
   stopNotePreviewAudio();
 }
@@ -1266,7 +1270,7 @@ let _notePreviewAudio = null;
 function playNotePreview(url) {
   if (!url) return;
   try {
-    if (!_notePreviewAudio) _notePreviewAudio = $('#notePreviewAudio') || new Audio();
+    if (!_notePreviewAudio) _notePreviewAudio = $id('#notePreviewAudio') || new Audio();
     if (_notePreviewAudio.src === url && !_notePreviewAudio.paused) { stopNotePreviewAudio(); return; }
     _notePreviewAudio.src = url;
     _notePreviewAudio.currentTime = 0;
@@ -1284,20 +1288,20 @@ function stopNotePreviewAudio() {
 }
 
 function openNoteModal() {
-  const modal = $('#noteModal');
+  const modal = $id('#noteModal');
   if (!modal) return;
   const meId = State.user && State.user.id;
   const me = State.members.find(u => u.id === meId) || State.user;
   const curNote = me && me.note ? me.note : null;
   const cur = curNote && curNote.text ? curNote.text : '';
   _noteDraftMusic = (curNote && curNote.music && curNote.music.title) ? Object.assign({}, curNote.music) : null;
-  const input = $('#noteInput');
+  const input = $id('#noteInput');
   if (input) input.value = cur;
   updateNotePreview();
   updateNoteMusicRow();
-  const picker = $('#noteSongPicker'); if (picker) picker.classList.add('hidden');
-  const chev = $('#noteMusicChev'); if (chev) chev.style.transform = '';
-  const clearBtn = $('#noteClearBtn');
+  const picker = $id('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+  const chev = $id('#noteMusicChev'); if (chev) chev.style.transform = '';
+  const clearBtn = $id('#noteClearBtn');
   if (clearBtn) clearBtn.style.display = (cur || _noteDraftMusic) ? '' : 'none';
   modal.classList.remove('hidden');
   const card = modal.querySelector('.sheet-card');
@@ -1306,9 +1310,9 @@ function openNoteModal() {
   refreshIcons();
 }
 function closeNoteModal() {
-  const m = $('#noteModal'); if (m) m.classList.add('hidden');
-  const picker = $('#noteSongPicker'); if (picker) picker.classList.add('hidden');
-  const chev = $('#noteMusicChev'); if (chev) chev.style.transform = '';
+  const m = $id('#noteModal'); if (m) m.classList.add('hidden');
+  const picker = $id('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+  const chev = $id('#noteMusicChev'); if (chev) chev.style.transform = '';
   stopNotePreviewAudio();
 }
 
@@ -1333,9 +1337,9 @@ async function saveNote(text, music) {
 let _noteDraftMusic = null;
 let _noteSearchTimer = null;
 function updateNotePreview() {
-  const input = $('#noteInput');
-  const txt = $('#notePreviewText');
-  const song = $('#notePreviewSong');
+  const input = $id('#noteInput');
+  const txt = $id('#notePreviewText');
+  const song = $id('#notePreviewSong');
   const v = (input && input.value || '').trim();
   if (txt) txt.textContent = v || (_noteDraftMusic ? (_noteDraftMusic.artist || '') : "What's on your mind?");
   if (song) {
@@ -1344,9 +1348,9 @@ function updateNotePreview() {
   }
 }
 function updateNoteMusicRow() {
-  const title = $('#noteMusicTitle');
-  const artist = $('#noteMusicArtist');
-  const remove = $('#noteMusicRemove');
+  const title = $id('#noteMusicTitle');
+  const artist = $id('#noteMusicArtist');
+  const remove = $id('#noteMusicRemove');
   if (_noteDraftMusic && _noteDraftMusic.title) {
     if (title) title.textContent = _noteDraftMusic.title;
     if (artist) artist.textContent = _noteDraftMusic.artist || 'Song attached';
@@ -1358,7 +1362,7 @@ function updateNoteMusicRow() {
   }
 }
 function renderNoteSongResults(list) {
-  const box = $('#noteSongList');
+  const box = $id('#noteSongList');
   if (!box) return;
   if (!list || !list.length) { box.innerHTML = '<div class="note-song-empty">Type to search songs…</div>'; return; }
   box.innerHTML = '';
@@ -1377,14 +1381,14 @@ function renderNoteSongResults(list) {
       _noteDraftMusic = { title: s.title, artist: s.artist, audio: s.audio || '', art: s.art || '' };
       updateNoteMusicRow(); updateNotePreview();
       stopNotePreviewAudio();
-      const picker = $('#noteSongPicker'); if (picker) picker.classList.add('hidden');
-      const clearBtn = $('#noteClearBtn'); if (clearBtn) clearBtn.style.display = '';
+      const picker = $id('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+      const clearBtn = $id('#noteClearBtn'); if (clearBtn) clearBtn.style.display = '';
     });
     box.appendChild(item);
   });
 }
 async function searchNoteSongs(q) {
-  const box = $('#noteSongList');
+  const box = $id('#noteSongList');
   if (!q || !q.trim()) { renderNoteSongResults([]); return; }
   try {
     const res = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(q) + '&media=music&limit=15');
@@ -1409,10 +1413,10 @@ async function searchNoteSongs(q) {
 }
 
 function ensureFollowRequestsUi() {
-  const section = $('#dmsPaneSection');
-  const notes = $('#notesRail');
+  const section = $id('#dmsPaneSection');
+  const notes = $id('#notesRail');
   if (!section || !notes) return null;
-  let banner = $('#followRequestsBanner');
+  let banner = $id('#followRequestsBanner');
   if (!banner) {
     banner = document.createElement('button');
     banner.type = 'button';
@@ -1422,7 +1426,7 @@ function ensureFollowRequestsUi() {
     section.insertBefore(banner, notes);
     banner.addEventListener('click', openFollowRequestsSheet);
   }
-  let sheet = $('#followRequestsSheet');
+  let sheet = $id('#followRequestsSheet');
   if (!sheet) {
     sheet = document.createElement('div');
     sheet.id = 'followRequestsSheet';
@@ -1444,8 +1448,8 @@ function updateFollowRequestsBanner() {
   const isPrivate = !!(State.user && State.user.isPrivate);
   const count = (State.followRequests || []).length;
   ui.banner.classList.toggle('hidden', !isPrivate);
-  const sub = $('#followRequestsSub');
-  const countEl = $('#followRequestsCount');
+  const sub = $id('#followRequestsSub');
+  const countEl = $id('#followRequestsCount');
   if (sub) sub.textContent = count ? `${count} pending approval${count === 1 ? '' : 's'}` : 'No pending approvals';
   if (countEl) countEl.textContent = String(count);
   ui.banner.classList.toggle('has-requests', count > 0);
@@ -1496,7 +1500,7 @@ function openFollowRequestsSheet() {
   refreshIcons();
 }
 function closeFollowRequestsSheet() {
-  const sheet = $('#followRequestsSheet');
+  const sheet = $id('#followRequestsSheet');
   if (sheet) sheet.classList.add('hidden');
 }
 async function respondToFollowRequest(requesterId, action) {
@@ -1514,7 +1518,7 @@ async function respondToFollowRequest(requesterId, action) {
   }
 }
 function renderFollowRequestsSheet() {
-  const list = $('#followRequestsList');
+  const list = $id('#followRequestsList');
   if (!list) return;
   const items = State.followRequests || [];
   list.innerHTML = '';
@@ -1537,46 +1541,46 @@ function renderFollowRequestsSheet() {
 }
 
 function bindNotes() {
-  const close = $('#noteClose');
+  const close = $id('#noteClose');
   if (close) close.addEventListener('click', closeNoteModal);
-  const modal = $('#noteModal');
+  const modal = $id('#noteModal');
   if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeNoteModal(); });
-  const input = $('#noteInput');
+  const input = $id('#noteInput');
   if (input) input.addEventListener('input', updateNotePreview);
-  const share = $('#noteShareBtn');
+  const share = $id('#noteShareBtn');
   if (share) share.addEventListener('click', () => { const v = (input && input.value || '').trim(); saveNote(v, _noteDraftMusic); closeNoteModal(); });
-  const clear = $('#noteClearBtn');
+  const clear = $id('#noteClearBtn');
   if (clear) clear.addEventListener('click', () => { _noteDraftMusic = null; saveNote('', null); closeNoteModal(); });
   // Music row toggles the song picker.
-  const musicRow = $('#noteMusicRow');
+  const musicRow = $id('#noteMusicRow');
   if (musicRow) musicRow.addEventListener('click', (e) => {
     if (e.target && e.target.id === 'noteMusicRemove') return;
-    const picker = $('#noteSongPicker'); if (!picker) return;
+    const picker = $id('#noteSongPicker'); if (!picker) return;
     const show = picker.classList.contains('hidden');
     picker.classList.toggle('hidden', !show);
-    const chev = $('#noteMusicChev'); if (chev) chev.style.transform = show ? 'rotate(180deg)' : '';
-    if (show) { renderNoteSongResults([]); const s = $('#noteSongSearch'); if (s) setTimeout(() => s.focus(), 80); }
+    const chev = $id('#noteMusicChev'); if (chev) chev.style.transform = show ? 'rotate(180deg)' : '';
+    if (show) { renderNoteSongResults([]); const s = $id('#noteSongSearch'); if (s) setTimeout(() => s.focus(), 80); }
     else stopNotePreviewAudio();
   });
-  const removeBtn = $('#noteMusicRemove');
+  const removeBtn = $id('#noteMusicRemove');
   if (removeBtn) removeBtn.addEventListener('click', (e) => {
     e.stopPropagation(); stopNotePreviewAudio(); _noteDraftMusic = null; updateNoteMusicRow(); updateNotePreview();
-    const clearBtn = $('#noteClearBtn'); if (clearBtn && !(input && input.value.trim())) clearBtn.style.display = 'none';
+    const clearBtn = $id('#noteClearBtn'); if (clearBtn && !(input && input.value.trim())) clearBtn.style.display = 'none';
   });
-  const searchInp = $('#noteSongSearch');
+  const searchInp = $id('#noteSongSearch');
   if (searchInp) searchInp.addEventListener('input', () => {
     clearTimeout(_noteSearchTimer);
     const q = searchInp.value;
     _noteSearchTimer = setTimeout(() => searchNoteSongs(q), 350);
   });
-  const nvc = $('#noteViewerClose');
+  const nvc = $id('#noteViewerClose');
   if (nvc) nvc.addEventListener('click', closeNoteViewer);
-  const nvm = $('#noteViewerModal');
+  const nvm = $id('#noteViewerModal');
   if (nvm) nvm.addEventListener('click', (e) => { if (e.target === nvm) closeNoteViewer(); });
-  const nvf = $('#noteViewerForm');
+  const nvf = $id('#noteViewerForm');
   if (nvf) nvf.addEventListener('submit', async (e) => {
     e.preventDefault(); e.stopPropagation();
-    const inp = $('#noteViewerInput');
+    const inp = $id('#noteViewerInput');
     const txt = (inp && inp.value || '').trim();
     if (!txt || !_currentNoteUser) return;
     if (inp) inp.value = '';
@@ -1609,27 +1613,27 @@ function isMobileChatViewport() {
 }
 
 function isInMobileDmThread() {
-  const cv = $('#chatView');
+  const cv = $id('#chatView');
   return !!(State.currentRoom && State.currentRoom.kind === 'dm' && cv && cv.classList.contains('active') && !cv.classList.contains('show-rooms') && isMobileChatViewport());
 }
 
 function updateChatThreadChrome() {
   const inThread = isInMobileDmThread();
-  const shell = $('#appShell');
+  const shell = $id('#appShell');
   if (shell) shell.classList.toggle('chat-thread-open', inThread);
-  const back = $('#backToRoomsBtn');
+  const back = $id('#backToRoomsBtn');
   if (back) {
     back.innerHTML = inThread ? '<i data-lucide="arrow-left"></i>' : '<i data-lucide="menu"></i>';
     back.title = inThread ? 'Back to chats' : 'Chats';
     back.setAttribute('aria-label', inThread ? 'Back to chats' : 'Chats');
   }
-  const headerLeft = $('#chatHeaderProfileTap');
+  const headerLeft = $id('#chatHeaderProfileTap');
   if (headerLeft) headerLeft.classList.toggle('is-profile-link', !!(State.currentRoom && State.currentRoom.kind === 'dm' && State.currentRoom.target));
   if (typeof refreshIcons === 'function') refreshIcons();
 }
 
 function backToChatList() {
-  const cv = $('#chatView');
+  const cv = $id('#chatView');
   if (!cv) return;
   cv.classList.add('show-rooms');
   updateChatThreadChrome();
@@ -1642,21 +1646,21 @@ function openDM(user) {
     target: user,
     label: '@' + user.username
   };
-  $('#chatTitle').innerHTML = displayNameWithOwnerBadge(user, user.displayName || ('@' + user.username), 'inline');
-  $('#chatSubtitle').textContent = '@' + user.username + (user.online ? ' · online' : ' · offline');
-  const ca = $('#chatAvatar');
+  $id('#chatTitle').innerHTML = displayNameWithOwnerBadge(user, user.displayName || ('@' + user.username), 'inline');
+  $id('#chatSubtitle').textContent = '@' + user.username + (user.online ? ' · online' : ' · offline');
+  const ca = $id('#chatAvatar');
   ca.style.display = 'inline-flex';
   renderAvatar(ca, user, { showStatus: true, online: !!user.online });
   $$('#roomsList .room-item').forEach(r => r.classList.remove('active'));
-  $('#chatView').classList.remove('show-rooms');
+  $id('#chatView').classList.remove('show-rooms');
   updateChatThreadChrome();
-  if ($('#rtcCallActions')) $('#rtcCallActions').style.display = 'flex';
+  if ($id('#rtcCallActions')) $id('#rtcCallActions').style.display = 'flex';
   // Opening a DM belongs to the Primary segment — make sure it's shown.
   if (typeof _inboxSeg !== 'undefined' && _inboxSeg !== 'primary') {
     _inboxSeg = 'primary';
     $$('#inboxSegment .inbox-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.seg === 'primary'));
-    const gs = $('#groupsPaneSection'); if (gs) gs.style.display = 'none';
-    const ds = $('#dmsPaneSection'); if (ds) ds.style.display = 'block';
+    const gs = $id('#groupsPaneSection'); if (gs) gs.style.display = 'none';
+    const ds = $id('#dmsPaneSection'); if (ds) ds.style.display = 'block';
   }
   // Reset message-id memo so all messages in the new room animate-in once
   _previousMessageIds = new Set();
@@ -1670,9 +1674,9 @@ function dmRoomId(a, b) { return 'dm:' + [a, b].sort().join(':'); }
 // Show/hide Secret Chat controls based on current room
 function refreshSecretChatUI() {
   const room = State.currentRoom;
-  const btn = $('#secretChatBtn');
-  const banner = $('#secretBanner');
-  const disRow = $('#disappearRow');
+  const btn = $id('#secretChatBtn');
+  const banner = $id('#secretBanner');
+  const disRow = $id('#disappearRow');
   if (banner) banner.classList.add('hidden');
   if (!btn) return;
   if (!room || room.kind !== 'dm' || !room.target) {
@@ -1686,14 +1690,14 @@ function refreshSecretChatUI() {
   btn.innerHTML = `<i data-lucide="lock"></i> <span>${on ? 'Turn OFF Secret Chat' : 'Toggle Secret Chat'}</span>`;
   
   const target = room.target;
-  const sub = $('#chatSubtitle');
+  const sub = $id('#chatSubtitle');
   if (sub && target) {
     sub.innerHTML = `@${target.username}${target.online ? ' · online' : ' · offline'}${on ? ' <strong style="color:#10b981;">· 🔒 E2E Secret Mode</strong>' : ''}`;
   }
 
   if (on) {
     if (disRow) disRow.style.display = 'flex';
-    const sel = $('#disappearSelect');
+    const sel = $id('#disappearSelect');
     if (sel) sel.value = String(getDisappearMs(room.id) || 0);
   } else {
     if (disRow) disRow.style.display = 'none';
@@ -1726,9 +1730,9 @@ async function toggleSecretChat() {
 }
 
 function bindSecretChat() {
-  const btn = $('#secretChatBtn');
+  const btn = $id('#secretChatBtn');
   if (btn) btn.addEventListener('click', toggleSecretChat);
-  const off = $('#secretOffBtn');
+  const off = $id('#secretOffBtn');
   if (off) off.addEventListener('click', () => {
     const room = State.currentRoom;
     if (!room) return;
@@ -1736,7 +1740,7 @@ function bindSecretChat() {
     refreshSecretChatUI();
     toast('Secret Chat off', 'success');
   });
-  const sel = $('#disappearSelect');
+  const sel = $id('#disappearSelect');
   if (sel) sel.addEventListener('change', () => {
     const room = State.currentRoom;
     if (!room) return;
@@ -1752,24 +1756,24 @@ function bindRooms() {
       const id = r.dataset.room;
       State.currentRoom = { id, kind: 'group', target: null, label: '#' + id };
       $$('#roomsList .room-item').forEach(x => x.classList.toggle('active', x === r));
-      $('#chatTitle').textContent = '#' + id;
-      $('#chatSubtitle').textContent = 'Tap members to start a private chat';
-      $('#chatAvatar').style.display = 'none';
-      $('#chatView').classList.remove('show-rooms');
+      $id('#chatTitle').textContent = '#' + id;
+      $id('#chatSubtitle').textContent = 'Tap members to start a private chat';
+      $id('#chatAvatar').style.display = 'none';
+      $id('#chatView').classList.remove('show-rooms');
       updateChatThreadChrome();
-      if ($('#rtcCallActions')) $('#rtcCallActions').style.display = 'none';
+      if ($id('#rtcCallActions')) $id('#rtcCallActions').style.display = 'none';
       _previousMessageIds = new Set();
       renderMembers();
       refreshSecretChatUI();
       loadMessages(true);
     });
   });
-  const back = $('#backToRoomsBtn');
+  const back = $id('#backToRoomsBtn');
   if (back) back.addEventListener('click', () => {
     if (isInMobileDmThread()) backToChatList();
-    else { $('#chatView').classList.toggle('show-rooms'); updateChatThreadChrome(); }
+    else { $id('#chatView').classList.toggle('show-rooms'); updateChatThreadChrome(); }
   });
-  const headerTap = $('#chatHeaderProfileTap');
+  const headerTap = $id('#chatHeaderProfileTap');
   if (headerTap) headerTap.addEventListener('click', () => {
     if (State.currentRoom && State.currentRoom.kind === 'dm' && State.currentRoom.target) {
       openUserProfile(State.currentRoom.target.id);
@@ -1782,13 +1786,13 @@ function setInboxSegment(seg) {
   _inboxSeg = (seg === 'primary') ? 'primary' : 'groups';
   _inboxShowRequests = false; // always reset to the main list on segment switch
   $$('#inboxSegment .inbox-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.seg === _inboxSeg));
-  const gs = $('#groupsPaneSection'); if (gs) gs.style.display = (_inboxSeg === 'groups') ? 'block' : 'none';
-  const ds = $('#dmsPaneSection'); if (ds) ds.style.display = (_inboxSeg === 'primary') ? 'block' : 'none';
+  const gs = $id('#groupsPaneSection'); if (gs) gs.style.display = (_inboxSeg === 'groups') ? 'block' : 'none';
+  const ds = $id('#dmsPaneSection'); if (ds) ds.style.display = (_inboxSeg === 'primary') ? 'block' : 'none';
   // Within Primary, show the main DM list (not the requests sub-view).
-  const rv = $('#requestsView'); if (rv) rv.classList.add('hidden');
-  const ml = $('#membersList'); if (ml) ml.classList.remove('hidden');
-  const banner = $('#requestsBanner');
-  const me = $('#membersEmpty');
+  const rv = $id('#requestsView'); if (rv) rv.classList.add('hidden');
+  const ml = $id('#membersList'); if (ml) ml.classList.remove('hidden');
+  const banner = $id('#requestsBanner');
+  const me = $id('#membersEmpty');
   if (_inboxSeg === 'primary') {
     renderMembers();
     // Refresh from the server so newly-joined people appear in Primary/Requests.
@@ -1811,21 +1815,21 @@ function bindInboxSegment() {
     });
   });
   // Requests banner opens the requests sub-view.
-  const banner = $('#requestsBanner');
+  const banner = $id('#requestsBanner');
   if (banner) banner.addEventListener('click', () => {
     _inboxShowRequests = true;
-    const ml = $('#membersList'); if (ml) ml.classList.add('hidden');
+    const ml = $id('#membersList'); if (ml) ml.classList.add('hidden');
     banner.classList.add('hidden');
-    const me = $('#membersEmpty'); if (me) me.classList.add('hidden');
-    const rv = $('#requestsView'); if (rv) rv.classList.remove('hidden');
+    const me = $id('#membersEmpty'); if (me) me.classList.add('hidden');
+    const rv = $id('#requestsView'); if (rv) rv.classList.remove('hidden');
     renderMembers();
     refreshIcons();
   });
-  const backBtn = $('#requestsBackBtn');
+  const backBtn = $id('#requestsBackBtn');
   if (backBtn) backBtn.addEventListener('click', () => {
     _inboxShowRequests = false;
-    const rv = $('#requestsView'); if (rv) rv.classList.add('hidden');
-    const ml = $('#membersList'); if (ml) ml.classList.remove('hidden');
+    const rv = $id('#requestsView'); if (rv) rv.classList.add('hidden');
+    const ml = $id('#membersList'); if (ml) ml.classList.remove('hidden');
     renderMembers();
     refreshIcons();
   });
@@ -2139,8 +2143,8 @@ function _messagesRenderSig(msgs) {
   return msgs.map(m => m.id + ':' + (m.text||'').length + ':' + (m.imageUrl?'1':'0')).join('|');
 }
 function renderMessages(forceScroll) {
-  const list = $('#messagesList');
-  const scroller = $('#messagesScroll');
+  const list = $id('#messagesList');
+  const scroller = $id('#messagesScroll');
   const wasAtBottom = lastMessagesScrollAtBottom;
   const currentIds = new Set(State.messages.map(m => m.id));
   const newOnes = new Set();
@@ -2192,7 +2196,7 @@ function renderMessages(forceScroll) {
   refreshIcons();
   if (forceScroll || wasAtBottom) {
     requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
-    $('#scrollBottomBtn').classList.add('hidden');
+    $id('#scrollBottomBtn').classList.add('hidden');
   }
 }
 
@@ -2512,22 +2516,22 @@ function setReplyTo(m) {
     username: author.username || 'user',
     imageUrl: m.imageUrl || null
   };
-  $('#replyToName').textContent = '@' + State.replyTo.username;
-  $('#replyToText').textContent = State.replyTo.text;
-  $('#replyBanner').classList.remove('hidden');
-  $('#composerInput').focus();
+  $id('#replyToName').textContent = '@' + State.replyTo.username;
+  $id('#replyToText').textContent = State.replyTo.text;
+  $id('#replyBanner').classList.remove('hidden');
+  $id('#composerInput').focus();
   refreshIcons();
 }
 
 function clearReply() {
   State.replyTo = null;
-  $('#replyBanner').classList.add('hidden');
+  $id('#replyBanner').classList.add('hidden');
 }
 
 // ====== Composer ======
 function bindComposer() {
-  const input = $('#composerInput');
-  const form = $('#composer');
+  const input = $id('#composerInput');
+  const form = $id('#composer');
 
   input.addEventListener('input', () => {
     input.style.height = 'auto';
@@ -2598,19 +2602,19 @@ function bindComposer() {
       State.replyTo = sentReply;
       if (sentAttach) showAttachPreview(sentAttach);
       if (sentReply) {
-        $('#replyToName').textContent = '@' + sentReply.username;
-        $('#replyToText').textContent = sentReply.text;
-        $('#replyBanner').classList.remove('hidden');
+        $id('#replyToName').textContent = '@' + sentReply.username;
+        $id('#replyToText').textContent = sentReply.text;
+        $id('#replyBanner').classList.remove('hidden');
       }
     }
   });
 
-  $('#cancelReplyBtn').addEventListener('click', clearReply);
-  $('#cancelAttachBtn').addEventListener('click', clearAttach);
+  $id('#cancelReplyBtn').addEventListener('click', clearReply);
+  $id('#cancelAttachBtn').addEventListener('click', clearAttach);
 
   let mediaRecorder = null;
   let audioChunks = [];
-  const micBtn = $('#micBtn');
+  const micBtn = $id('#micBtn');
   micBtn.addEventListener('click', async () => {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       mediaRecorder.stop();
@@ -2650,19 +2654,19 @@ function bindComposer() {
     }
   });
 
-  $('#attachBtn').addEventListener('click', () => {
-    $('#fileInput').click();
-    const addMenu = $('#composerAddMenu'); if (addMenu) addMenu.classList.add('hidden');
+  $id('#attachBtn').addEventListener('click', () => {
+    $id('#fileInput').click();
+    const addMenu = $id('#composerAddMenu'); if (addMenu) addMenu.classList.add('hidden');
   });
-  $('#fileInput').addEventListener('change', async (e) => {
+  $id('#fileInput').addEventListener('change', async (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!f) return;
     await handleAttach(f);
   });
 
-  const addBtn = $('#composerAddBtn');
-  const addMenu = $('#composerAddMenu');
+  const addBtn = $id('#composerAddBtn');
+  const addMenu = $id('#composerAddMenu');
   if (addBtn && addMenu) {
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2676,8 +2680,8 @@ function bindComposer() {
     });
   }
 
-  const moreBtn = $('#chatMoreMenuBtn');
-  const moreDrop = $('#chatMoreDropdown');
+  const moreBtn = $id('#chatMoreMenuBtn');
+  const moreDrop = $id('#chatMoreDropdown');
   if (moreBtn && moreDrop) {
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2691,7 +2695,7 @@ function bindComposer() {
     });
   }
 
-  const scroller = $('#messagesScroll');
+  const scroller = $id('#messagesScroll');
   const chatHeader = document.querySelector('.chat-header');
   // Scroll-reactive chat header: collapse to compact bar when user scrolls
   // down (adds .scrolled class — see style.css). Throttled via rAF so we
@@ -2715,7 +2719,7 @@ function bindComposer() {
   scroller.addEventListener('scroll', () => {
     const atBottom = (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 80;
     lastMessagesScrollAtBottom = atBottom;
-    $('#scrollBottomBtn').classList.toggle('hidden', atBottom);
+    $id('#scrollBottomBtn').classList.toggle('hidden', atBottom);
     // Throttle the chat-header scrolled-state update to one rAF per frame
     if (!_scrollRafPending) {
       _scrollRafPending = true;
@@ -2724,7 +2728,7 @@ function bindComposer() {
   });
   // Also update on initial mount (in case we restored a non-zero scroll position)
   requestAnimationFrame(updateChatHeaderScrolled);
-  $('#scrollBottomBtn').addEventListener('click', () => {
+  $id('#scrollBottomBtn').addEventListener('click', () => {
     scroller.scrollTop = scroller.scrollHeight;
   });
 }
@@ -2733,29 +2737,29 @@ async function handleAttach(file) {
   if (!isImageFile(file)) { toast('Only image files', 'error'); return; }
   if (file.size > 15 * 1024 * 1024) { toast('Max 15MB', 'error'); return; }
   if (isHeicFile(file)) {
-    $('#attachName').textContent = file.name + ' · converting…';
-    $('#attachPreview').classList.remove('hidden');
+    $id('#attachName').textContent = file.name + ' · converting…';
+    $id('#attachPreview').classList.remove('hidden');
     file = await convertHeicIfNeeded(file);
   }
   const localUrl = URL.createObjectURL(file);
-  $('#attachThumb').src = localUrl;
-  $('#attachName').textContent = file.name + ' · uploading…';
-  $('#attachProgress').style.width = '0%';
-  $('#attachPreview').classList.remove('hidden');
+  $id('#attachThumb').src = localUrl;
+  $id('#attachName').textContent = file.name + ' · uploading…';
+  $id('#attachProgress').style.width = '0%';
+  $id('#attachPreview').classList.remove('hidden');
   try {
     // Permanent GitHub-CDN upload preferred
-    const res = await uploadPermanentImage(file, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => { $('#attachProgress').style.width = p + '%'; }});
+    const res = await uploadPermanentImage(file, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => { $id('#attachProgress').style.width = p + '%'; }});
     State.attach = { url: res.url, name: file.name, size: file.size };
-    $('#attachName').textContent = file.name + (res.persisted ? ' · ready (permanent)' : ' · ready');
-    $('#attachProgress').style.width = '100%';
+    $id('#attachName').textContent = file.name + (res.persisted ? ' · ready (permanent)' : ' · ready');
+    $id('#attachProgress').style.width = '100%';
     refreshIcons();
   } catch (err) {
     // Fallback to tmpfiles temporary host
     try {
-      const res2 = await uploadImage(file, (p) => { $('#attachProgress').style.width = p + '%'; });
+      const res2 = await uploadImage(file, (p) => { $id('#attachProgress').style.width = p + '%'; });
       State.attach = { url: res2.url, name: res2.name, size: res2.size };
-      $('#attachName').textContent = file.name + ' · ready (temp)';
-      $('#attachProgress').style.width = '100%';
+      $id('#attachName').textContent = file.name + ' · ready (temp)';
+      $id('#attachProgress').style.width = '100%';
     } catch (err2) {
       toast('Upload failed: ' + (err2.message || err.message), 'error');
       clearAttach();
@@ -2767,10 +2771,10 @@ async function handleAttach(file) {
 function showAttachPreview(att) {
   const isAudio = att.isAudio || (att.file && att.file.type && att.file.type.startsWith('audio/')) || isAudioAttachmentUrl(att.url);
   
-  const previewEl = $('#attachPreview');
+  const previewEl = $id('#attachPreview');
   if (previewEl) previewEl.classList.toggle('audio-attach', !!isAudio);
-  const imgEl = $('#attachThumb');
-  let audioBox = $('#attachAudioBox');
+  const imgEl = $id('#attachThumb');
+  let audioBox = $id('#attachAudioBox');
   if (!audioBox && imgEl) {
     audioBox = document.createElement('div');
     audioBox.id = 'attachAudioBox';
@@ -2797,26 +2801,26 @@ function showAttachPreview(att) {
       audioBox.style.display = 'none';
       audioBox.innerHTML = '';
     }
-    $('#attachName').textContent = (att.name || (att.file && att.file.name) || 'Image') + ' · ready';
+    $id('#attachName').textContent = (att.name || (att.file && att.file.name) || 'Image') + ' · ready';
   }
-  $('#attachProgress').style.width = '100%';
-  $('#attachPreview').classList.remove('hidden');
+  $id('#attachProgress').style.width = '100%';
+  $id('#attachPreview').classList.remove('hidden');
 }
 
 function clearAttach() {
   State.attach = null;
-  $('#attachPreview').classList.add('hidden');
-  $('#attachPreview').classList.remove('audio-attach');
-  const imgEl = $('#attachThumb');
+  $id('#attachPreview').classList.add('hidden');
+  $id('#attachPreview').classList.remove('audio-attach');
+  const imgEl = $id('#attachThumb');
   if (imgEl) {
     imgEl.src = '';
     imgEl.style.display = 'block';
     const infoEl = imgEl.parentElement.querySelector('.attach-info');
     if (infoEl) infoEl.style.display = '';
   }
-  const audioBox = $('#attachAudioBox'); if (audioBox) { audioBox.style.display = 'none'; audioBox.innerHTML = ''; }
-  $('#attachName').textContent = '';
-  $('#attachProgress').style.width = '0%';
+  const audioBox = $id('#attachAudioBox'); if (audioBox) { audioBox.style.display = 'none'; audioBox.innerHTML = ''; }
+  $id('#attachName').textContent = '';
+  $id('#attachProgress').style.width = '0%';
 }
 
 // ====== Typing & Heartbeat ======
@@ -2832,12 +2836,12 @@ async function pollTyping() {
   try {
     const data = await api('/user/typing?roomId=' + encodeURIComponent(State.currentRoom.id));
     State.typingUsers = data.typing || [];
-    const el = $('#typingIndicator');
+    const el = $id('#typingIndicator');
     if (State.typingUsers.length === 0) {
       el.classList.add('hidden');
     } else {
       const names = State.typingUsers.map(u => u.displayName || ('@' + u.username)).join(', ');
-      $('#typingText').textContent = names + (State.typingUsers.length === 1 ? ' is typing…' : ' are typing…');
+      $id('#typingText').textContent = names + (State.typingUsers.length === 1 ? ' is typing…' : ' are typing…');
       el.classList.remove('hidden');
     }
     renderMembers();
@@ -3206,7 +3210,7 @@ let _loadPostsPromise = null;
 async function loadPosts(force = false) {
   if (_loadPostsPromise) return _loadPostsPromise;
   if (!force && _lastPostsLoadedAt && (Date.now() - _lastPostsLoadedAt) < 2500 && lastPostsSignature !== null) {
-    if ($('#feedList') && $('#feedList').children.length === 0) renderPosts();
+    if ($id('#feedList') && $id('#feedList').children.length === 0) renderPosts();
     return State.posts;
   }
   _loadPostsPromise = (async () => {
@@ -3294,7 +3298,7 @@ function getFeedPosts() {
 let _storiesRendered = false;
 let _lastStoriesSig = '';
 function renderStoriesRail() {
-  const rail = $('#storiesRail');
+  const rail = $id('#storiesRail');
   if (!rail || !State.user) return;
   const members = State.members || [];
   const meId = State.user.id;
@@ -3366,7 +3370,7 @@ function buildStoryCell(user, isMe) {
     if (isMe) {
       if (hasStory) openStoryFor(user);
       else if (typeof openStoryCreator === 'function') openStoryCreator();
-      else { const ta = $('#postInput'); if (ta) ta.focus(); }
+      else { const ta = $id('#postInput'); if (ta) ta.focus(); }
     } else if (hasStory) {
       openStoryFor(user);
     }
@@ -3412,7 +3416,7 @@ function _postCardSignature(p) {
 
 function renderPosts() {
   renderStoriesRail();
-  const list = $('#feedList');
+  const list = $id('#feedList');
   const meId = State.user && State.user.id;
   const feedPosts = getFeedPosts();
   const currentIds = new Set(feedPosts.map(p => p.id));
@@ -3610,7 +3614,7 @@ function syncPostMusicUI() {
 async function playPostMusic(p) {
   if (!p || !p.music || !p.music.audio) return;
   const player = getPostMusicPlayer();
-  const storyPlayer = $('#storyBgAudioPlayer');
+  const storyPlayer = $id('#storyBgAudioPlayer');
   if (storyPlayer && !storyPlayer.paused) storyPlayer.pause();
   // If the same track is already playing, do nothing
   if (player.src === p.music.audio && !player.paused) return;
@@ -3703,7 +3707,7 @@ const postMusicObserver = new IntersectionObserver((entries) => {
 async function togglePostMusic(p) {
   if (!p || !p.music || !p.music.audio) return;
   const player = getPostMusicPlayer();
-  const storyPlayer = $('#storyBgAudioPlayer');
+  const storyPlayer = $id('#storyBgAudioPlayer');
   if (storyPlayer && !storyPlayer.paused) storyPlayer.pause();
   const sameTrack = _postMusicState.postId === p.id && player.src === p.music.audio;
   try {
@@ -3895,10 +3899,14 @@ function renderPost(p) {
       });
 
       track.addEventListener('scroll', () => {
-        const idx = Math.round(track.scrollLeft / (track.clientWidth || 1));
-        badge.textContent = `${idx + 1}/${imgs.length}`;
-        const dots = card.querySelectorAll('.ig-carousel-dot');
-        dots.forEach((d, i) => d.style.background = (i === idx ? '#38bdf8' : 'rgba(255,255,255,0.3)'));
+        if (track._carouselRaf) return;
+        track._carouselRaf = requestAnimationFrame(() => {
+          track._carouselRaf = null;
+          const idx = Math.round(track.scrollLeft / (track.clientWidth || 1));
+          badge.textContent = `${idx + 1}/${imgs.length}`;
+          const dots = card.querySelectorAll('.ig-carousel-dot');
+          dots.forEach((d, i) => d.style.background = (i === idx ? '#38bdf8' : 'rgba(255,255,255,0.3)'));
+        });
       });
 
       wrap.appendChild(track);
@@ -4225,7 +4233,7 @@ function patchCommentUI(card, p) {
 function openPostDetail(post) {
   const p = normalizeProfilePost(post);
   if (!p) return;
-  const existing = $('#postDetailViewer');
+  const existing = $id('#postDetailViewer');
   if (existing) existing.remove();
   const wrap = document.createElement('div');
   wrap.id = 'postDetailViewer';
@@ -4237,10 +4245,10 @@ function openPostDetail(post) {
     </div>
     <div class="post-detail-body" id="postDetailBody"></div>`;
   document.body.appendChild(wrap);
-  const body = $('#postDetailBody');
+  const body = $id('#postDetailBody');
   const fullPost = (State.posts || []).find(x => x.id === p.id) || p;
   body.appendChild(renderPost({ ...fullPost, ...p }));
-  $('#postDetailBack').addEventListener('click', () => wrap.remove());
+  $id('#postDetailBack').addEventListener('click', () => wrap.remove());
   refreshIcons();
 }
 
@@ -4249,7 +4257,7 @@ async function openSavedPostsSheet() {
   try { await loadPosts(); } catch (_) {}
   const saved = getSaved();
   const rows = (State.posts || []).filter(p => saved[p.id] && !isStoryRecord(p)).map(normalizeProfilePost).filter(Boolean);
-  const existing = $('#savedPostsSheet');
+  const existing = $id('#savedPostsSheet');
   if (existing) existing.remove();
   const sheet = document.createElement('div');
   sheet.id = 'savedPostsSheet';
@@ -4264,13 +4272,13 @@ async function openSavedPostsSheet() {
       <div class="saved-posts-grid" id="savedPostsGrid"></div>
     </div>`;
   document.body.appendChild(sheet);
-  const grid = $('#savedPostsGrid');
+  const grid = $id('#savedPostsGrid');
   if (!rows.length) {
     grid.innerHTML = '<div class="profile-relation-empty">No saved posts yet</div>';
   } else {
     rows.forEach(p => grid.appendChild(buildGridCell(p)));
   }
-  $('#savedPostsClose').addEventListener('click', () => sheet.remove());
+  $id('#savedPostsClose').addEventListener('click', () => sheet.remove());
   sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
   refreshIcons();
 }
@@ -4350,7 +4358,7 @@ function openMoreMenu(p, isMine) {
 let activeCommentsPost = null;
 function openCommentsSheet(p) {
   activeCommentsPost = p;
-  const list = $('#commentsList');
+  const list = $id('#commentsList');
   list.innerHTML = '';
   const cms = p.comments || [];
   if (cms.length === 0) {
@@ -4377,9 +4385,9 @@ function openCommentsSheet(p) {
     li.appendChild(a); li.appendChild(b);
     list.appendChild(li);
   });
-  renderAvatar($('#commentsMeAvatar'), State.user);
-  $('#commentsInput').value = '';
-  const sheet = $('#commentsSheet');
+  renderAvatar($id('#commentsMeAvatar'), State.user);
+  $id('#commentsInput').value = '';
+  const sheet = $id('#commentsSheet');
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
   if (card) motionAnimate(card,
@@ -4390,20 +4398,20 @@ function openCommentsSheet(p) {
   const items = sheet.querySelectorAll('.comments-sheet-list li');
   if (items.length) staggerIn([...items].slice(0, 8), { delayPer: 0.03 });
   refreshIcons();
-  setTimeout(() => $('#commentsInput').focus(), 220);
+  setTimeout(() => $id('#commentsInput').focus(), 220);
 }
 
 function closeCommentsSheet() {
-  $('#commentsSheet').classList.add('hidden');
+  $id('#commentsSheet').classList.add('hidden');
   activeCommentsPost = null;
 }
 
 function bindCommentsSheet() {
   $$('[data-close-sheet]').forEach(b => b.addEventListener('click', closeCommentsSheet));
-  $('#commentsForm').addEventListener('submit', async (e) => {
+  $id('#commentsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!activeCommentsPost) return;
-    const inp = $('#commentsInput');
+    const inp = $id('#commentsInput');
     const text = inp.value.trim();
     if (!text) return;
     const sb = e.target.querySelector('.post-btn');
@@ -4525,7 +4533,7 @@ function stopStoryPlayback() {
   _isHoldingStory = false;
 }
 function renderStoryProgressBars(total, activeIndex) {
-  const progress = $('#storyProgress');
+  const progress = $id('#storyProgress');
   if (!progress) return;
   progress.innerHTML = '';
   storyPlayback.progressFill = null;
@@ -4571,16 +4579,16 @@ function renderStoryItem() {
   const user = storyPlayback.user;
   const recent = storyPlayback.items[storyPlayback.index];
   if (!user || !recent) return closeStory();
-  const v = $('#storyViewer');
-  const content = $('#storyContent');
+  const v = $id('#storyViewer');
+  const content = $id('#storyContent');
   const st = recent.style || {};
   content.innerHTML = '';
   renderStoryProgressBars(storyPlayback.items.length, storyPlayback.index);
-  renderAvatar($('#storyAvatar'), user);
-  $('#storyName').innerHTML = displayNameWithOwnerBadge(user, user.displayName || user.username, 'inline');
-  $('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
+  renderAvatar($id('#storyAvatar'), user);
+  $id('#storyName').innerHTML = displayNameWithOwnerBadge(user, user.displayName || user.username, 'inline');
+  $id('#storyMeta').textContent = recent ? timeAgo(recent.createdAt) : 'just now';
   const isMyStory = !!(State.user && user.id === State.user.id);
-  const manageBtn = $('#storyManageBtn');
+  const manageBtn = $id('#storyManageBtn');
   if (manageBtn) manageBtn.classList.toggle('hidden', !isMyStory);
   // Footer UI: owners see a "Seen by" pill; viewers get the reply bar.
   updateStoryFooter(recent, isMyStory);
@@ -4721,7 +4729,7 @@ function renderStoryItem() {
     content.appendChild(div);
   }
   v.classList.remove('hidden');
-  const player = $('#storyBgAudioPlayer');
+  const player = $id('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
   if (recent.music && recent.music.title) {
     const stk = document.createElement('div');
@@ -4751,7 +4759,7 @@ function renderStoryItem() {
       player.play().catch(() => {});
     }
   }
-  const contentEl = $('#storyContent');
+  const contentEl = $id('#storyContent');
   if (contentEl) motionAnimate(contentEl,
     { opacity: [0, 1], transform: ['scale(.96)', 'scale(1)'] },
     { duration: 0.28, easing: [0.2, 0.85, 0.2, 1] }
@@ -4791,16 +4799,16 @@ function recordStoryView(story) {
 
 function updateStoryFooter(story, isMyStory) {
   _currentStoryItem = story;
-  const seenBtn = $('#storySeenBy');
-  const replyBar = $('#storyReplyBar');
-  const qr = $('#storyQuickReacts');
-  const ai = $('#storyActionIcons');
-  const snd = $('#storyReplySend');
+  const seenBtn = $id('#storySeenBy');
+  const replyBar = $id('#storyReplyBar');
+  const qr = $id('#storyQuickReacts');
+  const ai = $id('#storyActionIcons');
+  const snd = $id('#storyReplySend');
   if (isMyStory) {
     if (replyBar) replyBar.classList.add('hidden');
     if (seenBtn) {
       const n = typeof story.viewCount === 'number' ? story.viewCount : (Array.isArray(story.views) ? story.views.length : 0);
-      const cnt = $('#storySeenByCount');
+      const cnt = $id('#storySeenByCount');
       if (cnt) cnt.textContent = String(n);
       seenBtn.classList.remove('hidden');
     }
@@ -4810,9 +4818,9 @@ function updateStoryFooter(story, isMyStory) {
     if (qr) qr.classList.add('hidden');
     if (ai) ai.classList.remove('hidden');
     if (snd) snd.classList.add('hidden');
-    const inp = $('#storyReplyInput');
+    const inp = $id('#storyReplyInput');
     if (inp) inp.value = '';
-    const lb = $('#storyLikeBtn');
+    const lb = $id('#storyLikeBtn');
     if (lb && story && State.user) {
       const liked = (story.likes || []).includes(State.user.id);
       lb.classList.toggle('liked', liked);
@@ -4823,9 +4831,9 @@ function updateStoryFooter(story, isMyStory) {
 async function openStoryViewersSheet() {
   const story = _currentStoryItem;
   if (!story || !story.id) return;
-  const sheet = $('#storyViewersSheet');
-  const listEl = $('#storyViewersList');
-  const titleEl = $('#storyViewersTitle');
+  const sheet = $id('#storyViewersSheet');
+  const listEl = $id('#storyViewersList');
+  const titleEl = $id('#storyViewersTitle');
   if (!sheet || !listEl) return;
   // Pause story playback while the sheet is open so the timer doesn't advance.
   pauseStoryForHold();
@@ -4860,7 +4868,7 @@ async function openStoryViewersSheet() {
   }
 }
 function closeStoryViewersSheet() {
-  const sheet = $('#storyViewersSheet');
+  const sheet = $id('#storyViewersSheet');
   if (sheet) sheet.classList.add('hidden');
   resumeStoryFromHold();
 }
@@ -4880,11 +4888,11 @@ async function sendStoryReply(emoji, text) {
 }
 
 function bindStoryReplyUI() {
-  const seenBtn = $('#storySeenBy');
+  const seenBtn = $id('#storySeenBy');
   if (seenBtn) seenBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openStoryViewersSheet(); });
-  const vClose = $('#storyViewersClose');
+  const vClose = $id('#storyViewersClose');
   if (vClose) vClose.addEventListener('click', closeStoryViewersSheet);
-  const vSheet = $('#storyViewersSheet');
+  const vSheet = $id('#storyViewersSheet');
   if (vSheet) vSheet.addEventListener('click', (e) => { if (e.target === vSheet) closeStoryViewersSheet(); });
   // Quick emoji reactions
   $$('#storyQuickReacts .story-react-emoji').forEach(btn => {
@@ -4892,49 +4900,49 @@ function bindStoryReplyUI() {
       e.preventDefault(); e.stopPropagation();
       btn.classList.remove('burst'); void btn.offsetWidth; btn.classList.add('burst');
       sendStoryReply(btn.dataset.emoji, '');
-      const qr = $('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
-      const ai = $('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
+      const qr = $id('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
+      const ai = $id('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
     });
   });
   // Reply text form
-  const form = $('#storyReplyForm');
+  const form = $id('#storyReplyForm');
   if (form) {
     form.addEventListener('submit', (e) => {
       e.preventDefault(); e.stopPropagation();
-      const inp = $('#storyReplyInput');
+      const inp = $id('#storyReplyInput');
       const txt = (inp && inp.value || '').trim();
       if (!txt) return;
       if (inp) inp.value = '';
-      const snd = $('#storyReplySend'); if (snd) snd.classList.add('hidden');
-      const qr = $('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
-      const ai = $('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
+      const snd = $id('#storyReplySend'); if (snd) snd.classList.add('hidden');
+      const qr = $id('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
+      const ai = $id('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
       sendStoryReply('', txt);
     });
-    const inp = $('#storyReplyInput');
+    const inp = $id('#storyReplyInput');
     if (inp) {
       inp.addEventListener('focus', () => {
         try { pauseStoryForHold(); } catch (_) {}
-        const qr = $('#storyQuickReacts'); if (qr) qr.classList.remove('hidden');
-        const ai = $('#storyActionIcons'); if (ai) ai.classList.add('hidden');
+        const qr = $id('#storyQuickReacts'); if (qr) qr.classList.remove('hidden');
+        const ai = $id('#storyActionIcons'); if (ai) ai.classList.add('hidden');
       });
       inp.addEventListener('blur', () => {
         try { resumeStoryFromHold(); } catch (_) {}
         setTimeout(() => {
           if (!inp.value.trim()) {
-            const qr = $('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
-            const ai = $('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
-            const snd = $('#storyReplySend'); if (snd) snd.classList.add('hidden');
+            const qr = $id('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
+            const ai = $id('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
+            const snd = $id('#storyReplySend'); if (snd) snd.classList.add('hidden');
           }
         }, 150);
       });
       inp.addEventListener('input', () => {
-        const snd = $('#storyReplySend');
+        const snd = $id('#storyReplySend');
         if (snd) snd.classList.toggle('hidden', !inp.value.trim());
       });
       inp.addEventListener('click', (e) => e.stopPropagation());
     }
   }
-  const lb = $('#storyLikeBtn');
+  const lb = $id('#storyLikeBtn');
   if (lb) lb.addEventListener('click', async (e) => {
     e.preventDefault(); e.stopPropagation();
     if (!_currentStoryItem) return;
@@ -4948,12 +4956,12 @@ function bindStoryReplyUI() {
     }
     try { await api('/posts/like', { method: 'POST', body: { postId: _currentStoryItem.id } }); } catch (_) {}
   });
-  const cb = $('#storyCommentIconBtn');
+  const cb = $id('#storyCommentIconBtn');
   if (cb) cb.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
-    const inp = $('#storyReplyInput'); if (inp) inp.focus();
+    const inp = $id('#storyReplyInput'); if (inp) inp.focus();
   });
-  const sb = $('#storyShareIconBtn');
+  const sb = $id('#storyShareIconBtn');
   if (sb) sb.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
     toast('Story link copied to clipboard!', 'success');
@@ -5044,14 +5052,14 @@ function closeStory() {
   storyPlayback.user = null;
   storyPlayback.items = [];
   storyPlayback.index = 0;
-  const player = $('#storyBgAudioPlayer');
+  const player = $id('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
-  const v = $('#storyViewer');
+  const v = $id('#storyViewer');
   v.classList.add('hidden');
   v.classList.remove('is-loading', 'holding', 'paused');
-  const seenBtn = $('#storySeenBy'); if (seenBtn) seenBtn.classList.add('hidden');
-  const replyBar = $('#storyReplyBar'); if (replyBar) replyBar.classList.add('hidden');
-  const vSheet = $('#storyViewersSheet'); if (vSheet) vSheet.classList.add('hidden');
+  const seenBtn = $id('#storySeenBy'); if (seenBtn) seenBtn.classList.add('hidden');
+  const replyBar = $id('#storyReplyBar'); if (replyBar) replyBar.classList.add('hidden');
+  const vSheet = $id('#storyViewersSheet'); if (vSheet) vSheet.classList.add('hidden');
   _currentStoryItem = null;
   if (typeof renderStoriesRail === 'function') renderStoriesRail();
 }
@@ -5069,12 +5077,12 @@ let _isHoldingStory = false;
 function pauseStoryForHold() {
   if (_isHoldingStory) return;
   _isHoldingStory = true;
-  const v = $('#storyViewer');
+  const v = $id('#storyViewer');
   if (v) v.classList.add('holding', 'paused');
   if (storyPlayback.rafId) cancelAnimationFrame(storyPlayback.rafId);
   storyPlayback.rafId = 0;
   storyPlayback._pausedAt = performance.now();
-  const player = $('#storyBgAudioPlayer');
+  const player = $id('#storyBgAudioPlayer');
   if (player && !player.paused) { player.pause(); player._resumeAfterHold = true; }
   // Pause a playing story video too.
   if (storyPlayback.videoEl && !storyPlayback.videoEl.paused) {
@@ -5084,7 +5092,7 @@ function pauseStoryForHold() {
 function resumeStoryFromHold() {
   if (!_isHoldingStory) return;
   _isHoldingStory = false;
-  const v = $('#storyViewer');
+  const v = $id('#storyViewer');
   if (v) v.classList.remove('holding', 'paused');
   if (storyPlayback._pausedAt && storyPlayback.startedAt) {
     // Shift the "started at" reference forward by exactly how long we paused,
@@ -5093,7 +5101,7 @@ function resumeStoryFromHold() {
     storyPlayback.startedAt += pausedFor;
   }
   storyPlayback._pausedAt = 0;
-  const player = $('#storyBgAudioPlayer');
+  const player = $id('#storyBgAudioPlayer');
   if (player && player._resumeAfterHold) { player.play().catch(() => {}); player._resumeAfterHold = false; }
   // Resume a paused story video, and let it keep driving its own progress bar
   // (don't start the RAF countdown loop for video items).
@@ -5125,17 +5133,17 @@ function flashStoryEdge(side) {
 }
 
 function bindStoryViewer() {
-  $('#storyClose').addEventListener('click', closeStory);
-  $('#storyPrev').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); flashStoryEdge('left'); prevStoryItem(); });
-  $('#storyNext').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); flashStoryEdge('right'); nextStoryItem(); });
-  $('#storyViewer').addEventListener('click', (e) => {
+  $id('#storyClose').addEventListener('click', closeStory);
+  $id('#storyPrev').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); flashStoryEdge('left'); prevStoryItem(); });
+  $id('#storyNext').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); flashStoryEdge('right'); nextStoryItem(); });
+  $id('#storyViewer').addEventListener('click', (e) => {
     if (e.target.id === 'storyViewer') closeStory();
   });
 
   // Hold-to-pause: works with both mouse and touch, on the media area only
   // (not on the close/manage buttons or the invisible prev/next hit zones —
   // those still handle their own click/tap for navigation).
-  const content = $('#storyContent');
+  const content = $id('#storyContent');
   if (content) {
     let downAt = 0;
     const onDown = () => { downAt = Date.now(); clearTimeout(_holdTimer); _holdTimer = setTimeout(pauseStoryForHold, HOLD_THRESHOLD_MS); };
@@ -5237,7 +5245,7 @@ window.startStickerScale = (e, id) => {
   const startScale = activeStickerScales[id] || 1.0;
   let rafId = 0;
   let pendingScale = startScale;
-  const guide = $('#storySafeAreaGuide');
+  const guide = $id('#storySafeAreaGuide');
   if (guide) guide.classList.remove('hidden');
 
   const flush = () => {
@@ -5277,7 +5285,7 @@ window.setStoryMusicLayout = (layout, el) => {
   activeStoryMusicLayout = layout;
   $$('#storyMusicLayoutRow .music-layout-btn').forEach(b => b.classList.remove('active'));
   if (el) el.classList.add('active');
-  const stk = $('#storyStageMusicSticker');
+  const stk = $id('#storyStageMusicSticker');
   if (stk) {
     stk.classList.remove('layout-pill', 'layout-card', 'layout-minimal');
     stk.classList.add('layout-' + layout);
@@ -5289,9 +5297,9 @@ window.setMusicClipDuration = (dur, el) => {
   State.musicClipDur = dur;
   $$('#storyMusicTrimmer .dur-pill').forEach(p => p.classList.remove('active'));
   if (el) el.classList.add('active');
-  const lbl = $('#musicClipDurLbl');
+  const lbl = $id('#musicClipDurLbl');
   if (lbl) lbl.textContent = dur + 's';
-  const slider = $('#musicStartTimeSlider');
+  const slider = $id('#musicStartTimeSlider');
   if (slider) window.updateMusicStartTime(slider.value);
 };
 
@@ -5334,7 +5342,7 @@ function makeStickerDraggable(el, onMoveCallback) {
     el.style.transition = 'none';
     const stageEl = el.closest('.story-editor-stage');
     if (stageEl) stageEl.classList.add('dragging-active');
-    const guide = $('#storySafeAreaGuide');
+    const guide = $id('#storySafeAreaGuide');
     if (guide) guide.classList.remove('hidden');
   };
 
@@ -5350,8 +5358,8 @@ function makeStickerDraggable(el, onMoveCallback) {
 
     const centerX = stageRect.width / 2;
     const centerY = stageRect.height / 2;
-    const guideV = $('#storyAlignGuide');
-    const guideH = $('#storyAlignGuideH');
+    const guideV = $id('#storyAlignGuide');
+    const guideH = $id('#storyAlignGuideH');
     const wasSnappedX = snappedX, wasSnappedY = snappedY;
     if (Math.abs(newLeft - centerX) < 14) {
       newLeft = centerX;
@@ -5385,14 +5393,14 @@ function makeStickerDraggable(el, onMoveCallback) {
     if (rafId) cancelAnimationFrame(rafId);
     applyMove();
     el.style.transition = 'transform 0.15s ease';
-    const guideV = $('#storyAlignGuide');
-    const guideH = $('#storyAlignGuideH');
+    const guideV = $id('#storyAlignGuide');
+    const guideH = $id('#storyAlignGuideH');
     if (guideV) guideV.classList.add('hidden');
     if (guideH) guideH.classList.add('hidden');
     snappedX = false; snappedY = false;
     const stageEl = el.closest('.story-editor-stage');
     if (stageEl) stageEl.classList.remove('dragging-active');
-    const guide = $('#storySafeAreaGuide');
+    const guide = $id('#storySafeAreaGuide');
     if (guide) guide.classList.add('hidden');
   };
 
@@ -5405,27 +5413,27 @@ function makeStickerDraggable(el, onMoveCallback) {
 }
 
 window.openStoryTextEditor = () => {
-  const screen = $('#storyTextEditorScreen');
+  const screen = $id('#storyTextEditorScreen');
   if (!screen) return;
   screen.classList.remove('hidden');
-  const inp = $('#storyTextOverlayInput');
+  const inp = $id('#storyTextOverlayInput');
   if (inp) {
-    inp.value = activeStoryText || $('#storyEditorCaptionInput')?.value || '';
+    inp.value = activeStoryText || $id('#storyEditorCaptionInput')?.value || '';
     inp.focus();
   }
   window.updateStoryTextLivePreview();
 };
 
 window.closeStoryTextEditor = () => {
-  const screen = $('#storyTextEditorScreen');
+  const screen = $id('#storyTextEditorScreen');
   if (screen) screen.classList.add('hidden');
 };
 
 window.finishStoryTextEditor = () => {
-  const inp = $('#storyTextOverlayInput');
+  const inp = $id('#storyTextOverlayInput');
   activeStoryText = (inp?.value || '').trim();
-  const stg = $('#storyStageTextOverlay');
-  const txt = $('#storyStageTextSpan');
+  const stg = $id('#storyStageTextOverlay');
+  const txt = $id('#storyStageTextSpan');
   if (stg) {
     if (!activeStoryText) {
       stg.classList.add('hidden');
@@ -5448,16 +5456,16 @@ window.finishStoryTextEditor = () => {
 
 window.removeStoryTextOverlay = (e) => {
   if (e) e.stopPropagation();
-  const stg = $('#storyStageTextOverlay');
+  const stg = $id('#storyStageTextOverlay');
   if (stg) stg.classList.add('hidden');
   activeStoryText = '';
-  const inp = $('#storyTextOverlayInput');
+  const inp = $id('#storyTextOverlayInput');
   if (inp) inp.value = '';
 };
 
 window.updateStoryTextLivePreview = () => {
-  const inp = $('#storyTextOverlayInput');
-  const slider = $('#storyTextSizeSlider');
+  const inp = $id('#storyTextOverlayInput');
+  const slider = $id('#storyTextSizeSlider');
   if (!inp) return;
   if (slider) activeStoryTextSize = parseInt(slider.value, 10) || 28;
   inp.style.fontSize = activeStoryTextSize + 'px';
@@ -5473,7 +5481,7 @@ window.selectOverlayFont = (font, el) => {
 };
 
 window.toggleTextColorsRow = () => {
-  const row = $('#storyTextColorsRow');
+  const row = $id('#storyTextColorsRow');
   if (row) row.classList.toggle('hidden');
 };
 
@@ -5482,7 +5490,7 @@ window.cycleOverlayTextBgMode = () => {
   const idx = STORY_TEXT_BG_MODES.indexOf(activeStoryTextBgMode);
   activeStoryTextBgMode = STORY_TEXT_BG_MODES[(idx + 1) % STORY_TEXT_BG_MODES.length];
   activeStoryTextBg = activeStoryTextBgMode !== 'none'; // legacy flag kept for back-compat consumers
-  const btn = $('#storyTextBgToggleBtn');
+  const btn = $id('#storyTextBgToggleBtn');
   if (btn) {
     btn.classList.toggle('active-toggle', activeStoryTextBgMode !== 'none');
     const labels = { none: 'Aa', solid: 'Fill', soft: 'Soft', outline: 'Outline' };
@@ -5519,20 +5527,20 @@ window.setStoryFont = (font, el) => {
     if (p.closest('#storyFontControls')) p.classList.remove('active');
   });
   if (el) el.classList.add('active');
-  const inp = $('#storyEditorCaptionInput');
+  const inp = $id('#storyEditorCaptionInput');
   if (!inp) return;
   applyStoryFontPreset(inp, font || 'modern');
 };
 
 window.openStoryCreator = () => {
-  const mod = $('#storyEditorModal');
+  const mod = $id('#storyEditorModal');
   if (!mod) return;
   mod.classList.remove('hidden');
-  const inp = $('#storyEditorFileInput');
-  const ph = $('#storyEditorPlaceholder');
-  const prev = $('#storyEditorPreviewImg');
-  const loadingEl = $('#storyEditorImgLoading');
-  const stepLbl = $('#storyEditorStepLabel');
+  const inp = $id('#storyEditorFileInput');
+  const ph = $id('#storyEditorPlaceholder');
+  const prev = $id('#storyEditorPreviewImg');
+  const loadingEl = $id('#storyEditorImgLoading');
+  const stepLbl = $id('#storyEditorStepLabel');
   if (stepLbl) stepLbl.textContent = 'Create Story';
   if (ph && inp) {
     ph.onclick = () => inp.click();
@@ -5583,14 +5591,14 @@ window.openStoryCreator = () => {
       renderStoryEditorPhotoStrip();
     };
   }
-  const initSpan = $('#storyPubMeInitials');
+  const initSpan = $id('#storyPubMeInitials');
   if (initSpan && State.user) {
     initSpan.textContent = (State.user.displayName || State.user.username || 'AJ').slice(0,2).toUpperCase();
   }
   // Show the safe-area guide only while a sticker is actively being dragged/scaled
   // (see makeStickerDraggable / startStickerScale) — kept hidden by default so the
   // canvas looks clean, matching the "cleaner preview/publish flow" goal.
-  const guide = $('#storySafeAreaGuide');
+  const guide = $id('#storySafeAreaGuide');
   if (guide) guide.classList.add('hidden');
 };
 
@@ -5622,7 +5630,7 @@ async function handleStoryVideoPick(file, ph, prev, loadingEl) {
   if (ph) ph.classList.add('hidden');
   if (loadingEl) loadingEl.classList.remove('hidden');
   // Show a local preview immediately.
-  const vidPrev = $('#storyEditorPreviewVideo');
+  const vidPrev = $id('#storyEditorPreviewVideo');
   const localUrl = URL.createObjectURL(file);
   if (prev) { prev.src = ''; prev.classList.add('hidden'); }
   if (vidPrev) { vidPrev.src = localUrl; vidPrev.classList.remove('hidden'); vidPrev.play().catch(() => {}); }
@@ -5651,8 +5659,8 @@ async function handleStoryVideoPick(file, ph, prev, loadingEl) {
 // Tapping a thumb makes it the primary preview; the ✕ removes it; a trailing
 // "+" tile lets the user add more (up to 3).
 function renderStoryEditorPhotoStrip() {
-  const strip = $('#storyEditorPhotoStrip');
-  const countBadge = $('#storyEditorPhotoCount');
+  const strip = $id('#storyEditorPhotoStrip');
+  const countBadge = $id('#storyEditorPhotoCount');
   const imgs = Array.isArray(State.storyCreatorImages) ? State.storyCreatorImages : [];
   if (!strip) return;
   if (imgs.length <= 1) {
@@ -5670,7 +5678,7 @@ function renderStoryEditorPhotoStrip() {
     t.innerHTML = `<img src="${String(url).replace(/"/g, '%22')}" alt="photo ${idx + 1}" />` +
       `<button type="button" class="story-strip-del" aria-label="Remove photo">✕</button>`;
     t.querySelector('img').addEventListener('click', () => {
-      const prev = $('#storyEditorPreviewImg');
+      const prev = $id('#storyEditorPreviewImg');
       if (prev) { prev.src = url; prev.classList.remove('hidden'); }
       strip.querySelectorAll('.story-strip-thumb').forEach((el, i) => el.classList.toggle('active', i === idx));
     });
@@ -5678,10 +5686,10 @@ function renderStoryEditorPhotoStrip() {
       e.stopPropagation();
       State.storyCreatorImages.splice(idx, 1);
       State.storyCreatorImgUrl = State.storyCreatorImages[0] || null;
-      const prev = $('#storyEditorPreviewImg');
+      const prev = $id('#storyEditorPreviewImg');
       if (prev) {
         if (State.storyCreatorImgUrl) { prev.src = State.storyCreatorImgUrl; prev.classList.remove('hidden'); }
-        else { prev.src = ''; prev.classList.add('hidden'); const phEl = $('#storyEditorPlaceholder'); if (phEl) phEl.classList.remove('hidden'); }
+        else { prev.src = ''; prev.classList.add('hidden'); const phEl = $id('#storyEditorPlaceholder'); if (phEl) phEl.classList.remove('hidden'); }
       }
       renderStoryEditorPhotoStrip();
     });
@@ -5693,23 +5701,23 @@ function renderStoryEditorPhotoStrip() {
     add.className = 'story-strip-add';
     add.textContent = '+';
     add.setAttribute('aria-label', 'Add photo');
-    add.addEventListener('click', () => { const fi = $('#storyEditorFileInput'); if (fi) fi.click(); });
+    add.addEventListener('click', () => { const fi = $id('#storyEditorFileInput'); if (fi) fi.click(); });
     strip.appendChild(add);
   }
 }
 
 window.closeStoryCreator = () => {
-  const mod = $('#storyEditorModal');
+  const mod = $id('#storyEditorModal');
   if (mod) mod.classList.add('hidden');
   State.storyCreatorImages = [];
   State.storyCreatorVideoUrl = null;
-  const strip = $('#storyEditorPhotoStrip'); if (strip) { strip.classList.add('hidden'); strip.innerHTML = ''; }
-  const countBadge = $('#storyEditorPhotoCount'); if (countBadge) countBadge.classList.add('hidden');
-  const vidPrev = $('#storyEditorPreviewVideo'); if (vidPrev) { try { vidPrev.pause(); } catch (_) {} vidPrev.src = ''; vidPrev.classList.add('hidden'); }
-  const player = $('#storyBgAudioPlayer');
+  const strip = $id('#storyEditorPhotoStrip'); if (strip) { strip.classList.add('hidden'); strip.innerHTML = ''; }
+  const countBadge = $id('#storyEditorPhotoCount'); if (countBadge) countBadge.classList.add('hidden');
+  const vidPrev = $id('#storyEditorPreviewVideo'); if (vidPrev) { try { vidPrev.pause(); } catch (_) {} vidPrev.src = ''; vidPrev.classList.add('hidden'); }
+  const player = $id('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
   selectedStoryMusicId = null;
-  const stk = $('#storyStageMusicSticker');
+  const stk = $id('#storyStageMusicSticker');
   if (stk) {
     stk.classList.add('hidden');
     stk.style.left = '50%';
@@ -5718,8 +5726,8 @@ window.closeStoryCreator = () => {
     stk.classList.remove('active-sticker');
     stk.className = 'story-music-sticker layout-pill sticker hidden';
   }
-  const stgText = $('#storyStageTextOverlay');
-  const stgTextSpan = $('#storyStageTextSpan');
+  const stgText = $id('#storyStageTextOverlay');
+  const stgTextSpan = $id('#storyStageTextSpan');
   if (stgText) {
     stgText.classList.add('hidden');
     stgText.style.left = '50%';
@@ -5730,15 +5738,15 @@ window.closeStoryCreator = () => {
     applyStoryFontPreset(stgText, 'modern');
   }
   if (stgTextSpan) stgTextSpan.textContent = 'Text';
-  const trim = $('#storyMusicTrimmer');
+  const trim = $id('#storyMusicTrimmer');
   if (trim) trim.classList.add('hidden');
-  const prev = $('#storyEditorPreviewImg');
+  const prev = $id('#storyEditorPreviewImg');
   if (prev) { prev.src = ''; prev.classList.add('hidden'); }
-  const loadingEl = $('#storyEditorImgLoading'); if (loadingEl) loadingEl.classList.add('hidden');
-  const fc = $('#storyFontControls'); if (fc) fc.classList.add('hidden');
-  const colorRow = $('#storyTextColorsRow'); if (colorRow) colorRow.classList.add('hidden');
-  const slider = $('#storyTextSizeSlider'); if (slider) slider.value = '28';
-  const guide = $('#storySafeAreaGuide'); if (guide) guide.classList.add('hidden');
+  const loadingEl = $id('#storyEditorImgLoading'); if (loadingEl) loadingEl.classList.add('hidden');
+  const fc = $id('#storyFontControls'); if (fc) fc.classList.add('hidden');
+  const colorRow = $id('#storyTextColorsRow'); if (colorRow) colorRow.classList.add('hidden');
+  const slider = $id('#storyTextSizeSlider'); if (slider) slider.value = '28';
+  const guide = $id('#storySafeAreaGuide'); if (guide) guide.classList.add('hidden');
   $$('#storyMusicLayoutRow .music-layout-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
   activeStoryFont = 'modern'; activeStoryText = ''; activeStoryTextColor = '#ffffff';
   activeStoryTextBg = false; activeStoryTextBgMode = 'none'; activeStoryTextAlign = 'center'; activeStoryTextSize = 28;
@@ -5746,22 +5754,22 @@ window.closeStoryCreator = () => {
   activeStickerScales = { storyStageMusicSticker: 1.0, storyStageTextOverlay: 1.0 };
   State.musicPosX = 50; State.musicPosY = 32; State.musicStartTime = 0; State.musicScale = 1.0; State.musicClipDur = 30;
   State.textPosX = 50; State.textPosY = 68; State.textScale = 1.0;
-  const ph = $('#storyEditorPlaceholder');
+  const ph = $id('#storyEditorPlaceholder');
   if (ph) ph.classList.remove('hidden');
-  const cap = $('#storyEditorCaptionInput');
+  const cap = $id('#storyEditorCaptionInput');
   if (cap) { cap.value = ''; cap.style.fontFamily = ''; cap.style.fontWeight = ''; cap.style.fontStyle = ''; cap.style.textTransform = ''; cap.style.letterSpacing = ''; }
   State.storyCreatorImgUrl = null;
-  const pubAll = $('#storyPubBtnAll'); if (pubAll) pubAll.disabled = false;
-  const pubCf = $('#storyPubBtnCf'); if (pubCf) pubCf.disabled = false;
+  const pubAll = $id('#storyPubBtnAll'); if (pubAll) pubAll.disabled = false;
+  const pubCf = $id('#storyPubBtnCf'); if (pubCf) pubCf.disabled = false;
 };
 
 window.promptStoryCaption = () => {
-  const cap = $('#storyEditorCaptionInput');
+  const cap = $id('#storyEditorCaptionInput');
   if (cap) cap.focus();
 };
 
 window.promptStoryMention = () => {
-  const cap = $('#storyEditorCaptionInput');
+  const cap = $id('#storyEditorCaptionInput');
   if (cap) {
     cap.value = cap.value + (cap.value && !cap.value.endsWith(' ') ? ' ' : '') + '@';
     cap.focus();
@@ -5769,13 +5777,13 @@ window.promptStoryMention = () => {
 };
 
 window.openStoryMusicSheet = () => {
-  const sh = $('#storyMusicSheet');
+  const sh = $id('#storyMusicSheet');
   if (sh) sh.classList.remove('hidden');
   window.filterStorySongs();
 };
 
 window.closeStoryMusicSheet = () => {
-  const sh = $('#storyMusicSheet');
+  const sh = $id('#storyMusicSheet');
   if (sh) sh.classList.add('hidden');
 };
 
@@ -5794,8 +5802,8 @@ let storyMusicSearchTimer = null;
 let liveSearchResults = [];
 
 window.filterStorySongs = () => {
-  const container = $('#storySongsListContainer');
-  const q = ($('#storyMusicSearchInput')?.value || '').toLowerCase().trim();
+  const container = $id('#storySongsListContainer');
+  const q = ($id('#storyMusicSearchInput')?.value || '').toLowerCase().trim();
   if (!container) return;
 
   if (q.length >= 2) {
@@ -5834,14 +5842,14 @@ window.filterStorySongs = () => {
 };
 
 function renderSongListItems(list) {
-  const container = $('#storySongsListContainer');
+  const container = $id('#storySongsListContainer');
   if (!container) return;
   if (list.length === 0) {
     container.innerHTML = `<div style="text-align:center; padding:30px; color:#737373;">No songs found matching your search.</div>`;
     return;
   }
   container.innerHTML = list.map(s => {
-    const isPlaying = selectedStoryMusicId === s.id && !($('#storyBgAudioPlayer')?.paused);
+    const isPlaying = selectedStoryMusicId === s.id && !($id('#storyBgAudioPlayer')?.paused);
     // SECURITY: escape s.art (XSS via attribute breakout). Sanitize s.id to
     // a number. For s.audio, use a data attribute and addEventListener via
     // a closure instead of interpolating into an inline JS string inside an
@@ -5887,7 +5895,7 @@ function renderSongListItems(list) {
 
 window.toggleStorySongPreview = (e, id, url) => {
   if (e) e.stopPropagation();
-  const player = $('#storyBgAudioPlayer');
+  const player = $id('#storyBgAudioPlayer');
   if (!player) return;
   if (selectedStoryMusicId === id && !player.paused) {
     player.pause();
@@ -5905,14 +5913,14 @@ window.pickStoryMusic = (id) => {
   if (!song) song = liveSearchResults.find(s => s.id === id);
   if (!song) return;
   selectedStoryMusicId = id;
-  const player = $('#storyBgAudioPlayer');
+  const player = $id('#storyBgAudioPlayer');
   if (player) { player.src = song.audio; player.currentTime = State.musicStartTime || 0; player.play().catch(() => {}); }
   
-  const stk = $('#storyStageMusicSticker');
+  const stk = $id('#storyStageMusicSticker');
   if (stk) {
-    $('#storyStageMusicArt').src = song.art;
-    $('#storyStageMusicTitle').textContent = song.title;
-    $('#storyStageMusicArtist').textContent = song.artist;
+    $id('#storyStageMusicArt').src = song.art;
+    $id('#storyStageMusicTitle').textContent = song.title;
+    $id('#storyStageMusicArtist').textContent = song.artist;
     stk.style.left = (State.musicPosX || 50) + '%';
     stk.style.top = (State.musicPosY || 32) + '%';
     stk.classList.remove('hidden', 'layout-pill', 'layout-card', 'layout-minimal');
@@ -5921,10 +5929,10 @@ window.pickStoryMusic = (id) => {
   }
   window.closeStoryMusicSheet();
 
-  const trim = $('#storyMusicTrimmer');
+  const trim = $id('#storyMusicTrimmer');
   if (trim) {
-    $('#trimmerSongTitle').textContent = song.title + ' · ' + song.artist;
-    const bars = $('#trimmerWaveformBars');
+    $id('#trimmerSongTitle').textContent = song.title + ' · ' + song.artist;
+    const bars = $id('#trimmerWaveformBars');
     if (bars) {
       let html = '';
       for (let i = 0; i < 35; i++) {
@@ -5942,28 +5950,28 @@ window.updateMusicStartTime = (val) => {
   State.musicStartTime = sec;
   const m = Math.floor(sec / 60);
   const s = sec % 60;
-  const lbl = $('#musicStartTimeLbl');
+  const lbl = $id('#musicStartTimeLbl');
   if (lbl) lbl.textContent = `${m}:${s < 10 ? '0' : ''}${s}`;
-  const player = $('#storyBgAudioPlayer');
+  const player = $id('#storyBgAudioPlayer');
   if (player && !player.paused) player.currentTime = sec;
 };
 
 window.closeMusicTrimmer = () => {
-  const trim = $('#storyMusicTrimmer');
+  const trim = $id('#storyMusicTrimmer');
   if (trim) trim.classList.add('hidden');
 };
 
 window.removeStoryMusic = (e) => {
   if (e) e.stopPropagation();
   selectedStoryMusicId = null;
-  const player = $('#storyBgAudioPlayer');
+  const player = $id('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
-  const stk = $('#storyStageMusicSticker');
+  const stk = $id('#storyStageMusicSticker');
   if (stk) stk.classList.add('hidden');
 };
 
 window.publishStoryWithMusic = async (isCf = false) => {
-  const capVal = ($('#storyEditorCaptionInput')?.value || '').trim();
+  const capVal = ($id('#storyEditorCaptionInput')?.value || '').trim();
   const text = activeStoryText || capVal;
   const videoUrl = State.storyCreatorVideoUrl || null;
   const storyImages = videoUrl ? [] : (Array.isArray(State.storyCreatorImages) && State.storyCreatorImages.length > 0
@@ -5992,8 +6000,8 @@ window.publishStoryWithMusic = async (isCf = false) => {
     setTimeout(() => openCloseFriendsSheet(), 120);
     return;
   }
-  const pubAll = $('#storyPubBtnAll');
-  const pubCf = $('#storyPubBtnCf');
+  const pubAll = $id('#storyPubBtnAll');
+  const pubCf = $id('#storyPubBtnCf');
   const targetBtn = isCf ? pubCf : pubAll;
   const originalHtml = targetBtn ? targetBtn.innerHTML : '';
   if (pubAll) pubAll.disabled = true;
@@ -6030,9 +6038,9 @@ let _postDraftMusic = null;
 let _postSearchTimer = null;
 
 function updatePostMusicUI() {
-  const prev = $('#postMusicPreview');
-  const title = $('#postMusicTitle');
-  const artist = $('#postMusicArtist');
+  const prev = $id('#postMusicPreview');
+  const title = $id('#postMusicTitle');
+  const artist = $id('#postMusicArtist');
   if (!prev) return;
   if (_postDraftMusic && _postDraftMusic.title) {
     prev.classList.remove('hidden');
@@ -6046,7 +6054,7 @@ function updatePostMusicUI() {
 }
 
 function renderPostSongResults(list) {
-  const box = $('#postSongList');
+  const box = $id('#postSongList');
   if (!box) return;
   if (!list || !list.length) { box.innerHTML = '<div class="note-song-empty">Type to search songs…</div>'; return; }
   box.innerHTML = '';
@@ -6062,7 +6070,7 @@ function renderPostSongResults(list) {
       stopNotePreviewAudio();
       _postDraftMusic = { title: s.title, artist: s.artist || '', audio: s.audio || '', art: s.art || '' };
       updatePostMusicUI();
-      const picker = $('#postSongPicker'); if (picker) picker.classList.add('hidden');
+      const picker = $id('#postSongPicker'); if (picker) picker.classList.add('hidden');
     });
     box.appendChild(item);
   });
@@ -6091,9 +6099,9 @@ async function searchPostSongs(q) {
 }
 
 function renderPostAttachGrid() {
-  const grid = $('#postAttachGrid');
-  const prev = $('#postAttachPreview');
-  const btn = $('#postAttachBtn');
+  const grid = $id('#postAttachGrid');
+  const prev = $id('#postAttachPreview');
+  const btn = $id('#postAttachBtn');
   if (!grid || !prev) return;
   State.postAttaches = State.postAttaches || [];
   if (State.postAttaches.length === 0) {
@@ -6120,23 +6128,23 @@ window._removePostAttach = (idx) => {
 };
 
 function bindFeedComposer() {
-  $('#postAttachBtn').addEventListener('click', () => $('#postFileInput').click());
-  const pmBtn = $('#postMusicBtn');
+  $id('#postAttachBtn').addEventListener('click', () => $id('#postFileInput').click());
+  const pmBtn = $id('#postMusicBtn');
   if (pmBtn) pmBtn.addEventListener('click', () => {
-    const picker = $('#postSongPicker'); if (!picker) return;
+    const picker = $id('#postSongPicker'); if (!picker) return;
     const show = picker.classList.contains('hidden');
     picker.classList.toggle('hidden', !show);
-    if (show) { renderPostSongResults([]); setTimeout(() => $('#postSongSearch')?.focus(), 80); }
+    if (show) { renderPostSongResults([]); setTimeout(() => $id('#postSongSearch')?.focus(), 80); }
     else stopNotePreviewAudio();
   });
-  const pmRemove = $('#postMusicRemove');
+  const pmRemove = $id('#postMusicRemove');
   if (pmRemove) pmRemove.addEventListener('click', () => { _postDraftMusic = null; updatePostMusicUI(); stopNotePreviewAudio(); });
-  const pmSearch = $('#postSongSearch');
+  const pmSearch = $id('#postSongSearch');
   if (pmSearch) pmSearch.addEventListener('input', () => {
     clearTimeout(_postSearchTimer);
     _postSearchTimer = setTimeout(() => searchPostSongs(pmSearch.value), 350);
   });
-  $('#postFileInput').addEventListener('change', async (e) => {
+  $id('#postFileInput').addEventListener('change', async (e) => {
     const files = Array.from(e.target.files || []); e.target.value = '';
     if (files.length === 0) return;
     State.postAttaches = State.postAttaches || [];
@@ -6152,15 +6160,15 @@ function bindFeedComposer() {
       // more than they can draw it to a canvas, so the thumbnail would
       // otherwise show as a broken image even once upload succeeds.
       if (isHeicFile(f)) {
-        const st0 = $('#postAttachStatus'); if (st0) st0.textContent = 'Converting ' + f.name + '…';
+        const st0 = $id('#postAttachStatus'); if (st0) st0.textContent = 'Converting ' + f.name + '…';
         f = await convertHeicIfNeeded(f);
       }
       const localUrl = URL.createObjectURL(f);
       const tempItem = { localUrl, name: f.name };
       State.postAttaches.push(tempItem);
       renderPostAttachGrid();
-      const st = $('#postAttachStatus'); if (st) st.textContent = 'Uploading ' + f.name + '…';
-      const pr = $('#postAttachProgress'); if (pr) pr.style.width = '20%';
+      const st = $id('#postAttachStatus'); if (st) st.textContent = 'Uploading ' + f.name + '…';
+      const pr = $id('#postAttachProgress'); if (pr) pr.style.width = '20%';
       try {
         const res = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => { if (pr) pr.style.width = p + '%'; } });
         tempItem.url = res.url;
@@ -6181,23 +6189,23 @@ function bindFeedComposer() {
       renderPostAttachGrid();
     }
   });
-  $('#postCancelAttachBtn').addEventListener('click', clearPostAttach);
-  $('#postSubmitBtn').addEventListener('click', async () => {
-    const text = $('#postInput').value.trim();
+  $id('#postCancelAttachBtn').addEventListener('click', clearPostAttach);
+  $id('#postSubmitBtn').addEventListener('click', async () => {
+    const text = $id('#postInput').value.trim();
     const validAttaches = (State.postAttaches || []).filter(a => a.url);
     if (!text && validAttaches.length === 0) { toast('Write something or attach up to 3 photos', 'error'); return; }
-    const btn = $('#postSubmitBtn');
+    const btn = $id('#postSubmitBtn');
     btn.disabled = true;
     try {
       const images = validAttaches.map(a => a.url);
       const imageUrl = images[0] || null;
-      const chk = $('#postScratchCheckbox');
+      const chk = $id('#postScratchCheckbox');
       const isScratch = !!(chk && chk.checked);
       await api('/posts/create', { method: 'POST', body: { text, imageUrl, images, isScratch, music: _postDraftMusic } });
-      $('#postInput').value = '';
+      $id('#postInput').value = '';
       if (chk) chk.checked = false;
       _postDraftMusic = null; updatePostMusicUI();
-      const picker = $('#postSongPicker'); if (picker) picker.classList.add('hidden');
+      const picker = $id('#postSongPicker'); if (picker) picker.classList.add('hidden');
       clearPostAttach();
       lastPostsSignature = null; // force next loadPosts() to re-render even if list becomes empty
       loadPosts();
@@ -6212,8 +6220,8 @@ function clearPostAttach() {
   State.postAttach = null;
   State.postAttaches = [];
   renderPostAttachGrid();
-  const st = $('#postAttachStatus'); if (st) st.textContent = '';
-  const pr = $('#postAttachProgress'); if (pr) pr.style.width = '0%';
+  const st = $id('#postAttachStatus'); if (st) st.textContent = '';
+  const pr = $id('#postAttachProgress'); if (pr) pr.style.width = '0%';
 }
 
 // ====== Profile ======
@@ -6296,13 +6304,13 @@ async function uploadPermanentImage(file, { kind = 'avatar', maxDim = 600, quali
 }
 
 function bindProfile() {
-  $('#profilePhotoBtn').addEventListener('click', () => $('#profilePhotoInput').click());
-  $('#profilePhotoInput').addEventListener('change', async (e) => {
+  $id('#profilePhotoBtn').addEventListener('click', () => $id('#profilePhotoInput').click());
+  $id('#profilePhotoInput').addEventListener('change', async (e) => {
     let f = e.target.files && e.target.files[0]; e.target.value = '';
     if (!f) return;
     if (!isImageFile(f)) { toast('Only images', 'error'); return; }
     if (f.size > 15 * 1024 * 1024) { toast('Max 15MB', 'error'); return; }
-    const status = $('#profilePhotoStatus');
+    const status = $id('#profilePhotoStatus');
     if (isHeicFile(f)) { status.textContent = 'Converting…'; f = await convertHeicIfNeeded(f); }
     status.textContent = 'Uploading 0%';
     try {
@@ -6319,10 +6327,10 @@ function bindProfile() {
     } catch (err) { status.textContent = ''; toast('Upload failed: ' + (err.message || ''), 'error'); }
   });
 
-  $('#profileForm').addEventListener('submit', async (e) => {
+  $id('#profileForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const status = $('#profileStatus');
+    const status = $id('#profileStatus');
     const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true;
     status.textContent = '';
@@ -6345,16 +6353,16 @@ function bindProfile() {
 
 // ====== Schedule ======
 function bindSchedule() {
-  $('#scheduleBtn').addEventListener('click', openSchedule);
-  $('#scheduleOpenBtn').addEventListener('click', openSchedule);
-  $$('[data-close-modal]').forEach(b => b.addEventListener('click', () => $('#scheduleModal').classList.add('hidden')));
-  $('#scheduleModal').addEventListener('click', (e) => {
-    if (e.target.id === 'scheduleModal') $('#scheduleModal').classList.add('hidden');
+  $id('#scheduleBtn').addEventListener('click', openSchedule);
+  $id('#scheduleOpenBtn').addEventListener('click', openSchedule);
+  $$('[data-close-modal]').forEach(b => b.addEventListener('click', () => $id('#scheduleModal').classList.add('hidden')));
+  $id('#scheduleModal').addEventListener('click', (e) => {
+    if (e.target.id === 'scheduleModal') $id('#scheduleModal').classList.add('hidden');
   });
-  $('#scheduleSubmit').addEventListener('click', async () => {
-    const text = $('#scheduleText').value.trim();
-    const when = $('#scheduleAt').value;
-    const err = $('#scheduleError');
+  $id('#scheduleSubmit').addEventListener('click', async () => {
+    const text = $id('#scheduleText').value.trim();
+    const when = $id('#scheduleAt').value;
+    const err = $id('#scheduleError');
     err.textContent = '';
     if (!text) { err.textContent = 'Message required'; return; }
     if (!when) { err.textContent = 'Pick a date/time'; return; }
@@ -6364,7 +6372,7 @@ function bindSchedule() {
       await api('/messages/schedule', { method: 'POST', body: {
         roomId: State.currentRoom.id, text, deliverAt: ts
       }});
-      $('#scheduleText').value = ''; $('#scheduleAt').value = '';
+      $id('#scheduleText').value = ''; $id('#scheduleAt').value = '';
       toast('Scheduled!', 'success');
       loadScheduled();
     } catch (e) { err.textContent = e.message || 'Failed'; }
@@ -6372,16 +6380,16 @@ function bindSchedule() {
 }
 
 function openSchedule() {
-  $('#scheduleModal').classList.remove('hidden');
+  $id('#scheduleModal').classList.remove('hidden');
   refreshIcons();
   const d = new Date(Date.now() + 60 * 60 * 1000);
   const pad = n => String(n).padStart(2, '0');
-  $('#scheduleAt').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  $id('#scheduleAt').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   loadScheduled();
 }
 
 async function loadScheduled() {
-  const list = $('#scheduleList');
+  const list = $id('#scheduleList');
   list.innerHTML = '<li class="muted small">Loading…</li>';
   try {
     const data = await api('/messages/scheduled');
@@ -6412,10 +6420,10 @@ async function loadScheduled() {
 
 // ====== Lightbox ======
 function openLightbox(url, uploaderName) {
-  $('#lightboxImg').src = url;
-  $('#lightboxUploader').textContent = uploaderName ? ('Shared by ' + uploaderName) : '';
-  $('#lightboxDownload').href = url;
-  const lb = $('#lightbox');
+  $id('#lightboxImg').src = url;
+  $id('#lightboxUploader').textContent = uploaderName ? ('Shared by ' + uploaderName) : '';
+  $id('#lightboxDownload').href = url;
+  const lb = $id('#lightbox');
   lb.classList.remove('hidden');
   const inner = lb.querySelector('.lightbox-inner');
   if (inner) motionAnimate(inner,
@@ -6431,8 +6439,8 @@ function openLightbox(url, uploaderName) {
 let _notifData = { notifications: [], unread: 0 };
 
 async function openNotifications() {
-  const sheet = $('#notifSheet');
-  const list = $('#notifList');
+  const sheet = $id('#notifSheet');
+  const list = $id('#notifList');
   list.innerHTML = '<li class="notif-empty"><div class="ico"><i data-lucide="bell"></i></div><div>Loading…</div></li>';
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
@@ -6458,11 +6466,11 @@ async function openNotifications() {
 }
 
 function closeNotifications() {
-  $('#notifSheet').classList.add('hidden');
+  $id('#notifSheet').classList.add('hidden');
 }
 
 function renderNotifications() {
-  const list = $('#notifList');
+  const list = $id('#notifList');
   list.innerHTML = '';
   const items = _notifData.notifications || [];
   if (items.length === 0) {
@@ -6621,9 +6629,9 @@ async function pollRTCSignals() {
 
 /* ====== Settings sheet ====== */
 function ensurePrivateAccountSettingRow() {
-  let row = $('#settingsPrivateAccountRow');
+  let row = $id('#settingsPrivateAccountRow');
   if (row) return row;
-  const anchor = $('#settingsEditProfile');
+  const anchor = $id('#settingsEditProfile');
   const strip = anchor && anchor.parentElement;
   if (!strip) return null;
   row = document.createElement('label');
@@ -6642,7 +6650,7 @@ function ensurePrivateAccountSettingRow() {
 function syncPrivateAccountToggle() {
   const row = ensurePrivateAccountSettingRow();
   if (!row) return;
-  const toggle = $('#privateAccountToggle');
+  const toggle = $id('#privateAccountToggle');
   const hint = row.querySelector('.settings-toggle-hint');
   const isPrivate = !!(State.user && State.user.isPrivate);
   if (toggle) toggle.checked = isPrivate;
@@ -6650,7 +6658,7 @@ function syncPrivateAccountToggle() {
   if (hint) hint.textContent = isPrivate ? 'Followers only' : 'Anyone can view';
 }
 function openSettings() {
-  const sheet = $('#settingsSheet');
+  const sheet = $id('#settingsSheet');
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
   if (card) motionAnimate(card,
@@ -6661,7 +6669,7 @@ function openSettings() {
   const stored = localStorage.getItem('ps_theme') || 'auto';
   ensurePrivateAccountSettingRow();
   syncPrivateAccountToggle();
-  const cvs = $('#cardVisibilitySelect'); if (cvs && State.user) cvs.value = State.user.cardVisibility || 'everyone';
+  const cvs = $id('#cardVisibilitySelect'); if (cvs && State.user) cvs.value = State.user.cardVisibility || 'everyone';
   $$('#settingsSheet [data-theme-set]').forEach(b => b.classList.toggle('active', b.dataset.themeSet === stored));
   const accent = localStorage.getItem('ps_accent') || '#00a2ff';
   $$('#settingsSheet [data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === accent));
@@ -6672,10 +6680,10 @@ function openSettings() {
   refreshIcons();
 }
 function closeSettings() {
-  $('#settingsSheet').classList.add('hidden');
+  $id('#settingsSheet').classList.add('hidden');
 }
 function updatePushStatus() {
-  const el = $('#pushStatus');
+  const el = $id('#pushStatus');
   if (!el) return;
   if (!('Notification' in window)) {
     el.textContent = 'Unsupported'; el.className = 'settings-chip';
@@ -6687,7 +6695,7 @@ function updatePushStatus() {
   }
 }
 function updateRealtimeStatus() {
-  const el = $('#rtStatus');
+  const el = $id('#rtStatus');
   if (!el) return;
   if (typeof _sseConnected !== 'undefined' && _sseConnected) {
     el.textContent = _sseNeedsPollingBackstop ? 'Live+Polling' : 'Live';
@@ -6697,17 +6705,17 @@ function updateRealtimeStatus() {
   }
 }
 function bindSettingsSheet() {
-  const open = $('#topSettingsBtn');
+  const open = $id('#topSettingsBtn');
   if (open) open.addEventListener('click', openSettings);
   // Profile-page gear (moved here when we removed the top-bar gear, IG-style)
-  const pset = $('#profileSettingsBtn');
+  const pset = $id('#profileSettingsBtn');
   if (pset) pset.addEventListener('click', openSettings);
   $$('[data-close-settings]').forEach(b => b.addEventListener('click', closeSettings));
-  const push = $('#enablePushBtn');
+  const push = $id('#enablePushBtn');
   if (push) push.addEventListener('click', togglePushSubscription);
-  const vipBtn = $('#vipActivateBtn');
+  const vipBtn = $id('#vipActivateBtn');
   if (vipBtn) vipBtn.addEventListener('click', async () => {
-    const inp = $('#vipKeyInput');
+    const inp = $id('#vipKeyInput');
     const key = (inp && inp.value || '').trim();
     if (!key) { toast('Enter VIP key', 'error'); return; }
     vipBtn.disabled = true;
@@ -6730,14 +6738,14 @@ function bindSettingsSheet() {
     } catch (e) { toast(e.message || 'Invalid VIP key', 'error'); }
     finally { vipBtn.disabled = false; vipBtn.textContent = old; }
   });
-  const ep = $('#settingsEditProfile');
+  const ep = $id('#settingsEditProfile');
   if (ep) ep.addEventListener('click', () => {
     closeSettings();
     switchTab('profile');
-    setTimeout(() => { const btn = $('#editProfileBtn'); if (btn) btn.click(); }, 200);
+    setTimeout(() => { const btn = $id('#editProfileBtn'); if (btn) btn.click(); }, 200);
   });
   const privateRow = ensurePrivateAccountSettingRow();
-  const privateToggle = $('#privateAccountToggle');
+  const privateToggle = $id('#privateAccountToggle');
   if (privateToggle && !privateToggle.dataset.bound) {
     privateToggle.dataset.bound = '1';
     privateToggle.addEventListener('change', async () => {
@@ -6752,7 +6760,7 @@ function bindSettingsSheet() {
         syncPrivateAccountToggle();
         hydrateMeChips();
         if (State.currentTab === 'profile') renderOwnProfile();
-        if (State.currentTab === 'search') renderSearch($('#searchInput')?.value || '');
+        if (State.currentTab === 'search') renderSearch($id('#searchInput')?.value || '');
         if (!nextValue) State.followRequests = [];
         updateFollowRequestsBanner();
         loadFollowRequests(true).catch(() => {});
@@ -6775,7 +6783,7 @@ function bindSettingsSheet() {
       if (privateToggle && !privateToggle.disabled) privateToggle.click();
     });
   }
-  const cvs = $('#cardVisibilitySelect');
+  const cvs = $id('#cardVisibilitySelect');
   if (cvs) {
     cvs.value = (State.user && State.user.cardVisibility) || 'everyone';
     cvs.addEventListener('change', async () => {
@@ -6789,16 +6797,16 @@ function bindSettingsSheet() {
       finally { cvs.disabled = false; }
     });
   }
-  const savedPosts = $('#settingsSavedPosts');
+  const savedPosts = $id('#settingsSavedPosts');
   if (savedPosts) savedPosts.addEventListener('click', openSavedPostsSheet);
-  const vt = $('#settingsViewTerms');
+  const vt = $id('#settingsViewTerms');
   if (vt) vt.addEventListener('click', () => {
     closeSettings();
-    const m = $('#termsModal');
+    const m = $id('#termsModal');
     m.classList.remove('hidden');
     refreshIcons();
   });
-  const lo = $('#settingsLogout');
+  const lo = $id('#settingsLogout');
   if (lo) lo.addEventListener('click', () => {
     if (confirm('Sign out of PRIV SPACA?')) { closeSettings(); logout(false); }
   });
@@ -6806,7 +6814,7 @@ function bindSettingsSheet() {
 }
 
 function updateCloseFriendsStatus() {
-  const el = $('#closeFriendsCount');
+  const el = $id('#closeFriendsCount');
   if (!el) return;
   el.textContent = String((State.closeFriends || []).length || 0);
 }
@@ -6824,7 +6832,7 @@ async function loadCloseFriends() {
   }
 }
 function openCloseFriendsSheet() {
-  const sheet = $('#closeFriendsSheet');
+  const sheet = $id('#closeFriendsSheet');
   if (!sheet) return;
   renderCloseFriendsSheet();
   sheet.classList.remove('hidden');
@@ -6836,7 +6844,7 @@ function openCloseFriendsSheet() {
   refreshIcons();
 }
 function closeCloseFriendsSheet() {
-  const sheet = $('#closeFriendsSheet');
+  const sheet = $id('#closeFriendsSheet');
   if (sheet) sheet.classList.add('hidden');
 }
 async function toggleCloseFriend(targetId) {
@@ -6852,13 +6860,13 @@ async function toggleCloseFriend(targetId) {
   }
 }
 function renderCloseFriendsSheet() {
-  const list = $('#closeFriendsList');
+  const list = $id('#closeFriendsList');
   if (!list) return;
   const meId = State.user && State.user.id;
-  const q = ($('#cfSearchInput')?.value || '').trim().toLowerCase();
+  const q = ($id('#cfSearchInput')?.value || '').trim().toLowerCase();
   const selectedCount = (State.closeFriends || []).length;
 
-  const summary = $('#cfSummaryRow');
+  const summary = $id('#cfSummaryRow');
   if (summary) {
     summary.innerHTML = selectedCount > 0
       ? `<span class="cf-summary-count"><i data-lucide="star"></i> ${selectedCount} close friend${selectedCount === 1 ? '' : 's'}</span>`
@@ -6915,7 +6923,7 @@ function getOwnActiveStories() {
   return getStorySequence(State.user.id).slice().reverse();
 }
 function openStoryManageSheet() {
-  const sheet = $('#storyManageSheet');
+  const sheet = $id('#storyManageSheet');
   if (!sheet) return;
   renderStoryManageSheet();
   sheet.classList.remove('hidden');
@@ -6927,7 +6935,7 @@ function openStoryManageSheet() {
   refreshIcons();
 }
 function closeStoryManageSheet() {
-  const sheet = $('#storyManageSheet');
+  const sheet = $id('#storyManageSheet');
   if (sheet) sheet.classList.add('hidden');
 }
 function hoursUntilExpiry(story) {
@@ -6939,8 +6947,8 @@ function hoursUntilExpiry(story) {
 }
 
 function renderStoryManageSheet() {
-  const list = $('#storyManageList');
-  const countLbl = $('#storyManageCountLbl');
+  const list = $id('#storyManageList');
+  const countLbl = $id('#storyManageCountLbl');
   if (!list) return;
   const stories = getOwnActiveStories();
   if (countLbl) countLbl.textContent = stories.length ? `${stories.length} active` : '';
@@ -7069,21 +7077,21 @@ async function deleteStoryItem(postId) {
 function bindCloseFriendsAndStoryManage() {
   $$('[data-close-close-friends]').forEach(b => b.addEventListener('click', closeCloseFriendsSheet));
   $$('[data-close-story-manage]').forEach(b => b.addEventListener('click', closeStoryManageSheet));
-  const cf = $('#settingsCloseFriends');
+  const cf = $id('#settingsCloseFriends');
   if (cf) cf.addEventListener('click', () => { closeSettings(); openCloseFriendsSheet(); });
-  const ms = $('#settingsManageStories');
+  const ms = $id('#settingsManageStories');
   if (ms) ms.addEventListener('click', () => { closeSettings(); openStoryManageSheet(); });
-  const smb = $('#storyManageBtn');
+  const smb = $id('#storyManageBtn');
   if (smb) smb.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openStoryManageSheet(); });
-  const smc = $('#storyManageCreateBtn');
+  const smc = $id('#storyManageCreateBtn');
   if (smc) smc.addEventListener('click', () => { closeStoryManageSheet(); openStoryCreator(); });
-  const cfSearch = $('#cfSearchInput');
+  const cfSearch = $id('#cfSearchInput');
   if (cfSearch) cfSearch.addEventListener('input', () => renderCloseFriendsSheet());
 }
 
 function bindNotifSheet() {
   $$('[data-close-notif]').forEach(b => b.addEventListener('click', closeNotifications));
-  const clr = $('#notifClearBtn');
+  const clr = $id('#notifClearBtn');
   if (clr) clr.addEventListener('click', async () => {
     if (!confirm('Clear all notifications?')) return;
     try {
@@ -7101,10 +7109,10 @@ function bindNotifSheet() {
 let _activeOtherProfile = null;
 
 function ensurePrivateProfileNotice() {
-  let notice = $('#upPrivateNotice');
+  let notice = $id('#upPrivateNotice');
   if (notice) return notice;
   const body = $('#userProfileSheet .up-body');
-  const grid = $('#upPostsGrid');
+  const grid = $id('#upPostsGrid');
   if (!body || !grid) return null;
   notice = document.createElement('div');
   notice.id = 'upPrivateNotice';
@@ -7117,53 +7125,53 @@ async function openUserProfile(userId) {
   if (!userId || userId === (State.user && State.user.id)) {
     switchTab('profile'); return;
   }
-  const sheet = $('#userProfileSheet');
+  const sheet = $id('#userProfileSheet');
   sheet.classList.remove('hidden');
   springIn(sheet);
   // Show skeleton
-  $('#upHeaderUsername').textContent = 'Loading…';
-  $('#upDisplayName').textContent = '';
-  $('#upBio').textContent = '';
-  $('#upStatPosts').textContent = '·';
-  $('#upStatFollowers').textContent = '·';
-  $('#upStatFollowing').textContent = '·';
-  $('#upPostsGrid').innerHTML = '';
+  $id('#upHeaderUsername').textContent = 'Loading…';
+  $id('#upDisplayName').textContent = '';
+  $id('#upBio').textContent = '';
+  $id('#upStatPosts').textContent = '·';
+  $id('#upStatFollowers').textContent = '·';
+  $id('#upStatFollowing').textContent = '·';
+  $id('#upPostsGrid').innerHTML = '';
   const privateNotice = ensurePrivateProfileNotice();
   if (privateNotice) privateNotice.classList.add('hidden');
-  renderAvatar($('#upAvatar'), null);
+  renderAvatar($id('#upAvatar'), null);
   try {
     const data = await api('/user/' + encodeURIComponent(userId) + '/profile');
     _activeOtherProfile = data;
     renderOtherProfile(data);
   } catch (e) {
-    $('#upDisplayName').textContent = e.message || 'Could not load profile';
+    $id('#upDisplayName').textContent = e.message || 'Could not load profile';
     _activeOtherProfile = null;
   }
   refreshIcons();
 }
 
 function closeUserProfile() {
-  $('#userProfileSheet').classList.add('hidden');
+  $id('#userProfileSheet').classList.add('hidden');
   _activeOtherProfile = null;
 }
 
 function renderOtherProfile(data) {
   const u = data.user;
   const profileLocked = !!(data.relationship && data.relationship.profileLocked);
-  $('#upHeaderUsername').innerHTML = displayNameWithProfileBadges(u, '@' + u.username, 'inline');
-  $('#upDisplayName').textContent = u.displayName || '';
-  $('#upBio').textContent = u.bio || '';
-  $('#upStatPosts').textContent = String(u.postsCount || 0);
-  $('#upStatFollowers').textContent = String(u.followers || 0);
-  $('#upStatFollowing').textContent = String(u.following || 0);
-  renderAvatar($('#upAvatar'), u);
+  $id('#upHeaderUsername').innerHTML = displayNameWithProfileBadges(u, '@' + u.username, 'inline');
+  $id('#upDisplayName').textContent = u.displayName || '';
+  $id('#upBio').textContent = u.bio || '';
+  $id('#upStatPosts').textContent = String(u.postsCount || 0);
+  $id('#upStatFollowers').textContent = String(u.followers || 0);
+  $id('#upStatFollowing').textContent = String(u.following || 0);
+  renderAvatar($id('#upAvatar'), u);
   const privateNotice = ensurePrivateProfileNotice();
   if (privateNotice) {
     privateNotice.innerHTML = `<span class="private-profile-lock"><i data-lucide="lock"></i></span><strong>This profile is private</strong><span>Follow ${escapeHtml(u.username || 'this user')} to see their posts, followers, stories and profile card.</span>`;
     privateNotice.classList.toggle('hidden', !profileLocked);
   }
   // Follow button
-  const fb = $('#upFollowBtn');
+  const fb = $id('#upFollowBtn');
   const requestedByMe = !!(data.relationship && data.relationship.requestedByMe);
   if (data.relationship.iFollow) {
     fb.textContent = 'Following';
@@ -7205,7 +7213,7 @@ function renderOtherProfile(data) {
     finally { fb.disabled = false; }
   };
   // Message
-  const mb = $('#upMessageBtn');
+  const mb = $id('#upMessageBtn');
   if (mb) {
     mb.style.display = profileLocked ? 'none' : '';
     mb.onclick = () => {
@@ -7214,7 +7222,7 @@ function renderOtherProfile(data) {
       openDM(member); switchTab('chat');
     };
   }
-  const cb = $('#upCardBtn');
+  const cb = $id('#upCardBtn');
   if (cb) {
     const canCard = !profileLocked && (!u.card || u.card.canView !== false);
     cb.style.display = profileLocked ? 'none' : '';
@@ -7223,7 +7231,7 @@ function renderOtherProfile(data) {
     cb.onclick = () => { if (canCard) openProfileCard(data, u); };
   }
   // Posts grid
-  const grid = $('#upPostsGrid');
+  const grid = $id('#upPostsGrid');
   grid.innerHTML = '';
   if (profileLocked) {
     // The notice above the grid is the primary UI; keep the grid empty.
@@ -7288,9 +7296,9 @@ function buildGridCell(p) {
 }
 
 function bindUserProfileSheet() {
-  const back = $('#upBackBtn');
+  const back = $id('#upBackBtn');
   if (back) back.addEventListener('click', closeUserProfile);
-  const more = $('#upMoreBtn');
+  const more = $id('#upMoreBtn');
   if (more) more.addEventListener('click', () => {
     if (!_activeOtherProfile) return;
     const u = _activeOtherProfile.user;
@@ -7349,9 +7357,9 @@ function formatProfileDob(dob) {
 function profileCardFromUser(user, profileData = null) {
   const u = (profileData && profileData.user) || user || State.user || {};
   const c = (u && u.card) || {};
-  const postsCount = Number(c.postsCount ?? u.postsCount ?? $('#statPosts')?.textContent ?? 0) || 0;
-  const followers = Number(c.followers ?? u.followers ?? $('#statFollowers')?.textContent ?? 0) || 0;
-  const following = Number(c.following ?? u.following ?? $('#statFollowing')?.textContent ?? 0) || 0;
+  const postsCount = Number(c.postsCount ?? u.postsCount ?? $id('#statPosts')?.textContent ?? 0) || 0;
+  const followers = Number(c.followers ?? u.followers ?? $id('#statFollowers')?.textContent ?? 0) || 0;
+  const following = Number(c.following ?? u.following ?? $id('#statFollowing')?.textContent ?? 0) || 0;
   return {
     user: u,
     canView: c.canView !== false,
@@ -7363,8 +7371,8 @@ function profileCardFromUser(user, profileData = null) {
 function openProfileCard(profileData = null, fallbackUser = null) {
   const data = profileCardFromUser(fallbackUser || (profileData && profileData.user) || State.user, profileData);
   const u = data.user || {};
-  const sheet = $('#profileCardSheet');
-  const mount = $('#profileCardMount');
+  const sheet = $id('#profileCardSheet');
+  const mount = $id('#profileCardMount');
   if (!sheet || !mount) return;
   if (!data.canView) {
     toast('This profile card is private', 'info');
@@ -7422,7 +7430,7 @@ function openProfileCard(profileData = null, fallbackUser = null) {
   refreshIcons();
 }
 function closeProfileCard() {
-  const sheet = $('#profileCardSheet');
+  const sheet = $id('#profileCardSheet');
   if (sheet) sheet.classList.add('hidden');
 }
 function isSafeUrlForCss(url) {
@@ -7469,7 +7477,7 @@ function buildProfileCardTile(profileData = null, fallbackUser = null) {
   return tile;
 }
 function renderProfileCardGrid(profileData = null, fallbackUser = null) {
-  const grid = $('#profilePostsGrid');
+  const grid = $id('#profilePostsGrid');
   if (!grid) return;
   grid.innerHTML = '';
   grid.appendChild(buildProfileCardTile(profileData, fallbackUser || State.user));
@@ -7524,7 +7532,7 @@ function mergeProfilePosts(primary, fallback, user = State.user) {
 function renderOwnProfileFromCache() {
   if (!State.user || State.currentTab !== 'profile') return;
   if (_profileTab === 'card') return;
-  const grid = $('#profilePostsGrid');
+  const grid = $id('#profilePostsGrid');
   if (!grid) return;
   const cached = mergeProfilePosts([], State.posts || [], State.user);
   if (!cached.length) return;
@@ -7539,11 +7547,11 @@ function renderOwnProfileFromCache() {
 async function renderOwnProfile() {
   if (!State.user) return;
   const cachedUsername = State.user.username || State.user.displayName || 'me';
-  const titleU = $('#profileTitleUsername');
+  const titleU = $id('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
   if (titleU) titleU.innerHTML = displayNameWithProfileBadges(State.user, cachedUsername, 'title');
-  if ($('#profileDisplayName')) $('#profileDisplayName').textContent = State.user.displayName || '';
-  if ($('#profileUsername')) $('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
+  if ($id('#profileDisplayName')) $id('#profileDisplayName').textContent = State.user.displayName || '';
+  if ($id('#profileUsername')) $id('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
   // so the grid does not feel slow or blank while /users and /posts load.
   if (_profileTab === 'card') {
@@ -7566,19 +7574,19 @@ async function renderOwnProfile() {
       try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
     }
     const realUsername = u.username || State.user.username || cachedUsername;
-    $('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
-    $('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
+    $id('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
+    $id('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
     if (titleU) titleU.innerHTML = displayNameWithProfileBadges(u, realUsername, 'title');
-    const mb = $('#profileMoodBubble');
+    const mb = $id('#profileMoodBubble');
     if (mb) {
       const note = activeNote(u);
       mb.innerHTML = note ? escapeHtml(note.text).slice(0, 30) : 'Current<br/>mood...';
     }
-    $('#profileBio').textContent = u.bio || '';
-    renderAvatar($('#profileAvatarPreview'), u);
+    $id('#profileBio').textContent = u.bio || '';
+    renderAvatar($id('#profileAvatarPreview'), u);
     renderDiscoverPeople();
     // Grid
-    const grid = $('#profilePostsGrid');
+    const grid = $id('#profilePostsGrid');
     grid.innerHTML = '';
     if (_profileTab === 'card') {
       updateOwnProfileStatCounts({ ...u, postsCount: u.postsCount || ((data.posts || []).length) });
@@ -7633,9 +7641,9 @@ function updateOwnProfileStatCounts(profileUser) {
   const ownFollowingIdsCount = Array.isArray(State.user && State.user.following) ? State.user.following.length : 0;
   const followerCount = Math.max(Number(profileUser && profileUser.followers) || 0, followerIdsCount, ownFollowerIdsCount, lists.followers.length);
   const followingCount = Math.max(Number(profileUser && profileUser.following) || 0, followingIdsCount, ownFollowingIdsCount, lists.following.length);
-  const sp = $('#statPosts'); if (sp) sp.textContent = String(postsCount);
-  const sf = $('#statFollowers'); if (sf) sf.textContent = String(followerCount);
-  const sg = $('#statFollowing'); if (sg) sg.textContent = String(followingCount);
+  const sp = $id('#statPosts'); if (sp) sp.textContent = String(postsCount);
+  const sf = $id('#statFollowers'); if (sf) sf.textContent = String(followerCount);
+  const sg = $id('#statFollowing'); if (sg) sg.textContent = String(followingCount);
 }
 
 async function openProfileRelationSheet(kind) {
@@ -7646,9 +7654,9 @@ async function openProfileRelationSheet(kind) {
   const lists = profileRelationLists();
   const rows = kind === 'following' ? lists.following : lists.followers;
   const title = kind === 'following' ? 'Following' : 'Followers';
-  const statEl = kind === 'following' ? $('#statFollowing') : $('#statFollowers');
+  const statEl = kind === 'following' ? $id('#statFollowing') : $id('#statFollowers');
   if (statEl) statEl.textContent = String(Math.max(Number(statEl.textContent) || 0, rows.length));
-  const existing = $('#profileRelationSheet');
+  const existing = $id('#profileRelationSheet');
   if (existing) existing.remove();
   const sheet = document.createElement('div');
   sheet.id = 'profileRelationSheet';
@@ -7663,7 +7671,7 @@ async function openProfileRelationSheet(kind) {
       <div class="profile-relation-list" id="profileRelationList"></div>
     </div>`;
   document.body.appendChild(sheet);
-  const list = $('#profileRelationList');
+  const list = $id('#profileRelationList');
   if (!rows.length) {
     list.innerHTML = `<div class="profile-relation-empty">No ${title.toLowerCase()} yet</div>`;
   } else {
@@ -7691,7 +7699,7 @@ async function openProfileRelationSheet(kind) {
           row.remove();
           updateOwnProfileStatCounts(State.user);
           const remaining = list.querySelectorAll('.profile-relation-row').length;
-          const sg = $('#statFollowing'); if (sg) sg.textContent = String(remaining);
+          const sg = $id('#statFollowing'); if (sg) sg.textContent = String(remaining);
           if (!remaining) list.innerHTML = '<div class="profile-relation-empty">No following yet</div>';
           renderDiscoverPeople();
         } catch (e) { rm.disabled = false; rm.textContent = 'Remove'; toast(e.message || 'Remove failed', 'error'); }
@@ -7699,23 +7707,23 @@ async function openProfileRelationSheet(kind) {
       list.appendChild(row);
     });
   }
-  $('#profileRelationClose').addEventListener('click', () => sheet.remove());
+  $id('#profileRelationClose').addEventListener('click', () => sheet.remove());
   sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
   refreshIcons();
 }
 
 function renderDiscoverPeople() {
-  const box = $('#profileDiscoverList');
+  const box = $id('#profileDiscoverList');
   if (!box || !State.user) return;
   box.innerHTML = '';
   const meId = State.user.id;
   const myFollowing = new Set(State.user.following || []);
   const suggested = (State.members || []).filter(m => m.id !== meId && !myFollowing.has(m.id)).slice(0, 10);
   if (suggested.length === 0) {
-    const sec = $('#profileDiscoverSection'); if (sec) sec.style.display = 'none';
+    const sec = $id('#profileDiscoverSection'); if (sec) sec.style.display = 'none';
     return;
   }
-  const sec = $('#profileDiscoverSection'); if (sec) sec.style.display = '';
+  const sec = $id('#profileDiscoverSection'); if (sec) sec.style.display = '';
   suggested.forEach(m => {
     const card = document.createElement('div');
     card.className = 'discover-card';
@@ -7752,29 +7760,29 @@ function renderDiscoverPeople() {
 }
 
 function bindProfileView() {
-  const pap = $('#profileAddPostBtn');
+  const pap = $id('#profileAddPostBtn');
   if (pap) pap.addEventListener('click', openPostComposer);
-  const pas = $('#profileAddStoryBtn');
+  const pas = $id('#profileAddStoryBtn');
   if (pas) pas.addEventListener('click', openPostComposer);
-  const pan = $('#profileAddNoteBtn');
+  const pan = $id('#profileAddNoteBtn');
   if (pan) pan.addEventListener('click', openNoteModal);
-  const pmb = $('#profileMoodBubble');
+  const pmb = $id('#profileMoodBubble');
   if (pmb) pmb.addEventListener('click', openNoteModal);
-  const dtb = $('#discoverToggleBtn');
+  const dtb = $id('#discoverToggleBtn');
   if (dtb) dtb.addEventListener('click', () => {
-    const sec = $('#profileDiscoverSection');
+    const sec = $id('#profileDiscoverSection');
     if (sec) sec.style.display = sec.style.display === 'none' ? '' : 'none';
   });
-  const dsa = $('#discoverSeeAllBtn');
+  const dsa = $id('#discoverSeeAllBtn');
   if (dsa) dsa.addEventListener('click', () => switchTab('search'));
   // Edit toggle
-  const edit = $('#editProfileBtn');
+  const edit = $id('#editProfileBtn');
   if (edit) edit.addEventListener('click', () => {
-    $('#profileViewMode').classList.add('hidden');
-    $('#profileEditMode').classList.remove('hidden');
-    renderAvatar($('#profileEditAvatar'), State.user);
+    $id('#profileViewMode').classList.add('hidden');
+    $id('#profileEditMode').classList.remove('hidden');
+    renderAvatar($id('#profileEditAvatar'), State.user);
     // Populate form
-    const f = $('#profileForm');
+    const f = $id('#profileForm');
     if (f) {
       const dn = f.querySelector('[name="displayName"]');
       const un = f.querySelector('[name="username"]');
@@ -7785,16 +7793,16 @@ function bindProfileView() {
       if (bio) bio.value = State.user.bio || '';
       if (dob) dob.value = State.user.dateOfBirth || '';
     }
-    springIn($('#profileEditMode'));
+    springIn($id('#profileEditMode'));
   });
-  const cancel = $('#cancelEditBtn');
+  const cancel = $id('#cancelEditBtn');
   if (cancel) cancel.addEventListener('click', () => {
-    $('#profileEditMode').classList.add('hidden');
-    $('#profileViewMode').classList.remove('hidden');
-    springIn($('#profileViewMode'));
+    $id('#profileEditMode').classList.add('hidden');
+    $id('#profileViewMode').classList.remove('hidden');
+    springIn($id('#profileViewMode'));
   });
   // Share
-  const sh = $('#shareProfileBtn');
+  const sh = $id('#shareProfileBtn');
   if (sh) sh.addEventListener('click', async () => {
     const url = location.origin + '/#user=' + encodeURIComponent(State.user.username);
     try {
@@ -7813,14 +7821,14 @@ function bindProfileView() {
   $$('.stat-btn[data-stat]').forEach(btn => btn.addEventListener('click', () => {
     const stat = btn.dataset.stat;
     if (stat === 'followers' || stat === 'following') openProfileRelationSheet(stat);
-    else if (stat === 'posts') $('#profilePostsGrid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else if (stat === 'posts') $id('#profilePostsGrid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
 }
 
 // ===== Search =====
 function bindSearch() {
-  const inp = $('#searchInput');
-  const clear = $('#searchClearBtn');
+  const inp = $id('#searchInput');
+  const clear = $id('#searchClearBtn');
   if (!inp) return;
   const unlock = () => {
     if (!inp.readOnly) return;
@@ -7849,7 +7857,7 @@ function bindSearch() {
 }
 
 function renderSearch(query) {
-  const list = $('#searchResults');
+  const list = $id('#searchResults');
   if (!list) return;
   list.innerHTML = '';
   const meId = State.user && State.user.id;
@@ -7941,28 +7949,28 @@ function renderSearch(query) {
 }
 
 function bindLightbox() {
-  $('#lightboxClose').addEventListener('click', closeLightbox);
-  $('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
+  $id('#lightboxClose').addEventListener('click', closeLightbox);
+  $id('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (!$('#lightbox').classList.contains('hidden')) closeLightbox();
-      if (!$('#scheduleModal').classList.contains('hidden')) $('#scheduleModal').classList.add('hidden');
-      if (!$('#termsModal').classList.contains('hidden')) $('#termsModal').classList.add('hidden');
-      if (!$('#commentsSheet').classList.contains('hidden')) closeCommentsSheet();
-      if (!$('#notifSheet').classList.contains('hidden')) closeNotifications();
-      if (!$('#settingsSheet').classList.contains('hidden')) closeSettings();
-      if (!$('#closeFriendsSheet').classList.contains('hidden')) closeCloseFriendsSheet();
-      if (!$('#storyManageSheet').classList.contains('hidden')) closeStoryManageSheet();
-      if (!$('#userProfileSheet').classList.contains('hidden')) closeUserProfile();
-      if (!$('#storyViewer').classList.contains('hidden')) closeStory();
+      if (!$id('#lightbox').classList.contains('hidden')) closeLightbox();
+      if (!$id('#scheduleModal').classList.contains('hidden')) $id('#scheduleModal').classList.add('hidden');
+      if (!$id('#termsModal').classList.contains('hidden')) $id('#termsModal').classList.add('hidden');
+      if (!$id('#commentsSheet').classList.contains('hidden')) closeCommentsSheet();
+      if (!$id('#notifSheet').classList.contains('hidden')) closeNotifications();
+      if (!$id('#settingsSheet').classList.contains('hidden')) closeSettings();
+      if (!$id('#closeFriendsSheet').classList.contains('hidden')) closeCloseFriendsSheet();
+      if (!$id('#storyManageSheet').classList.contains('hidden')) closeStoryManageSheet();
+      if (!$id('#userProfileSheet').classList.contains('hidden')) closeUserProfile();
+      if (!$id('#storyViewer').classList.contains('hidden')) closeStory();
       const mm = document.querySelector('.more-menu'); if (mm) mm.remove();
     }
   });
 }
 
 function closeLightbox() {
-  $('#lightbox').classList.add('hidden');
-  $('#lightboxImg').src = '';
+  $id('#lightbox').classList.add('hidden');
+  $id('#lightboxImg').src = '';
 }
 
 // ====== Init ======
@@ -7973,7 +7981,7 @@ async function loadAll() {
 
 /* ====== Toast with Undo button ====== */
 function undoToast(msg, onUndo, durationMs = 6000) {
-  const t = $('#toast');
+  const t = $id('#toast');
   t.innerHTML = `<span>${escapeHtml(msg)}</span><button class="toast-undo">UNDO</button>`;
   t.className = 'toast with-undo';
   t.classList.remove('hidden');
@@ -8091,7 +8099,7 @@ function updateMetaThemeColor(accentHex) {
 function bindThemeToggle() {
   $$('[data-theme-set]').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.themeSet)));
   $$('[data-accent]').forEach(b => b.addEventListener('click', () => setAccent(b.dataset.accent)));
-  const inst = $('#installAppBtn');
+  const inst = $id('#installAppBtn');
   if (inst) inst.addEventListener('click', showInstallPrompt);
   // React to OS theme change when in auto mode
   if (window.matchMedia) {
@@ -8363,12 +8371,12 @@ function bindInstallPrompt() {
     e.preventDefault();
     _installPrompt = e;
     // Show our own "Install app" button in the profile view (added in HTML)
-    const btn = $('#installAppBtn');
+    const btn = $id('#installAppBtn');
     if (btn) btn.classList.remove('hidden');
   });
   window.addEventListener('appinstalled', () => {
     _installPrompt = null;
-    const btn = $('#installAppBtn');
+    const btn = $id('#installAppBtn');
     if (btn) btn.classList.add('hidden');
     toast('Installed! Find PRIV SPACA on your home screen.', 'success');
   });
@@ -8393,20 +8401,21 @@ async function showInstallPrompt() {
 }
 
 
-window.addEventListener('resize', updateChatThreadChrome);
+let _resizeRaf;
+window.addEventListener('resize', () => { if (!_resizeRaf) _resizeRaf = requestAnimationFrame(() => { _resizeRaf = null; updateChatThreadChrome(); }); });
 
 window.addEventListener('error', (e) => {
-  const splash = $('#splash');
-  const authHidden = $('#authShell') && $('#authShell').classList.contains('hidden');
-  const appHidden = $('#appShell') && $('#appShell').classList.contains('hidden');
+  const splash = $id('#splash');
+  const authHidden = $id('#authShell') && $id('#authShell').classList.contains('hidden');
+  const appHidden = $id('#appShell') && $id('#appShell').classList.contains('hidden');
   if (splash && !splash.classList.contains('hidden') && authHidden && appHidden) {
     try { showAuth(); toast('Startup recovered. Please continue.', 'info'); } catch (_) {}
   }
 });
 window.addEventListener('unhandledrejection', () => {
-  const splash = $('#splash');
-  const authHidden = $('#authShell') && $('#authShell').classList.contains('hidden');
-  const appHidden = $('#appShell') && $('#appShell').classList.contains('hidden');
+  const splash = $id('#splash');
+  const authHidden = $id('#authShell') && $id('#authShell').classList.contains('hidden');
+  const appHidden = $id('#appShell') && $id('#appShell').classList.contains('hidden');
   if (splash && !splash.classList.contains('hidden') && authHidden && appHidden) {
     try { showAuth(); } catch (_) {}
   }
@@ -8509,7 +8518,7 @@ installAudioPauseGuard();
 
 
 function boot() {
-  const yr = $('#yr');
+  const yr = $id('#yr');
   if (yr) yr.textContent = String(new Date().getFullYear());
 
   // v68-improved self-heal: detect both API unreachability AND stale SW/app
@@ -8521,9 +8530,9 @@ function boot() {
   // Hard anti-stuck guard: if any startup/network/cache problem leaves the splash
   // visible, move to the login screen instead of showing an endless loader.
   startupFallback = setTimeout(() => {
-    const splash = $('#splash');
-    const authHidden = $('#authShell') && $('#authShell').classList.contains('hidden');
-    const appHidden = $('#appShell') && $('#appShell').classList.contains('hidden');
+    const splash = $id('#splash');
+    const authHidden = $id('#authShell') && $id('#authShell').classList.contains('hidden');
+    const appHidden = $id('#appShell') && $id('#appShell').classList.contains('hidden');
     if (splash && !splash.classList.contains('hidden') && authHidden && appHidden) {
       try { showAuth(); } catch (_) { splash.classList.add('hidden'); }
       toast('Startup was slow. Showing login screen now.', 'info');
@@ -8646,25 +8655,25 @@ let _rtcInitialized = false;
 function initWebRTC() {
   if (_rtcInitialized) return;
   _rtcInitialized = true;
-  const callBtn = $('#rtcCallBtn');
-  const chooser = $('#rtcCallChooser');
+  const callBtn = $id('#rtcCallBtn');
+  const chooser = $id('#rtcCallChooser');
   if (callBtn && chooser) {
     callBtn.addEventListener('click', (e) => { e.stopPropagation(); chooser.classList.toggle('hidden'); refreshIcons(); });
     document.addEventListener('click', (e) => { if (!chooser.contains(e.target) && e.target !== callBtn) chooser.classList.add('hidden'); });
   }
-  const btnAudio = $('#rtcAudioBtn');
-  const btnVideo = $('#rtcVideoBtn');
-  if (btnAudio) btnAudio.addEventListener('click', () => { if ($('#rtcCallChooser')) $('#rtcCallChooser').classList.add('hidden'); startCall(false); });
-  if (btnVideo) btnVideo.addEventListener('click', () => { if ($('#rtcCallChooser')) $('#rtcCallChooser').classList.add('hidden'); startCall(true); });
-  const btnAccept = $('#rtcAcceptBtn');
-  const btnReject = $('#rtcRejectBtn');
+  const btnAudio = $id('#rtcAudioBtn');
+  const btnVideo = $id('#rtcVideoBtn');
+  if (btnAudio) btnAudio.addEventListener('click', () => { if ($id('#rtcCallChooser')) $id('#rtcCallChooser').classList.add('hidden'); startCall(false); });
+  if (btnVideo) btnVideo.addEventListener('click', () => { if ($id('#rtcCallChooser')) $id('#rtcCallChooser').classList.add('hidden'); startCall(true); });
+  const btnAccept = $id('#rtcAcceptBtn');
+  const btnReject = $id('#rtcRejectBtn');
   if (btnAccept) btnAccept.addEventListener('click', acceptCall);
   if (btnReject) btnReject.addEventListener('click', rejectOrEndCall);
   // In-call controls
-  const muteBtn = $('#callMuteBtn');
-  const speakerBtn = $('#callSpeakerBtn');
-  const videoToggleBtn = $('#callVideoToggleBtn');
-  const flipBtn = $('#callFlipBtn');
+  const muteBtn = $id('#callMuteBtn');
+  const speakerBtn = $id('#callSpeakerBtn');
+  const videoToggleBtn = $id('#callVideoToggleBtn');
+  const flipBtn = $id('#callFlipBtn');
   if (muteBtn) muteBtn.addEventListener('click', toggleMute);
   if (speakerBtn) speakerBtn.addEventListener('click', toggleSpeaker);
   if (videoToggleBtn) videoToggleBtn.addEventListener('click', toggleVideoUpgrade);
@@ -8673,32 +8682,32 @@ function initWebRTC() {
 
 // ---- Call UI state machine ----
 function showCallUI(status, user, incoming) {
-  const overlay = $('#callOverlay');
+  const overlay = $id('#callOverlay');
   overlay.classList.remove('hidden', 'video-active');
   _callConnected = false;
   _callConnecting = !incoming;
 
   // Info section
-  $('#callInfo').classList.remove('minimized');
-  $('#callName').textContent = (user.displayName || user.username || 'User');
-  renderAvatar($('#callAvatar'), user);
-  $('#callStatusText').textContent = status;
-  $('#callTimer').classList.add('hidden');
-  $('#callTimer').textContent = '00:00';
-  $('#callVideos').classList.add('hidden');
+  $id('#callInfo').classList.remove('minimized');
+  $id('#callName').textContent = (user.displayName || user.username || 'User');
+  renderAvatar($id('#callAvatar'), user);
+  $id('#callStatusText').textContent = status;
+  $id('#callTimer').classList.add('hidden');
+  $id('#callTimer').textContent = '00:00';
+  $id('#callVideos').classList.add('hidden');
 
   // Reset control button states
   resetCallControlBtns();
 
   // Hide controls during incoming ring so accept/reject buttons fit cleanly on mobile screens
   if (incoming) {
-    $('#callActiveControls').classList.add('hidden');
-    $('#rtcAcceptBtn').classList.remove('hidden');
+    $id('#callActiveControls').classList.add('hidden');
+    $id('#rtcAcceptBtn').classList.remove('hidden');
   } else {
-    $('#callActiveControls').classList.remove('hidden');
-    $('#rtcAcceptBtn').classList.add('hidden');
+    $id('#callActiveControls').classList.remove('hidden');
+    $id('#rtcAcceptBtn').classList.add('hidden');
   }
-  $('#rtcRejectBtn').classList.remove('hidden');
+  $id('#rtcRejectBtn').classList.remove('hidden');
 
   refreshIcons();
 }
@@ -8709,24 +8718,24 @@ function onCallConnected() {
   _callConnecting = false;
   _disarmCallTimeout();
 
-  $('#callStatusText').textContent = 'Connected';
-  $('#callTimer').classList.remove('hidden');
+  $id('#callStatusText').textContent = 'Connected';
+  $id('#callTimer').classList.remove('hidden');
   startCallTimer();
 
   // NOW show the in-call controls
-  $('#callActiveControls').classList.remove('hidden');
-  $('#rtcAcceptBtn').classList.add('hidden'); // hide accept if it was visible
+  $id('#callActiveControls').classList.remove('hidden');
+  $id('#rtcAcceptBtn').classList.add('hidden'); // hide accept if it was visible
 
   // Show video layer if video call
   if (isVideoCall) {
-    $('#callVideos').classList.remove('hidden');
-    $('#callOverlay').classList.add('video-active');
-    $('#callVideoToggleBtn').classList.remove('hidden');
-    $('#callFlipBtn').classList.remove('hidden');
+    $id('#callVideos').classList.remove('hidden');
+    $id('#callOverlay').classList.add('video-active');
+    $id('#callVideoToggleBtn').classList.remove('hidden');
+    $id('#callFlipBtn').classList.remove('hidden');
   } else {
     // Audio call — show camera button so user can upgrade to video
-    $('#callVideoToggleBtn').classList.remove('hidden');
-    $('#callFlipBtn').classList.add('hidden');
+    $id('#callVideoToggleBtn').classList.remove('hidden');
+    $id('#callFlipBtn').classList.add('hidden');
   }
 
   refreshIcons();
@@ -8744,13 +8753,13 @@ function resetCallControlBtns() {
   // exception before signaling even started. [data-lucide] matches both the
   // original <i> placeholder and Lucide's rendered <svg> replacement.
   _callMuted = false; _callSpeakerOn = false; _callFacingMode = 'user';
-  const muteBtn = $('#callMuteBtn');
+  const muteBtn = $id('#callMuteBtn');
   if (muteBtn) { muteBtn.classList.remove('active'); muteBtn.querySelector('[data-lucide]')?.setAttribute('data-lucide', 'mic'); muteBtn.querySelector('span').textContent = 'Mute'; }
-  const speakerBtn = $('#callSpeakerBtn');
+  const speakerBtn = $id('#callSpeakerBtn');
   if (speakerBtn) { speakerBtn.classList.remove('active'); speakerBtn.querySelector('[data-lucide]')?.setAttribute('data-lucide', 'volume-2'); speakerBtn.querySelector('span').textContent = 'Speaker'; }
-  const videoBtn = $('#callVideoToggleBtn');
+  const videoBtn = $id('#callVideoToggleBtn');
   if (videoBtn) { videoBtn.classList.add('hidden'); videoBtn.classList.remove('active'); videoBtn.querySelector('[data-lucide]')?.setAttribute('data-lucide', 'video'); videoBtn.querySelector('span').textContent = 'Camera'; }
-  const flipBtn = $('#callFlipBtn');
+  const flipBtn = $id('#callFlipBtn');
   if (flipBtn) { flipBtn.classList.add('hidden'); }
 }
 
@@ -8811,10 +8820,10 @@ function stopIncomingCallAlert() {
 }
 
 function showVideoCallChrome({ localCamera = false } = {}) {
-  $('#callVideos')?.classList.remove('hidden');
-  $('#callOverlay')?.classList.add('video-active');
-  $('#callVideoToggleBtn')?.classList.remove('hidden');
-  if (localCamera) $('#callFlipBtn')?.classList.remove('hidden');
+  $id('#callVideos')?.classList.remove('hidden');
+  $id('#callOverlay')?.classList.add('video-active');
+  $id('#callVideoToggleBtn')?.classList.remove('hidden');
+  if (localCamera) $id('#callFlipBtn')?.classList.remove('hidden');
 }
 
 async function handleRenegotiationOffer(peerId, signal) {
@@ -8866,7 +8875,7 @@ async function startCall(video) {
       audio: true,
       video: isVideoCall ? { facingMode: _callFacingMode } : false
     });
-    if (isVideoCall) $('#rtcLocalVideo').srcObject = rtcLocalStream;
+    if (isVideoCall) $id('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
     toast('Camera/Microphone access denied.', 'error');
     _callConnecting = false;
@@ -9007,8 +9016,8 @@ async function handleRTCSignal(data) {
 async function acceptCall() {
   if (!window._rtcPendingOffer) { toast('No pending call', 'error'); endCall(false); return; }
   stopIncomingCallAlert();
-  $('#rtcAcceptBtn').classList.add('hidden');
-  $('#callStatusText').textContent = 'Connecting...';
+  $id('#rtcAcceptBtn').classList.add('hidden');
+  $id('#callStatusText').textContent = 'Connecting...';
   _callConnecting = true;
 
   try {
@@ -9016,7 +9025,7 @@ async function acceptCall() {
       audio: true,
       video: isVideoCall ? { facingMode: _callFacingMode } : false
     });
-    if (isVideoCall) $('#rtcLocalVideo').srcObject = rtcLocalStream;
+    if (isVideoCall) $id('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (err) {
     toast('Camera/Microphone access denied.', 'error');
     rejectOrEndCall();
@@ -9049,7 +9058,7 @@ async function acceptCall() {
 function createPeerConnection() {
   rtcPeerConnection = new RTCPeerConnection(ICE_SERVERS);
   rtcRemoteStream = new MediaStream();
-  $('#rtcRemoteVideo').srcObject = rtcRemoteStream;
+  $id('#rtcRemoteVideo').srcObject = rtcRemoteStream;
 
   // Send ICE candidates to peer
   rtcPeerConnection.onicecandidate = (e) => {
@@ -9062,14 +9071,14 @@ function createPeerConnection() {
   rtcPeerConnection.ontrack = (e) => {
     if (e.track) rtcRemoteStream.addTrack(e.track);
     else if (e.streams && e.streams[0]) e.streams[0].getTracks().forEach(track => rtcRemoteStream.addTrack(track));
-    const remoteVid = $('#rtcRemoteVideo');
+    const remoteVid = $id('#rtcRemoteVideo');
     if (remoteVid) {
       remoteVid.srcObject = rtcRemoteStream;
       remoteVid.play().catch(() => {});
     }
     if (isVideoCall) {
-      $('#callVideos').classList.remove('hidden');
-      $('#callOverlay').classList.add('video-active');
+      $id('#callVideos').classList.remove('hidden');
+      $id('#callOverlay').classList.add('video-active');
     }
   };
 
@@ -9092,7 +9101,7 @@ function createPeerConnection() {
         }
       }, 8000);
     } else if (st === 'checking') {
-      $('#callStatusText').textContent = 'Connecting...';
+      $id('#callStatusText').textContent = 'Connecting...';
     }
   };
 }
@@ -9104,7 +9113,7 @@ function toggleMute() {
   if (!tracks.length) return;
   _callMuted = !_callMuted;
   tracks.forEach(t => { t.enabled = !_callMuted; });
-  const btn = $('#callMuteBtn');
+  const btn = $id('#callMuteBtn');
   if (btn) {
     btn.classList.toggle('active', _callMuted);
     btn.querySelector('[data-lucide]')?.setAttribute('data-lucide', _callMuted ? 'mic-off' : 'mic');
@@ -9116,7 +9125,7 @@ function toggleMute() {
 function toggleSpeaker() {
   _callSpeakerOn = !_callSpeakerOn;
   try {
-    const el = $('#rtcRemoteVideo');
+    const el = $id('#rtcRemoteVideo');
     if (el && el.setSinkId) {
       navigator.mediaDevices.enumerateDevices().then(devices => {
         const outs = devices.filter(d => d.kind === 'audiooutput');
@@ -9127,7 +9136,7 @@ function toggleSpeaker() {
       }).catch(() => {});
     }
   } catch (_) {}
-  const btn = $('#callSpeakerBtn');
+  const btn = $id('#callSpeakerBtn');
   if (btn) {
     btn.classList.toggle('active', _callSpeakerOn);
     btn.querySelector('[data-lucide]')?.setAttribute('data-lucide', _callSpeakerOn ? 'volume-x' : 'volume-2');
@@ -9143,7 +9152,7 @@ async function toggleVideoUpgrade() {
     const tracks = rtcLocalStream ? rtcLocalStream.getVideoTracks() : [];
     if (tracks.length) {
       tracks[0].enabled = !tracks[0].enabled;
-      const btn = $('#callVideoToggleBtn');
+      const btn = $id('#callVideoToggleBtn');
       if (btn) {
         btn.classList.toggle('active', !tracks[0].enabled);
         btn.querySelector('[data-lucide]')?.setAttribute('data-lucide', tracks[0].enabled ? 'video' : 'video-off');
@@ -9159,17 +9168,17 @@ async function toggleVideoUpgrade() {
     const vidTrack = vidStream.getVideoTracks()[0];
     if (rtcLocalStream) rtcLocalStream.addTrack(vidTrack);
     const sender = rtcPeerConnection.addTrack(vidTrack, rtcLocalStream);
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+    $id('#rtcLocalVideo').srcObject = rtcLocalStream;
     isVideoCall = true;
     // Re-negotiate
     const offer = await rtcPeerConnection.createOffer();
     await rtcPeerConnection.setLocalDescription(offer);
     sendRTCSignal(rtcCurrentPeer, { type: 'offer', offer, video: true });
     // Show video UI
-    $('#callVideos').classList.remove('hidden');
-    $('#callOverlay').classList.add('video-active');
-    $('#callFlipBtn').classList.remove('hidden');
-    const btn = $('#callVideoToggleBtn');
+    $id('#callVideos').classList.remove('hidden');
+    $id('#callOverlay').classList.add('video-active');
+    $id('#callFlipBtn').classList.remove('hidden');
+    const btn = $id('#callVideoToggleBtn');
     if (btn) { btn.querySelector('[data-lucide]')?.setAttribute('data-lucide', 'video'); btn.querySelector('span').textContent = 'Camera'; }
     refreshIcons();
   } catch (err) {
@@ -9189,7 +9198,7 @@ async function flipCamera() {
     if (sender) await sender.replaceTrack(newTrack);
     rtcLocalStream.removeTrack(oldTrack); oldTrack.stop();
     rtcLocalStream.addTrack(newTrack);
-    $('#rtcLocalVideo').srcObject = rtcLocalStream;
+    $id('#rtcLocalVideo').srcObject = rtcLocalStream;
   } catch (_) {
     _callFacingMode = _callFacingMode === 'user' ? 'environment' : 'user';
     toast('Could not flip camera', 'error');
@@ -9200,7 +9209,7 @@ async function flipCamera() {
 function startCallTimer() {
   _callConnectedAt = Date.now();
   clearInterval(_callTimerInterval);
-  const el = $('#callTimer');
+  const el = $id('#callTimer');
   if (el) el.classList.remove('hidden');
   _callTimerInterval = setInterval(() => {
     if (!el) return;
@@ -9211,7 +9220,7 @@ function startCallTimer() {
 
 function stopCallTimer() {
   clearInterval(_callTimerInterval); _callTimerInterval = null;
-  const el = $('#callTimer');
+  const el = $id('#callTimer');
   if (el) { el.textContent = '00:00'; el.classList.add('hidden'); }
 }
 
@@ -9242,12 +9251,12 @@ function endCall(remote) {
   window._rtcPendingOffer = null;
   window._pendingIceCandidates = null;
   isVideoCall = false;
-  const overlay = $('#callOverlay');
+  const overlay = $id('#callOverlay');
   if (overlay) { overlay.classList.add('hidden'); overlay.classList.remove('video-active'); }
-  const videos = $('#callVideos'); if (videos) videos.classList.add('hidden');
-  const controls = $('#callActiveControls'); if (controls) controls.classList.add('hidden');
-  const localVid = $('#rtcLocalVideo'); if (localVid) localVid.srcObject = null;
-  const remoteVid = $('#rtcRemoteVideo'); if (remoteVid) remoteVid.srcObject = null;
+  const videos = $id('#callVideos'); if (videos) videos.classList.add('hidden');
+  const controls = $id('#callActiveControls'); if (controls) controls.classList.add('hidden');
+  const localVid = $id('#rtcLocalVideo'); if (localVid) localVid.srcObject = null;
+  const remoteVid = $id('#rtcRemoteVideo'); if (remoteVid) remoteVid.srcObject = null;
 }
 
 })();
