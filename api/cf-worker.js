@@ -1577,7 +1577,7 @@ function _pushEvent(userId, kind, data) {
     tursoEnsure().then(() => tursoClient().execute({
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
       args: [evt.id, userId, kind, JSON.stringify(evt), evt.ts],
-    })).catch(() => {});
+    })).catch(e => console.warn('[_pushEvent] turso insert failed:', e && e.message));
   } // Neon events path removed
   return evt;
 }
@@ -3665,19 +3665,26 @@ app.get('/api/stream', async (c) => {
             if (ts > lastSeenTs) lastSeenTs = ts;
             if (!sentIds.has(r.id)) {
               sentIds.add(r.id);
-              const payloadStr = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
-              send(`id: ${r.id}
-event: ${r.kind}
-data: ${payloadStr}
-
-`);
+              // Normalize data format: _pushEvent stores { id, ts, kind, data: <payload> }
+              // while RTC signal handler stores { id, createdAt, fromId, author, signal }.
+              // The client's handleRealtimeEvent expects evt.data to contain the actual
+              // payload. Wrap raw payloads so the format is consistent.
+              let parsed;
+              try { parsed = typeof r.data === 'string' ? JSON.parse(r.data) : (r.data || {}); } catch { parsed = {}; }
+              const sseEvt = (parsed && typeof parsed.data === 'object') ? parsed : {
+                id: r.id,
+                ts: ts || Date.now(),
+                kind: r.kind,
+                data: parsed,
+              };
+              send(`id: ${r.id}\nevent: ${r.kind}\ndata: ${JSON.stringify(sseEvt)}\n\n`);
             }
           }
           if (Math.random() < 0.03) {
             const oldTs = Date.now() - 300_000;
             tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ?', args: [oldTs] }).catch(() => {});
           }
-        } catch (_) {}
+        } catch (e) { console.warn('[SSE primaryPoller] error:', e && e.message); }
       }, 1500) : null;
       const autoclose = setTimeout(() => cleanup(), 24000);
       function cleanup() {

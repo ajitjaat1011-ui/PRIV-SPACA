@@ -3061,6 +3061,13 @@ function disconnectSSE() {
 }
 
 function handleRealtimeEvent(type, evt) {
+  // Defense-in-depth: SSE events from the Turso primaryPoller may arrive in a
+  // "raw" format { id, createdAt, fromId, author, signal } instead of the
+  // _pushEvent wrapper { id, ts, kind, data: { ... } }.  Detect and unwrap so
+  // that evt.data always contains the actual payload regardless of source.
+  if (!evt.data && (evt.signal || evt.fromId || evt.author || evt.message || evt.fromUserId)) {
+    evt.data = Object.assign({}, evt);
+  }
   const data = evt.data || {};
   if (type === 'new_message') {
     const msg = data.message; if (!msg) return;
@@ -6667,10 +6674,8 @@ async function pollRTCSignals() {
       }
       handleRTCSignal(sig);
     });
-  } catch (_) {}
+  } catch (e) { console.warn('[pollRTC] failed:', e && e.message); }
 }
-
-/* ====== Settings sheet ====== */
 function ensurePrivateAccountSettingRow() {
   let row = $id('#settingsPrivateAccountRow');
   if (row) return row;
