@@ -604,7 +604,8 @@ img{user-select:none;-webkit-user-drag:none}
 /* Error / hint text */
 .auth-hint{font-size:12px;color:var(--muted);margin:0;text-align:center;line-height:1.5}
 .auth-error{color:#ed4956;font-size:13px;font-weight:500;min-height:18px;text-align:center;margin:0}
-[data-theme="dark"] .auth-hint{color:#9aa8b6}
+  :root:not([data-theme="light"]) .auth-hint{color:#9aa8b6}
+}
 
 /* === Bottom: "Don't have an account? [Create new account]" === */
 .auth-bottom{
@@ -836,7 +837,6 @@ img{user-select:none;-webkit-user-drag:none}
   animation:brandShineSweep 5.5s ease-in-out infinite;
   animation-delay:1.1s;
 }
-@keyframes brandShineSweep{
   0%, 62%{background-position:180% 0;opacity:0}
   70%{opacity:.95}
   84%{background-position:-80% 0;opacity:.95}

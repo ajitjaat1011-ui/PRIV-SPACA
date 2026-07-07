@@ -14,5 +14,7 @@ wrangler.toml
 .gitlab-ci.yml
 dev-server.js
 logo_PS_concept.png
+# Dead code on Cloudflare (only used for local dev / Express)
+api/index.js
 # Keep original files but exclude from deployment
 # app.js and style.css are replaced by .min.js/.min.css

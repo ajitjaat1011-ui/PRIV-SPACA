@@ -2598,6 +2598,7 @@ app.post('/api/user/heartbeat', requireAuth, async (c) => {
 });
 // ---------- Notes: short 24h status shown on the DM inbox rail ----------
 app.post('/api/user/note', requireAuth, async (c) => {
+  try {
   const body = await c.req.json().catch(() => ({}));
   const db = await fetchDatabase();
   const u = db.users.find(x => x.id === c.get('userId'));
@@ -2609,6 +2610,7 @@ app.post('/api/user/note', requireAuth, async (c) => {
   else { u.note = { text, music, createdAt: nowMs(), expiresAt: nowMs() + 24 * 3600 * 1000 }; }
   await saveDatabase(db, false);
   return c.json({ ok: true, note: activeNote(u) });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 // Normalize an optional song attached to a note (title/artist/preview/art).
 function cleanNoteMusic(m) {
@@ -2781,10 +2783,19 @@ app.post('/api/messages/send', requireAuth, async (c) => {
       }
       if (roomId.startsWith('dm:')) {
         const ownerIds = roomId.slice(3).split(':').filter(Boolean);
+        const dmPreview = { roomId, text: (msg.text || '').slice(0, 120) || (msg.image ? '📷' : msg.audio ? '🎤' : ''), fromMe: true, createdAt: Number(msg.createdAt||0) };
         for (const oid of ownerIds) {
+          const peerId = oid === myId ? (ownerIds.find(x => x !== myId) || myId) : myId;
           stmts.push({
-            sql: 'INSERT INTO ps_dm_index (owner_user_id, peer_user_id, last_message_id, last_message_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner_user_id, peer_user_id) DO UPDATE SET last_message_id=excluded.last_message_id, last_message_at=excluded.last_message_at, updated_at=excluded.updated_at',
-            args: [oid, myId, msg.id, Number(msg.createdAt||0), nowMs()]
+            sql: `INSERT INTO ps_dm_index (owner_user_id, peer_user_id, room_id, created_at, from_me, updated_at, data_json)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(owner_user_id, peer_user_id) DO UPDATE SET
+                    room_id = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.room_id ELSE ps_dm_index.room_id END,
+                    created_at = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.created_at ELSE ps_dm_index.created_at END,
+                    from_me = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.from_me ELSE ps_dm_index.from_me END,
+                    updated_at = excluded.updated_at,
+                    data_json = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.data_json ELSE ps_dm_index.data_json END`,
+            args: [oid, peerId, roomId, Number(msg.createdAt||0), 1, nowMs(), JSON.stringify(dmPreview)]
           });
         }
       }
@@ -2880,6 +2891,7 @@ app.get('/api/messages/scheduled', requireAuth, async (c) => {
   return c.json({ scheduled: list });
 });
 app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
+  try {
   const { id } = await c.req.json().catch(() => ({}));
   if (!id) return c.json({ error: 'id required' }, 400);
   const db = await fetchDatabase();
@@ -2889,6 +2901,7 @@ app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
   db.scheduledMessages.splice(idx, 1);
   await saveDatabase(db, false);
   return c.json({ ok: true });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 
 // ---------- Notifications ----------
@@ -2912,6 +2925,7 @@ app.get('/api/notifications', requireAuth, async (c) => {
   return c.json({ notifications: enriched, unread: enriched.filter(n => !n.seenAt).length });
 });
 app.post('/api/notifications/seen', requireAuth, async (c) => {
+  try {
   const db = await fetchDatabase();
   const now = nowMs();
   let n = 0;
@@ -2926,8 +2940,10 @@ app.post('/api/notifications/seen', requireAuth, async (c) => {
     if (isTursoConfigured()) await tursoUpsertNotifications(touched);
   }
   return c.json({ ok: true, updated: n });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 app.post('/api/notifications/clear', requireAuth, async (c) => {
+  try {
   const db = await fetchDatabase();
   const before = (db.notifications || []).length;
   db.notifications = (db.notifications || []).filter(n => n.userId !== c.get('userId'));
@@ -2936,10 +2952,12 @@ app.post('/api/notifications/clear', requireAuth, async (c) => {
     if (isTursoConfigured()) await tursoClearNotificationsForUser(c.get('userId'));
   }
   return c.json({ ok: true, removed: before - db.notifications.length });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 
 // ---------- Follow / Block ----------
 app.post('/api/user/follow', requireAuth, async (c) => {
+  try {
   const { targetId } = await c.req.json().catch(() => ({}));
   const myId = c.get('userId');
   if (!targetId || targetId === myId) return c.json({ error: 'Invalid target' }, 400);
@@ -2991,6 +3009,7 @@ app.post('/api/user/follow', requireAuth, async (c) => {
     } catch (_) { /* best-effort; don't fail the follow */ }
   }
   return c.json({ ok: true, requested: false, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 app.post('/api/user/unfollow', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
@@ -3068,6 +3087,7 @@ app.post('/api/user/follow-requests/respond', requireAuth, async (c) => {
 });
 
 app.post('/api/user/block', requireAuth, async (c) => {
+  try {
   const { targetId } = await c.req.json().catch(() => ({}));
   const myId = c.get('userId');
   if (!targetId || targetId === myId) return c.json({ error: 'Invalid target' }, 400);
@@ -3092,6 +3112,7 @@ app.post('/api/user/block', requireAuth, async (c) => {
     await tursoUpsertUser(target);
   }
   return c.json({ ok: true });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 app.post('/api/user/unblock', requireAuth, async (c) => {
   const { targetId } = await c.req.json().catch(() => ({}));
@@ -3152,6 +3173,7 @@ app.get('/api/user/:id/profile', requireAuth, async (c) => {
 
 // ---------- Posts ----------
 app.get('/api/posts', requireAuth, async (c) => {
+  try {
   const sdb = await fetchDatabase();
   const sourceUsers = sdb.users || [];
   const sourcePosts = sdb.posts || [];
@@ -3188,6 +3210,7 @@ app.get('/api/posts', requireAuth, async (c) => {
       return base;
     });
   return c.json({ posts: list });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 
 app.post('/api/posts/create', requireAuth, async (c) => {
@@ -3269,6 +3292,7 @@ app.post('/api/posts/create', requireAuth, async (c) => {
 });
 
 app.post('/api/posts/like', requireAuth, async (c) => {
+  try {
   const { postId } = await c.req.json().catch(() => ({}));
   if (!postId) return c.json({ error: 'postId required' }, 400);
   let db = await fetchDatabase();
@@ -3296,6 +3320,7 @@ app.post('/api/posts/like', requireAuth, async (c) => {
     if (notif) await tursoUpsertNotifications([notif]);
   }
   return c.json({ liked, likeCount: post.likes.length });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 
 app.post('/api/rtc/signal', requireAuth, async (c) => {
@@ -3404,6 +3429,7 @@ app.post('/api/posts/comment', requireAuth, async (c) => {
 });
 
 app.post('/api/posts/delete', requireAuth, async (c) => {
+  try {
   const { postId } = await c.req.json().catch(() => ({}));
   if (!postId) return c.json({ error: 'postId required' }, 400);
   let db = await fetchDatabase();
@@ -3415,8 +3441,10 @@ app.post('/api/posts/delete', requireAuth, async (c) => {
   await saveDatabase(db, false, { skipSecondarySync: true });
   if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true, undoUntil: p.deletedAt + 30 * 24 * 3600 * 1000 });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 app.post('/api/posts/restore', requireAuth, async (c) => {
+  try {
   const { postId } = await c.req.json().catch(() => ({}));
   if (!postId) return c.json({ error: 'postId required' }, 400);
   let db = await fetchDatabase();
@@ -3428,12 +3456,14 @@ app.post('/api/posts/restore', requireAuth, async (c) => {
   await saveDatabase(db, false, { skipSecondarySync: true });
   if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 
 // ---------- Story analytics: "Seen by" ----------
 // Record that the current user viewed a story item. Idempotent per viewer.
 // Author never counts as a viewer of their own story.
 app.post('/api/stories/:id/view', requireAuth, async (c) => {
+  try {
   const postId = c.req.param('id');
   const myId = c.get('userId');
   let db = await fetchDatabase();
@@ -3450,10 +3480,12 @@ app.post('/api/stories/:id/view', requireAuth, async (c) => {
   await saveDatabase(db, true); // ephemeral: high-frequency, low-criticality
   if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true, viewCount: p.views.length });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 
 // Owner-only viewer list for a story item (Instagram "Seen by").
 app.get('/api/stories/:id/viewers', requireAuth, async (c) => {
+  try {
   const postId = c.req.param('id');
   const myId = c.get('userId');
   const db = await fetchDatabase();
@@ -3470,6 +3502,7 @@ app.get('/api/stories/:id/viewers', requireAuth, async (c) => {
     return { ...su, at: v.at || 0 };
   });
   return c.json({ viewers, viewCount: viewers.length });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 
 // ---------- Reply to a story (delivered into DMs) ----------
@@ -3718,6 +3751,7 @@ async function fanoutPostToFollowers(post, db) {
 
 // New optimized feed endpoint
 app.get('/api/feed', requireAuth, async (c) => {
+  try {
   const myId = c.get('userId');
   const limit = Math.min(50, Math.max(5, parseInt(c.req.query('limit') || '20')));
   const db = await fetchDatabase();
@@ -3739,6 +3773,7 @@ app.get('/api/feed', requireAuth, async (c) => {
       return { ...p, author: authorObj };
     });
   return c.json({ posts, source: isTursoConfigured() ? 'hybrid-turso-feed' : 'full-db-fallback' });
+  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
 });
 
 // ---------- 404 ----------
