@@ -958,7 +958,6 @@ img{user-select:none;-webkit-user-drag:none}
 .bn-dp-btn .bn-avatar-lg{
   width:38px;height:38px;border-radius:50%;
   background-size:cover;background-position:center;
-  background-color:var(--bg-soft);
   display:inline-flex;align-items:center;justify-content:center;
   color:#fff;font-weight:700;font-size:14px;letter-spacing:.5px;
   border:2.5px solid transparent;transition:all .15s;
