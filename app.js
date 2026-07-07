@@ -3434,15 +3434,15 @@ function renderPosts() {
     }
   });
 
-  // Handle empty state
+  // Handle empty state — liquid glass card
   if (feedPosts.length === 0) {
     list.innerHTML = '';
     const e = document.createElement('div');
-    e.className = 'empty-state';
+    e.className = 'feed-empty-glass';
     e.innerHTML = `
-      <div class="icon"><i data-lucide="newspaper"></i></div>
-      <div class="title">Nothing here yet</div>
-      <div class="sub">Share the first post with the community!</div>
+      <div class="feed-empty-icon"><i data-lucide="sparkles"></i></div>
+      <h3>Start the conversation</h3>
+      <p>Be the first to share something with the community!</p>
     `;
     list.appendChild(e);
     springIn(e);
