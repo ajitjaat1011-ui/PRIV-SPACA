@@ -542,30 +542,8 @@ function hydrateMeChips() {
   if (profileTitle) profileTitle.innerHTML = displayNameWithProfileBadges(State.user, State.user.username || State.user.displayName || 'me', 'title');
   const profileUserLine = $('#profileUsername');
   if (profileUserLine) profileUserLine.innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || State.user.displayName || 'me'), 'inline');
-  // Bottom-nav avatar (uses the same broken-URL detection as renderAvatar)
-  const bn = $('#bnMeAvatar');
-  if (bn) {
-    bn.textContent = '';
-    bn.style.backgroundImage = '';
-    bn.style.backgroundColor = '';
-    const url = State.user.photoUrl;
-    if (url && !_brokenPhotoUrls.has(url)) {
-      bn.style.backgroundImage = `url("${String(url).replace(/"/g, '%22')}")`;
-      const probe = new Image();
-      probe.onerror = () => {
-        _markPhotoBroken(url);
-        const seed = State.user.username || State.user.displayName || State.user.id || '?';
-        bn.style.backgroundImage = '';
-        bn.style.backgroundColor = colorOf(seed);
-        bn.textContent = initialsOf(State.user.displayName || State.user.username);
-      };
-      probe.src = url;
-    } else {
-      const seed = State.user.username || State.user.displayName || State.user.id || '?';
-      bn.style.backgroundColor = colorOf(seed);
-      bn.textContent = initialsOf(State.user.displayName || State.user.username);
-    }
-  }
+  // Bottom-nav avatar — reuse renderAvatar for consistent behavior
+  if ($('#bnMeAvatar')) renderAvatar($('#bnMeAvatar'), State.user);
   const pf = $('#profileForm');
   if (pf) {
     const dn = pf.querySelector('[name="displayName"]');
@@ -6326,6 +6304,9 @@ function bindProfile() {
       const data = await api('/user/update', { method: 'POST', body: { photoUrl: res.url } });
       State.user = data.user;
       localStorage.setItem('ps_user', JSON.stringify(State.user));
+      // Clear broken-photo cache so new avatar always loads
+      _brokenPhotoUrls.delete(res.url);
+      try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {}
       hydrateMeChips();
       status.textContent = res.persisted ? 'Photo updated ✓ (permanent)' : 'Photo updated (inline fallback)';
       toast('Profile photo updated', 'success');
