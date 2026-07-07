@@ -1055,7 +1055,7 @@ function updateTopbarHeader(tab) {
   const appShell = document.getElementById('appShell');
   
   if (tab === 'feed') {
-    if (topbar) topbar.style.display = 'grid';
+    if (topbar) topbar.style.display = 'flex';
     if (appShell) appShell.style.gridTemplateRows = 'auto 1fr';
     if (brand) brand.classList.remove('hidden');
     if (igH) igH.classList.add('hidden');
