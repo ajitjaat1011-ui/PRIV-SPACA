@@ -67,6 +67,8 @@ async function ensureTursoSchema(client) {
       key TEXT PRIMARY KEY,
       count INTEGER NOT NULL,
       reset_at INTEGER NOT NULL,
+      locked_until INTEGER DEFAULT 0,
+      first_at INTEGER DEFAULT 0,
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ps_rate_limits_reset_at ON ps_rate_limits (reset_at);
@@ -89,6 +91,9 @@ async function ensureTursoSchema(client) {
     );
     CREATE INDEX IF NOT EXISTS idx_ps_users_username_lower ON ps_users (username_lower);
     CREATE INDEX IF NOT EXISTS idx_ps_users_email_lower ON ps_users (email_lower);
+    -- UNIQUE constraints prevent TOCTOU on concurrent signups (matches api/index.js tursoEnsure).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_users_username_unique ON ps_users (username_lower);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_users_email_unique ON ps_users (email_lower);
     CREATE TABLE IF NOT EXISTS ps_posts (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,

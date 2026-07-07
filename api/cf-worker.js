@@ -58,7 +58,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 const app = new Hono();
 
 // ---------- Config (refreshed on every request from c.env) ----------
-let JWT_SECRET = 'priv-spaca-dev-secret-change-me';
+// SECURITY: never default to a known public secret. isDefaultJwtSecret() +
+// the global middleware (below) refuses to serve /api/* when this is empty
+// or still the legacy default, so deploys without JWT_SECRET set fail closed.
+let JWT_SECRET = '';
 let GITHUB_PAT = '';
 let TURSO_DATABASE_URL = '';
 let TURSO_AUTH_TOKEN = '';
@@ -111,8 +114,12 @@ function isDefaultJwtSecret() {
   return !JWT_SECRET || JWT_SECRET === 'priv-spaca-dev-secret-change-me';
 }
 function isProductionRequest(c) {
+  // SECURITY: treat any non-localhost request as production. Previously this
+  // only matched *.priv-spaca.pages.dev, leaving custom-domain deploys
+  // vulnerable to JWT forgery using the public default secret.
   const host = new URL(c.req.url).hostname.toLowerCase();
-  return host.endsWith('priv-spaca.pages.dev') || host === 'priv-spaca.pages.dev';
+  if (host === 'localhost' || host === '127.0.0.1') return false;
+  return true;
 }
 
 function loadConfig(env) {
@@ -1616,6 +1623,7 @@ function pushNotification(db, recipientId, kind, fromUserId, extra = {}) {
   if (kind === 'comment') body = `${fromName} commented: ${(notif.text || '').slice(0, 80)}`;
   if (kind === 'follow')  body = `${fromName} started following you`;
   if (kind === 'message') body = `${fromName}: ${(notif.text || '').slice(0, 80)}`;
+  if (kind === 'story_reply') body = `${fromName} replied to your story`;
   if (body) sendWebPush(db, recipientId, { title, body, tag: 'priv-spaca-' + notif.id, url: '/', kind, notifId: notif.id }).catch((err) => {
     // v77-bugfix: Log push failures instead of silently swallowing
     console.warn('[pushNotification:sendWebPush] error for', recipientId, kind, err && err.message);
@@ -2212,8 +2220,21 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     }
     if (!user) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
+    // SECURITY: account lockout check before PIN verify (see /api/auth/login parity).
+    const lock = await checkAccountLock(user.id);
+    if (lock.locked) {
+      c.header('Retry-After', String(Math.ceil(lock.remaining / 1000)));
+      return c.json({ error: 'Too many attempts. Please wait and try again.' }, 429);
+    }
     const pinOk = await bcrypt.compare(pin, user.pinHash);
-    if (!pinOk) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
+    if (!pinOk) {
+      // SECURITY: account lockout must apply to wrong PINs too. Previously
+      // only wrong passwords triggered recordLoginFail, so a small botnet
+      // could brute-force the 4-digit PIN in hours.
+      await recordLoginFail(user.id);
+      await authFailureDelay();
+      return c.json({ error: 'Invalid reset details.' }, 401);
+    }
     const oldHash = user.passwordHash;
     const oldTokenVersion = Number(user.tokenVersion || 0);
     user.passwordHash = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
@@ -2700,6 +2721,19 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     }
 
     const db = await fetchDatabase();
+    // SECURITY: block self-DMs.
+    if (targetUserId && targetUserId === myId) {
+      return c.json({ error: 'Cannot message yourself' }, 400);
+    }
+    // SECURITY: honor block list BEFORE pushing the SSE event for DMs.
+    if (roomId.startsWith('dm:')) {
+      const parts = roomId.slice(3).split(':');
+      const recipId = parts.find(id => id !== myId);
+      const recip = recipId && db.users.find(u => u.id === recipId);
+      if (recip && Array.isArray(recip.blocked) && recip.blocked.includes(myId)) {
+        return c.json({ error: 'Cannot message this user' }, 403);
+      }
+    }
     let replyRef = null;
     if (replyTo && typeof replyTo === 'object' && replyTo.id) {
       replyRef = {
@@ -3249,6 +3283,8 @@ app.post('/api/posts/like', requireAuth, async (c) => {
   const myId = c.get('userId');
   const postAuthor = db.users.find(u => u.id === post.userId);
   if (postAuthor && !canViewerAccessPrivateProfile(postAuthor, myId, db)) return c.json({ error: 'Post unavailable' }, 403);
+  // SECURITY: close-friends stories must not be likeable by non-close-friends.
+  if (isStoryRecord(post) && !canViewerSeeStory(post, myId, db)) return c.json({ error: 'Forbidden' }, 403);
   post.likes = post.likes || [];
   const idx = post.likes.indexOf(myId);
   let liked;
@@ -3272,8 +3308,13 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
   const myId = c.get('userId');
   if (targetId === myId) return c.json({ error: 'Invalid target' }, 400);
   const db = await fetchDatabase();
-  if (!db.users.some(u => u.id === targetId)) return c.json({ error: 'Target not found' }, 404);
+  const target = db.users.find(u => u.id === targetId);
+  if (!target) return c.json({ error: 'Target not found' }, 404);
+  // SECURITY: mutual block check — a blocked user must not be able to call-bomb
+  // the blocker with RTC offers.
   const me = db.users.find(u => u.id === myId);
+  if (me && Array.isArray(me.blocked) && me.blocked.includes(targetId)) return c.json({ error: 'Cannot call this user' }, 403);
+  if (Array.isArray(target.blocked) && target.blocked.includes(myId)) return c.json({ error: 'Cannot call this user' }, 403);
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: myId, displayName: 'Member', username: 'member' };
   const payload = { fromId: myId, author, signal };
   const now = nowMs();
@@ -3346,6 +3387,8 @@ app.post('/api/posts/comment', requireAuth, async (c) => {
   const myId = c.get('userId');
   const postAuthor = db.users.find(u => u.id === post.userId);
   if (postAuthor && !canViewerAccessPrivateProfile(postAuthor, myId, db)) return c.json({ error: 'Post unavailable' }, 403);
+  // SECURITY: same close-friends IDOR fix as /api/posts/like.
+  if (isStoryRecord(post) && !canViewerSeeStory(post, myId, db)) return c.json({ error: 'Forbidden' }, 403);
   post.comments = post.comments || [];
   const author = db.users.find(u => u.id === myId);
   const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
@@ -3460,6 +3503,11 @@ app.post('/api/stories/:id/reply', requireAuth, async (c) => {
   };
   db.messages.push(msg);
   const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
+  // SECURITY: honor block list before delivering the reply.
+  const storyAuthor = db.users.find(u => u.id === p.userId);
+  if (storyAuthor && Array.isArray(storyAuthor.blocked) && storyAuthor.blocked.includes(myId)) {
+    return c.json({ error: 'Cannot reply to this story' }, 403);
+  }
   _pushEvent(p.userId, 'new_message', { roomId, message: enriched });
   const notif = pushNotification(db, p.userId, 'story_reply', myId, { text: bodyText.slice(0, 80), postId: p.id });
   const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true });

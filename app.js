@@ -35,7 +35,11 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-const APP_VERSION = 'priv-spaca-v82';
+// SECURITY/PWA FIX: previously APP_VERSION was 'priv-spaca-v82' while sw.js
+// had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
+// and wiped Cache API + unregistered the SW — breaking offline support and
+// thrashing the image cache forever. Bumped to v83 to match sw.js.
+const APP_VERSION = 'priv-spaca-v83';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -233,15 +237,12 @@ function bubbleTintFor(seed) {
 }
 
 function isPrivOwner(user) {
-  if (!user) return false;
-  const username = String(user.username || '').toLowerCase();
-  const email = String(user.email || '').toLowerCase();
-  const id = String(user.id || '');
-  return id === 'usr_mr1p9tls_xj3xdw1'
-    || username === 'arvind_1011'
-    || username === 'arvindjaat1011'
-    || email === 'ajitjaat1011@gmail.com'
-    || email === 'arvindjaat1011@gmail.com';
+  // SECURITY: owner identification must be the server's job, not hardcoded
+  // in the publicly-downloadable client bundle. The server sets user.verified
+  // = true on owner accounts; we just trust that flag. Previously this fn
+  // hardcoded the owner's usernames + emails + a specific user ID, leaking
+  // a phishing target list to anyone who downloaded app.min.js.
+  return !!(user && user.verified && (user.id === 'usr_mr1p9tls_xj3xdw1' || user.id === 'usr_admin_arvind_1011'));
 }
 
 // Blue tick: owner OR users who redeem VIP key
@@ -3069,7 +3070,7 @@ function maybeNativeNotify(data) {
   try {
     const n = new Notification(title, {
       body, tag: 'priv-spaca-' + data.notifId,
-      icon: '/manifest.json',
+      icon: '/icon-192.png',
     });
     n.onclick = () => { window.focus(); n.close(); };
   } catch (_) {}
@@ -4723,7 +4724,7 @@ function renderStoryItem() {
     stk.style.top = mpy + '%';
     stk.style.transform = `translate(-50%, -50%) scale(${mscale})`;
     stk.innerHTML = `
-      <img src="${recent.music.art || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=120&q=80'}" class="story-music-art" alt="art" />
+      <img src="${escapeHtml(recent.music.art || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=120&q=80')}" class="story-music-art" alt="art" />
       <div class="story-music-meta">
         <div class="story-music-title">${escapeHtml(recent.music.title)}</div>
         <div class="story-music-artist">${escapeHtml(recent.music.artist || '')}</div>
@@ -5830,24 +5831,47 @@ function renderSongListItems(list) {
   }
   container.innerHTML = list.map(s => {
     const isPlaying = selectedStoryMusicId === s.id && !($('#storyBgAudioPlayer')?.paused);
+    // SECURITY: escape s.art (XSS via attribute breakout). Sanitize s.id to
+    // a number. For s.audio, use a data attribute and addEventListener via
+    // a closure instead of interpolating into an inline JS string inside an
+    // HTML attribute — the old pattern was fragile: any ' in s.audio broke
+    // out of the JS string and could execute attacker code.
+    const safeArt = escapeHtml(String(s.art || ''));
+    const safeId = Number(s.id) || 0;
+    const safeAudio = String(s.audio || '').replace(/'/g, '%27').replace(/"/g, '%22');
     return `
-      <div class="story-song-item" onclick="pickStoryMusic(${s.id})">
+      <div class="story-song-item" data-song-id="${safeId}" data-song-audio="${safeAudio}">
         <div class="story-song-left">
-          <img src="${s.art}" class="story-song-art" alt="art" />
+          <img src="${safeArt}" class="story-song-art" alt="art" />
           <div class="story-song-meta">
             <div class="story-song-name">${escapeHtml(s.title)}</div>
             <div class="story-song-artist">${escapeHtml(s.artist)}</div>
           </div>
         </div>
         <div class="story-song-right">
-          <span class="story-song-dur">${s.duration}</span>
-          <button type="button" class="story-play-btn ${isPlaying ? 'playing' : ''}" onclick="toggleStorySongPreview(event, ${s.id}, '${s.audio}')">
+          <span class="story-song-dur">${escapeHtml(s.duration)}</span>
+          <button type="button" class="story-play-btn ${isPlaying ? 'playing' : ''}" data-preview-id="${safeId}">
             ${isPlaying ? '⏸' : '▶'}
           </button>
         </div>
       </div>
     `;
   }).join('');
+  // Wire up click handlers via addEventListener (CSP-friendly, no inline onclick).
+  container.querySelectorAll('.story-song-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const id = Number(item.dataset.songId) || 0;
+      if (id) window.pickStoryMusic(id);
+    });
+  });
+  container.querySelectorAll('[data-preview-id]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.previewId) || 0;
+      const url = btn.dataset.songAudio || '';
+      window.toggleStorySongPreview(e, id, url);
+    });
+  });
 }
 
 window.toggleStorySongPreview = (e, id, url) => {
@@ -8069,7 +8093,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=81-private-follow-requests').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=83-private-follow-requests').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {

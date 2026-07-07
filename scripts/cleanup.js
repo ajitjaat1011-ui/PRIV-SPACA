@@ -1,8 +1,19 @@
-// Full cleanup: remove wire_* test users + their stale data + clean up follower/following lists
-const { createClient } = require('@libsql/client');
-const TURSO = 'libsql://priv-spaca-test-ajitjaat1011-ui.aws-ap-south-1.turso.io';
-const TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODMwMDIwNDUsImlkIjoiMDE5ZjIzMzMtZWYwMS03MDZjLTliMjgtMzAxN2JkNGRiMzg0Iiwia2lkIjoienVDWHBCUlUtOU1paW1aOW45NlhYRUJyRzdUU0U3Y1JJWG4zbE5rQUxzWSIsInJpZCI6ImZhZWI5ODQ1LWFmY2YtNDBkNy05MTQ3LTQxYmQ0ZTNjOThhOCJ9.QC4XCoH8yfu0br39fhLbuCZcQQP4O2k0-QLnenGrCj8otlasu30W3kkHLWMXPBvYkupbrVxGpBfH1TLroVwmDA';
+// Full cleanup: remove wire_* test users + their stale data + clean up follower/following lists.
+// SAFETY: requires --yes (default is dry-run). Reads Turso creds from env vars only.
 const fs = require('fs');
+const { createClient } = require('@libsql/client');
+
+const TURSO = process.env.TURSO_DATABASE_URL || '';
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN || '';
+if (!TURSO || !TURSO_TOKEN) {
+  console.error('Refusing to run: TURSO_DATABASE_URL and TURSO_AUTH_TOKEN env vars are required.');
+  console.error('This script is destructive — set both env vars explicitly so you never');
+  console.error('accidentally target the wrong database.');
+  process.exit(2);
+}
+const DRY_RUN = !process.argv.includes('--yes');
+if (DRY_RUN) console.log('=== DRY RUN MODE — no data will be modified. Re-run with --yes to apply. ===\n');
+
 const BACKUP = `backups/full-cleanup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
 
 (async () => {
@@ -17,65 +28,67 @@ const BACKUP = `backups/full-cleanup-${new Date().toISOString().replace(/[:.]/g,
   console.log('Test user IDs to remove:', testIds);
   console.log('Real user IDs to keep:', [...realIds]);
 
-  // Step 2: dump full backup
-  const backup = { users: [], posts: [], messages: [], notifications: [], dm_index: [], kv: null, deletedTestUsers: testIds };
-  for (const t of ['ps_users', 'ps_posts', 'ps_messages', 'ps_notifications', 'ps_dm_index']) {
-    const rs = await c.execute(`SELECT * FROM ${t}`);
-    backup[t.replace('ps_','')] = rs.rows.map(r => {
-      const o = {};
-      for (const k of Object.keys(r)) o[k] = r[k];
-      return o;
-    });
+  // Step 2: dump full backup (all structured tables + ps_kv blob)
+  const backup = { users: [], posts: [], messages: [], notifications: [], dm_index: [], user_feeds: [], events: [], kv: null, deletedTestUsers: testIds };
+  for (const t of ['ps_users', 'ps_posts', 'ps_messages', 'ps_notifications', 'ps_dm_index', 'ps_user_feeds', 'ps_events']) {
+    try {
+      const rs = await c.execute(`SELECT * FROM ${t}`);
+      backup[t.replace('ps_','')] = rs.rows.map(r => {
+        const o = {};
+        for (const k of Object.keys(r)) o[k] = r[k];
+        return o;
+      });
+    } catch (e) { console.warn(`  (skip ${t}: ${e.message})`); }
   }
-  const kv = await c.execute("SELECT value FROM ps_kv WHERE key = 'db'");
-  if (kv.rows.length) backup.kv = JSON.parse(String(kv.rows[0].value));
+  try {
+    const kv = await c.execute("SELECT value FROM ps_kv WHERE key = 'db'");
+    if (kv.rows.length) backup.kv = JSON.parse(String(kv.rows[0].value));
+  } catch (_) {}
   fs.writeFileSync(BACKUP, JSON.stringify(backup, null, 2));
   console.log('Backup written to', BACKUP);
 
-  // Step 3: wipe test user rows
+  if (DRY_RUN) {
+    console.log('\n=== DRY RUN COMPLETE — no changes made. Re-run with --yes to apply. ===');
+    return;
+  }
+
+  // Step 3: wipe test user rows — batched in a single transaction per user so
+  // a crash mid-script can't leave orphaned rows.
   for (const id of testIds) {
-    await c.execute({ sql: 'DELETE FROM ps_users WHERE id = ?', args: [id] });
-    await c.execute({ sql: 'DELETE FROM ps_posts WHERE user_id = ?', args: [id] });
-    await c.execute({ sql: 'DELETE FROM ps_messages WHERE user_id = ?', args: [id] });
-    await c.execute({ sql: 'DELETE FROM ps_notifications WHERE user_id = ? OR from_user_id = ?', args: [id, id] });
-    await c.execute({ sql: 'DELETE FROM ps_dm_index WHERE owner_user_id = ? OR peer_user_id = ?', args: [id, id] });
-    await c.execute({ sql: 'DELETE FROM ps_events WHERE user_id = ?', args: [id] });
+    await c.batch([
+      { sql: 'DELETE FROM ps_users WHERE id = ?', args: [id] },
+      { sql: 'DELETE FROM ps_posts WHERE user_id = ?', args: [id] },
+      { sql: 'DELETE FROM ps_messages WHERE user_id = ?', args: [id] },
+      { sql: 'DELETE FROM ps_notifications WHERE user_id = ? OR from_user_id = ?', args: [id, id] },
+      { sql: 'DELETE FROM ps_dm_index WHERE owner_user_id = ? OR peer_user_id = ?', args: [id, id] },
+      { sql: 'DELETE FROM ps_user_feeds WHERE user_id = ?', args: [id] },
+      { sql: 'DELETE FROM ps_events WHERE user_id = ?', args: [id] },
+    ], 'write');
   }
   console.log('Wiped', testIds.length, 'test users');
 
-  // Step 4: clean up stale follower/following/blocked IDs in the surviving users
-  // This is the critical fix — drop any ID that no longer exists
+  // Step 4: clean up ALL dangling social-graph arrays in surviving users.
+  // Previously this loop missed `closeFriends`. Now covers all 5 arrays.
+  const SOCIAL_ARRAY_FIELDS = ['followers', 'following', 'followedBy', 'blocked', 'closeFriends'];
   const rs = await c.execute('SELECT id, data_json FROM ps_users');
   for (const r of rs.rows) {
     const u = JSON.parse(String(r.data_json));
     let changed = false;
-    if (Array.isArray(u.followers)) {
-      const before = u.followers.length;
-      u.followers = u.followers.filter(id => realIds.has(String(id)));
-      if (u.followers.length !== before) changed = true;
-    }
-    if (Array.isArray(u.following)) {
-      const before = u.following.length;
-      u.following = u.following.filter(id => realIds.has(String(id)));
-      if (u.following.length !== before) changed = true;
-    }
-    if (Array.isArray(u.followedBy)) {
-      const before = u.followedBy.length;
-      u.followedBy = u.followedBy.filter(id => realIds.has(String(id)));
-      if (u.followedBy.length !== before) changed = true;
-    }
-    if (Array.isArray(u.blocked)) {
-      const before = u.blocked.length;
-      u.blocked = u.blocked.filter(id => realIds.has(String(id)));
-      if (u.blocked.length !== before) changed = true;
+    for (const field of SOCIAL_ARRAY_FIELDS) {
+      if (Array.isArray(u[field])) {
+        const before = u[field].length;
+        u[field] = u[field].filter(id => realIds.has(String(id)));
+        if (u[field].length !== before) changed = true;
+      }
     }
     if (changed) {
-      await c.execute({ sql: 'UPDATE ps_users SET data_json = ? WHERE id = ?', args: [JSON.stringify(u), String(r.id)] });
-      console.log(`  Cleaned ${r.id.slice(0,15)}: followers=${u.followers.length} following=${u.following.length} blocked=${(u.blocked||[]).length}`);
+      await c.execute({ sql: 'UPDATE ps_users SET data_json = ?, updated_at = ? WHERE id = ?', args: [JSON.stringify(u), Date.now(), String(r.id)] });
+      console.log(`  Cleaned ${r.id.slice(0,15)}: followers=${u.followers?.length||0} following=${u.following?.length||0} blocked=${u.blocked?.length||0} closeFriends=${u.closeFriends?.length||0}`);
     }
   }
 
-  // Step 5: also clean posts that reference missing users (e.g. likes by wiped users)
+  // Step 5: also clean posts that reference missing users (likes by wiped users,
+  // comments by wiped users).
   const posts = await c.execute('SELECT id, data_json FROM ps_posts');
   for (const r of posts.rows) {
     const p = JSON.parse(String(r.data_json));
@@ -91,28 +104,33 @@ const BACKUP = `backups/full-cleanup-${new Date().toISOString().replace(/[:.]/g,
       if (p.comments.length !== before) changed = true;
     }
     if (changed) {
-      await c.execute({ sql: 'UPDATE ps_posts SET data_json = ? WHERE id = ?', args: [JSON.stringify(p), String(r.id)] });
-      console.log(`  Cleaned post ${String(r.id).slice(0,15)}: likes=${p.likes.length} comments=${p.comments.length}`);
+      await c.execute({ sql: 'UPDATE ps_posts SET data_json = ?, updated_at = ? WHERE id = ?', args: [JSON.stringify(p), Date.now(), String(r.id)] });
     }
   }
 
-  // Step 6: also rebuild ps_kv mirror
+  // Step 6: rebuild ps_kv mirror — include ALL collections (users, posts,
+  // messages, notifications) so cf-worker.js reading from ps_kv stays consistent
+  // with the structured tables.
   const kv2 = await c.execute("SELECT value FROM ps_kv WHERE key = 'db'");
   if (kv2.rows.length) {
     const db = JSON.parse(String(kv2.rows[0].value));
     db.users = (db.users || []).filter(u => realIds.has(String(u.id)));
     for (const u of db.users) {
-      if (Array.isArray(u.followers)) u.followers = u.followers.filter(id => realIds.has(String(id)));
-      if (Array.isArray(u.following)) u.following = u.following.filter(id => realIds.has(String(id)));
-      if (Array.isArray(u.blocked)) u.blocked = u.blocked.filter(id => realIds.has(String(id)));
+      for (const field of SOCIAL_ARRAY_FIELDS) {
+        if (Array.isArray(u[field])) u[field] = u[field].filter(id => realIds.has(String(id)));
+      }
     }
-    db.posts = (db.posts || []).map(p => {
+    db.posts = (db.posts || []).filter(p => realIds.has(String(p.userId))).map(p => {
       if (Array.isArray(p.likes)) p.likes = p.likes.filter(id => realIds.has(String(id)));
       if (Array.isArray(p.comments)) p.comments = p.comments.filter(c => !c.userId || realIds.has(String(c.userId)));
       return p;
     });
+    // Previously this script skipped messages + notifications in the ps_kv rebuild,
+    // leaving ghost DMs/notifications that cf-worker.js would resurrect from ps_kv.
+    db.messages = (db.messages || []).filter(m => realIds.has(String(m.userId)));
+    db.notifications = (db.notifications || []).filter(n => realIds.has(String(n.userId)) && realIds.has(String(n.fromUserId)));
     await c.execute({ sql: "UPDATE ps_kv SET value = ?, updated_at = ? WHERE key = 'db'", args: [JSON.stringify(db), Date.now()] });
-    console.log('ps_kv mirror cleaned');
+    console.log('ps_kv mirror cleaned (users + posts + messages + notifications)');
   }
   // Final summary
   const final = await c.execute("SELECT username_lower, id, data_json FROM ps_users");
@@ -121,4 +139,4 @@ const BACKUP = `backups/full-cleanup-${new Date().toISOString().replace(/[:.]/g,
     const d = JSON.parse(r.data_json);
     console.log(`  ${r.username_lower} (${String(r.id).slice(0,15)}): followers=${(d.followers||[]).length} following=${(d.following||[]).length}`);
   }
-})();
+})().catch(e => { console.error('FATAL:', e); process.exit(1); });
