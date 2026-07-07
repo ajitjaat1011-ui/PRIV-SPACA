@@ -953,6 +953,19 @@ img{user-select:none;-webkit-user-drag:none}
   border:1.5px solid transparent;transition:border .15s;
 }
 .bn-btn.active .bn-avatar{border-color:var(--text)}
+/* Centered DP button in bottom nav (Instagram-style) */
+.bn-dp-btn{padding:0!important;display:flex;align-items:center;justify-content:center}
+.bn-dp-btn .bn-avatar-lg{
+  width:38px;height:38px;border-radius:50%;
+  background-size:cover;background-position:center;
+  background-color:var(--bg-soft);
+  display:inline-flex;align-items:center;justify-content:center;
+  color:#fff;font-weight:700;font-size:14px;letter-spacing:.5px;
+  border:2.5px solid transparent;transition:all .15s;
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+}
+.bn-dp-btn.active .bn-avatar-lg,
+.bn-dp-btn:active .bn-avatar-lg{border-color:var(--accent,#00a2ff);transform:scale(.92)}
 
 /* Notification dot */
 .bn-btn .dot{
@@ -3824,7 +3837,7 @@ body{
 }
 .bottom-nav-pill .bn-btn i,
 .bottom-nav-pill .bn-btn svg,
-.bottom-nav-pill .bn-avatar{
+.bottom-nav-pill .bn-avatar:not(.bn-avatar-lg){
   background:rgba(255,255,255,.62);
   border:1px solid rgba(255,255,255,.72);
   border-radius:18px;
@@ -3832,6 +3845,7 @@ body{
   backdrop-filter:blur(12px) saturate(1.25);
   -webkit-backdrop-filter:blur(12px) saturate(1.25);
 }
+.bottom-nav-pill .bn-avatar-lg{box-shadow:0 2px 10px rgba(15,35,60,.15)}
 .bottom-nav-pill .bn-btn i,
 .bottom-nav-pill .bn-btn svg{width:42px!important;height:42px!important;padding:9px!important}
 .bottom-nav-pill .bn-btn.active{
