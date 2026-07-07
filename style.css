@@ -4290,6 +4290,649 @@ body{
   }
 }
 
+/* ============================================================
+   LIQUID GLASS + SOFT HOME PAGE REDESIGN
+   Premium translucent glass-morphism for feed cards, composer,
+   post interactions, and ambient background effects.
+   ============================================================ */
+
+/* ---- Feed view: soft ambient background with floating orbs ---- */
+.feed-view{
+  background:var(--bg) !important;
+  position:relative;
+}
+.feed-view::before,
+.feed-view::after{
+  content:'';position:fixed;pointer-events:none;border-radius:50%;
+  filter:blur(90px);opacity:.45;z-index:0;
+  animation:ambientFloat 18s ease-in-out infinite alternate;
+}
+.feed-view::before{
+  width:320px;height:320px;
+  top:-60px;right:-80px;
+  background:radial-gradient(circle,rgba(255,120,200,.28),rgba(120,100,255,.12) 60%,transparent 100%);
+}
+.feed-view::after{
+  width:260px;height:260px;
+  bottom:120px;left:-90px;
+  background:radial-gradient(circle,rgba(80,160,255,.22),rgba(0,200,180,.10) 60%,transparent 100%);
+  animation-delay:-9s;animation-duration:22s;
+}
+@keyframes ambientFloat{
+  0%{transform:translate(0,0) scale(1)}
+  33%{transform:translate(15px,20px) scale(1.08)}
+  66%{transform:translate(-10px,-15px) scale(.95)}
+  100%{transform:translate(8px,10px) scale(1.03)}
+}
+
+/* ---- Feed wrap: ensure glass cards sit above orbs ---- */
+.feed-wrap{position:relative;z-index:1}
+
+/* ---- Composer card: liquid glass ---- */
+.composer-card.ig-compose-inline{
+  background:linear-gradient(135deg,
+    rgba(255,255,255,.72) 0%,
+    rgba(248,245,255,.52) 40%,
+    rgba(240,248,255,.48) 70%,
+    rgba(255,242,250,.50) 100%) !important;
+  -webkit-backdrop-filter:saturate(185%) blur(26px) brightness(1.06) !important;
+  backdrop-filter:saturate(185%) blur(26px) brightness(1.06) !important;
+  border:1px solid rgba(255,255,255,.68) !important;
+  border-radius:24px !important;
+  padding:18px !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.92) inset,
+    0 -1px 0 rgba(140,100,200,.05) inset,
+    0 14px 38px -10px rgba(120,80,200,.14),
+    0 4px 12px -4px rgba(20,30,50,.06) !important;
+  position:relative;
+  overflow:hidden;
+  transition:transform .3s cubic-bezier(.2,.8,.2,1),box-shadow .3s ease !important;
+}
+.composer-card.ig-compose-inline::before{
+  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(115deg,
+    rgba(255,255,255,0) 25%,
+    rgba(255,255,255,.38) 48%,
+    rgba(255,200,240,.12) 65%,
+    rgba(255,255,255,0) 100%);
+  mix-blend-mode:overlay;opacity:.6;
+}
+.composer-card.ig-compose-inline:focus-within{
+  transform:translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.95) inset,
+    0 -1px 0 rgba(140,100,200,.08) inset,
+    0 18px 44px -8px rgba(120,80,200,.20),
+    0 4px 12px -2px rgba(20,30,50,.08) !important;
+}
+.composer-card.ig-compose-inline textarea{
+  background:rgba(255,255,255,.55) !important;
+  border:1.5px solid rgba(255,255,255,.70) !important;
+  border-radius:16px !important;
+  backdrop-filter:blur(8px) saturate(1.2);
+  -webkit-backdrop-filter:blur(8px) saturate(1.2);
+  box-shadow:inset 0 2px 6px rgba(15,23,42,.03) !important;
+  transition:all .25s ease !important;
+}
+.composer-card.ig-compose-inline textarea:focus{
+  background:rgba(255,255,255,.78) !important;
+  border-color:rgba(0,162,255,.35) !important;
+  box-shadow:inset 0 2px 6px rgba(15,23,42,.03),0 0 0 4px rgba(0,162,255,.10) !important;
+}
+.composer-card.ig-compose-inline .ghost-btn{
+  color:var(--muted);transition:all .2s ease;
+}
+.composer-card.ig-compose-inline .ghost-btn:hover{
+  color:var(--accent);transform:translateY(-1px);
+}
+
+/* ---- Post cards: liquid glass ---- */
+.post-card{
+  background:linear-gradient(145deg,
+    rgba(255,255,255,.74) 0%,
+    rgba(250,246,255,.55) 35%,
+    rgba(244,250,255,.52) 65%,
+    rgba(255,244,252,.56) 100%) !important;
+  -webkit-backdrop-filter:saturate(180%) blur(24px) brightness(1.04) !important;
+  backdrop-filter:saturate(180%) blur(24px) brightness(1.04) !important;
+  border:1px solid rgba(255,255,255,.62) !important;
+  border-radius:28px !important;
+  padding:16px !important;
+  margin:0 10px 8px !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.88) inset,
+    0 -1px 0 rgba(140,100,200,.05) inset,
+    0 16px 42px -12px rgba(100,70,180,.14),
+    0 4px 14px -6px rgba(20,30,50,.06) !important;
+  position:relative;
+  overflow:hidden;
+  contain:layout paint style;content-visibility:auto;contain-intrinsic-size:680px;
+  transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s ease !important;
+  animation:postGlassIn .5s cubic-bezier(.2,.8,.2,1) both !important;
+}
+/* Iridescent sheen on post cards */
+.post-card::before{
+  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(125deg,
+    rgba(255,255,255,0) 20%,
+    rgba(255,255,255,.32) 45%,
+    rgba(255,190,230,.10) 62%,
+    rgba(180,200,255,.08) 78%,
+    rgba(255,255,255,0) 100%);
+  mix-blend-mode:overlay;opacity:.55;
+  transition:opacity .3s ease;
+}
+.post-card:hover::before{opacity:.75}
+.post-card:hover{
+  transform:translateY(-2px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.92) inset,
+    0 -1px 0 rgba(140,100,200,.08) inset,
+    0 22px 52px -10px rgba(100,70,180,.18),
+    0 6px 18px -4px rgba(20,30,50,.08) !important;
+}
+
+@keyframes postGlassIn{
+  0%{opacity:0;transform:translateY(24px) scale(.97);filter:blur(4px)}
+  100%{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}
+}
+
+/* ---- Post header: softer layout ---- */
+.post-header-row{
+  padding:6px 6px 14px !important;
+  position:relative;z-index:2;
+}
+.post-header-avatar{
+  padding:2.5px !important;
+  background:linear-gradient(135deg,
+    rgba(255,120,180,.7),
+    rgba(180,100,255,.6),
+    rgba(80,160,255,.5)) !important;
+  border-radius:50%;flex-shrink:0;
+  box-shadow:0 4px 14px -4px rgba(255,100,180,.35);
+  transition:transform .25s ease,box-shadow .25s ease;
+}
+.post-header-avatar:hover{
+  transform:scale(1.06);
+  box-shadow:0 6px 18px -2px rgba(255,100,180,.45);
+}
+.post-header-avatar .avatar.md{
+  border:2.5px solid rgba(255,255,255,.85) !important;
+  box-shadow:inset 0 1px 2px rgba(255,255,255,.5);
+}
+.post-header-username{
+  font-weight:800 !important;
+  font-size:15px !important;
+  letter-spacing:-.2px;
+  background:linear-gradient(135deg,var(--text),rgba(100,60,180,.85));
+  -webkit-background-clip:text !important;
+  -webkit-text-fill-color:transparent !important;
+  background-clip:text !important;
+}
+.post-header-more{
+  width:36px !important;height:36px !important;
+  border-radius:50% !important;
+  background:rgba(255,255,255,.45) !important;
+  border:1px solid rgba(255,255,255,.60) !important;
+  backdrop-filter:blur(10px) saturate(1.2);
+  -webkit-backdrop-filter:blur(10px) saturate(1.2);
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.7),0 2px 8px rgba(0,0,0,.04) !important;
+  transition:all .2s ease !important;
+}
+.post-header-more:hover{
+  background:rgba(255,255,255,.65) !important;
+  transform:scale(1.08);
+}
+.post-header-more:active{transform:scale(.92) !important}
+.post-header-more i,.post-header-more svg{width:18px !important;height:18px !important}
+
+/* ---- Post image: softer container ---- */
+.post-img-wrap{
+  border-radius:22px !important;
+  box-shadow:
+    0 4px 20px -4px rgba(80,40,140,.12),
+    0 1px 3px rgba(0,0,0,.06) !important;
+  margin-bottom:14px !important;
+  position:relative;z-index:2;
+  overflow:hidden;
+}
+.post-img{
+  border-radius:22px !important;
+  transition:transform .4s cubic-bezier(.2,.8,.2,1),filter .4s ease;
+}
+.post-img-wrap:hover .post-img{
+  transform:scale(1.015);
+}
+
+/* ---- Post music toggle: liquid glass ---- */
+.post-music-toggle{
+  background:rgba(255,255,255,.22) !important;
+  backdrop-filter:blur(18px) saturate(1.4) !important;
+  -webkit-backdrop-filter:blur(18px) saturate(1.4) !important;
+  border:1px solid rgba(255,255,255,.35) !important;
+  box-shadow:0 6px 20px rgba(0,0,0,.18),inset 0 1px 1px rgba(255,255,255,.2) !important;
+  transition:all .2s ease !important;
+}
+.post-music-toggle:hover{
+  background:rgba(255,255,255,.32) !important;
+  transform:scale(1.08) !important;
+}
+
+/* ---- Post action buttons: soft glass circles ---- */
+.post-actions{
+  padding:8px 10px 6px !important;
+  position:relative;z-index:2;
+}
+.post-actions .act-btn{
+  width:40px !important;height:40px !important;
+  border-radius:50% !important;
+  background:rgba(255,255,255,.0) !important;
+  border:1px solid transparent !important;
+  transition:all .25s cubic-bezier(.2,.8,.2,1) !important;
+  position:relative;
+}
+.post-actions .act-btn:hover{
+  background:rgba(255,255,255,.55) !important;
+  border-color:rgba(255,255,255,.70) !important;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.8),0 4px 12px rgba(100,70,180,.10) !important;
+  backdrop-filter:blur(10px) saturate(1.2);
+  -webkit-backdrop-filter:blur(10px) saturate(1.2);
+  transform:scale(1.12) !important;
+}
+.post-actions .act-btn:active{
+  transform:scale(.88) !important;
+  background:rgba(255,255,255,.70) !important;
+}
+.post-actions .act-btn.liked{
+  background:rgba(255,48,64,.08) !important;
+  border-color:rgba(255,48,64,.15) !important;
+}
+.post-actions .act-btn.liked:hover{
+  background:rgba(255,48,64,.14) !important;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.6),0 4px 14px rgba(255,48,64,.15) !important;
+}
+.post-actions .act-btn.saved{
+  background:rgba(0,162,255,.08) !important;
+  border-color:rgba(0,162,255,.15) !important;
+}
+
+/* ---- Heart burst: enhanced ---- */
+.heart-burst.show{animation:heartBurstGlass .95s cubic-bezier(.2,.8,.2,1) both}
+@keyframes heartBurstGlass{
+  0%{transform:translate(-50%,-50%) scale(0);opacity:0;filter:blur(8px)}
+  18%{transform:translate(-50%,-50%) scale(1.15);opacity:1;filter:blur(0)}
+  55%{transform:translate(-50%,-50%) scale(1);opacity:1;filter:blur(0)}
+  100%{transform:translate(-50%,-50%) scale(1.3);opacity:0;filter:blur(4px)}
+}
+
+/* ---- Liked-by, caption, comments: soft typography ---- */
+.liked-by,.post-caption,.preview-comment,.view-comments{
+  position:relative;z-index:2;
+}
+.liked-by{
+  padding:4px 16px 4px !important;
+  font-size:13.5px;
+}
+.post-caption{
+  padding:4px 16px 4px !important;
+  font-size:14.5px;
+  line-height:1.5 !important;
+}
+.post-caption .author{
+  font-weight:800 !important;
+  background:linear-gradient(135deg,var(--text),rgba(100,60,180,.7));
+  -webkit-background-clip:text !important;
+  -webkit-text-fill-color:transparent !important;
+  background-clip:text !important;
+}
+.view-comments{
+  padding:2px 16px !important;
+  font-weight:600 !important;
+}
+.preview-comments{padding:4px 16px !important}
+.post-time{
+  padding:6px 16px 10px !important;
+  position:relative;z-index:2;
+}
+
+/* ---- Post inline comment: soft glass input ---- */
+.post-add-comment{
+  border-top:1px solid rgba(255,255,255,.35) !important;
+  padding:10px 16px 14px !important;
+  position:relative;z-index:2;
+}
+.post-add-comment input{
+  background:rgba(255,255,255,.40) !important;
+  border:1px solid rgba(255,255,255,.50) !important;
+  border-radius:999px !important;
+  padding:10px 16px !important;
+  font-size:14px !important;
+  backdrop-filter:blur(8px) saturate(1.15);
+  -webkit-backdrop-filter:blur(8px) saturate(1.15);
+  transition:all .2s ease !important;
+}
+.post-add-comment input:focus{
+  background:rgba(255,255,255,.60) !important;
+  border-color:rgba(0,162,255,.30) !important;
+  box-shadow:0 0 0 3px rgba(0,162,255,.08) !important;
+  outline:none;
+}
+.post-add-comment .emoji-btn{
+  width:36px !important;height:36px !important;
+  border-radius:50% !important;
+  display:flex !important;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.35) !important;
+  transition:all .2s ease;
+}
+.post-add-comment .emoji-btn:hover{
+  background:rgba(255,255,255,.55) !important;
+  transform:scale(1.1);
+}
+.post-add-comment .post-btn{
+  font-weight:800 !important;
+  background:linear-gradient(135deg,rgba(0,162,255,.12),rgba(140,80,255,.10));
+  padding:8px 14px !important;
+  border-radius:999px !important;
+  transition:all .2s ease !important;
+}
+.post-add-comment .post-btn:not(:disabled):hover{
+  background:linear-gradient(135deg,rgba(0,162,255,.20),rgba(140,80,255,.16)) !important;
+}
+
+/* ---- Post music inline: softer ---- */
+.post-music-inline{
+  padding:3px 0 0 !important;
+}
+.post-music-marquee-track{
+  animation-duration:13s !important;
+}
+
+/* ---- Feed empty state: liquid glass ---- */
+.feed-empty-glass{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:60px 30px;text-align:center;
+  margin:40px 16px;
+  border-radius:28px;
+  background:linear-gradient(145deg,
+    rgba(255,255,255,.65) 0%,
+    rgba(248,244,255,.45) 50%,
+    rgba(244,250,255,.42) 100%);
+  -webkit-backdrop-filter:saturate(180%) blur(24px) brightness(1.04);
+  backdrop-filter:saturate(180%) blur(24px) brightness(1.04);
+  border:1px solid rgba(255,255,255,.58);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.85) inset,
+    0 16px 42px -10px rgba(120,80,200,.12);
+  position:relative;overflow:hidden;
+}
+.feed-empty-glass::before{
+  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(125deg,
+    rgba(255,255,255,0) 30%,
+    rgba(255,255,255,.30) 50%,
+    rgba(255,200,240,.08) 68%,
+    rgba(255,255,255,0) 100%);
+  mix-blend-mode:overlay;opacity:.5;
+}
+.feed-empty-glass .feed-empty-icon{
+  width:72px;height:72px;border-radius:50%;
+  background:linear-gradient(135deg,rgba(255,120,200,.2),rgba(120,100,255,.15),rgba(80,180,255,.12));
+  display:flex;align-items:center;justify-content:center;
+  margin-bottom:18px;
+  box-shadow:0 8px 24px -6px rgba(120,80,200,.2);
+}
+.feed-empty-glass .feed-empty-icon i{width:32px;height:32px;color:var(--muted);stroke-width:1.5}
+.feed-empty-glass h3{
+  font-size:18px;font-weight:800;color:var(--text);
+  margin:0 0 8px;letter-spacing:-.3px;
+  position:relative;z-index:1;
+}
+.feed-empty-glass p{
+  font-size:14px;color:var(--muted);line-height:1.5;
+  margin:0;max-width:260px;position:relative;z-index:1;
+}
+
+/* ---- Feed list spacing update ---- */
+.feed-list{
+  gap:16px !important;
+  margin-top:12px !important;
+}
+
+/* ---- Stories rail: enhanced liquid glass ---- */
+.stories-rail{
+  background:linear-gradient(135deg,
+    rgba(255,255,255,.68) 0%,
+    rgba(245,250,255,.48) 40%,
+    rgba(248,240,255,.44) 70%,
+    rgba(255,240,248,.46) 100%) !important;
+  -webkit-backdrop-filter:saturate(195%) blur(28px) brightness(1.07) !important;
+  backdrop-filter:saturate(195%) blur(28px) brightness(1.07) !important;
+  border:1px solid rgba(255,255,255,.68) !important;
+  border-radius:24px !important;
+  margin:14px 12px 10px !important;
+  padding:16px !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.92) inset,
+    0 -1px 0 rgba(140,100,200,.06) inset,
+    0 14px 36px -10px rgba(120,80,200,.16),
+    0 3px 10px -4px rgba(20,30,50,.05) !important;
+  transition:transform .3s ease !important;
+}
+.stories-rail:hover{
+  transform:translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.95) inset,
+    0 -1px 0 rgba(140,100,200,.08) inset,
+    0 18px 42px -8px rgba(120,80,200,.20),
+    0 3px 10px -2px rgba(20,30,50,.06) !important;
+}
+
+/* ---- Story ring: enhanced iridescent glass ---- */
+.story-ring{
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.45),
+    0 8px 22px -4px rgba(255,90,140,.40),
+    0 2px 6px rgba(100,60,200,.10) !important;
+  transition:transform .3s cubic-bezier(.2,.8,.2,1),box-shadow .3s ease !important;
+}
+.story-cell:hover .story-ring{
+  transform:scale(1.06) !important;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.60),
+    0 12px 28px -2px rgba(255,90,140,.50),
+    0 4px 10px rgba(100,60,200,.15) !important;
+}
+.story-ring .avatar-inner{
+  border-color:rgba(255,255,255,.90) !important;
+  box-shadow:inset 0 2px 4px rgba(255,255,255,.5),inset 0 -1px 2px rgba(0,0,0,.04) !important;
+}
+.story-ring .add-badge{
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.55),
+    0 3px 10px rgba(0,100,200,.40) !important;
+}
+
+/* ---- Scratch-off overlay: glass update ---- */
+.post-scratch-overlay{
+  border-radius:20px !important;
+  box-shadow:inset 0 2px 8px rgba(0,0,0,.06) !important;
+}
+
+/* ---- Floating add button: enhanced liquid glow ---- */
+.floating-add-btn{
+  background:linear-gradient(135deg,
+    rgba(0,162,255,.95) 0%,
+    rgba(120,80,255,.90) 50%,
+    rgba(200,60,255,.88) 100%) !important;
+  border:1.5px solid rgba(255,255,255,.50) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.40),
+    0 12px 32px rgba(100,60,255,.35),
+    0 4px 12px rgba(0,100,200,.20) !important;
+  transition:all .3s cubic-bezier(.2,.8,.2,1) !important;
+}
+.floating-add-btn:hover{
+  transform:scale(1.10) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.50),
+    0 16px 40px rgba(100,60,255,.45),
+    0 6px 16px rgba(0,100,200,.25) !important;
+}
+.floating-add-btn::after{
+  content:'';position:absolute;inset:0;border-radius:50%;pointer-events:none;
+  background:linear-gradient(135deg,rgba(255,255,255,.35),rgba(255,255,255,0) 50%);
+}
+
+/* ===== DARK MODE — Liquid Glass Home Page ===== */
+[data-theme="dark"] .feed-view::before{background:radial-gradient(circle,rgba(180,60,255,.12),rgba(60,40,120,.06) 60%,transparent 100%);opacity:.5}
+[data-theme="dark"] .feed-view::after{background:radial-gradient(circle,rgba(0,140,255,.10),rgba(0,180,160,.06) 60%,transparent 100%);opacity:.4}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .feed-view::before{background:radial-gradient(circle,rgba(180,60,255,.12),rgba(60,40,120,.06) 60%,transparent 100%);opacity:.5}
+  :root:not([data-theme="light"]) .feed-view::after{background:radial-gradient(circle,rgba(0,140,255,.10),rgba(0,180,160,.06) 60%,transparent 100%);opacity:.4}
+}
+
+/* Dark post cards */
+[data-theme="dark"] .post-card{
+  background:linear-gradient(145deg,rgba(28,38,58,.72) 0%,rgba(22,30,48,.55) 35%,rgba(30,24,52,.50) 65%,rgba(24,20,46,.54) 100%) !important;
+  border-color:rgba(255,255,255,.10) !important;
+  box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 16px 42px -10px rgba(0,0,0,.45),0 4px 14px -6px rgba(0,0,0,.25) !important;
+}
+[data-theme="dark"] .post-card::before{background:linear-gradient(125deg,rgba(255,255,255,0) 20%,rgba(255,255,255,.06) 45%,rgba(200,100,255,.04) 62%,rgba(255,255,255,0) 100%);opacity:.7}
+[data-theme="dark"] .post-card:hover{box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 22px 52px -8px rgba(0,0,0,.50),0 6px 18px -4px rgba(0,0,0,.30) !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .post-card{
+    background:linear-gradient(145deg,rgba(28,38,58,.72) 0%,rgba(22,30,48,.55) 35%,rgba(30,24,52,.50) 65%,rgba(24,20,46,.54) 100%) !important;
+    border-color:rgba(255,255,255,.10) !important;
+    box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 16px 42px -10px rgba(0,0,0,.45),0 4px 14px -6px rgba(0,0,0,.25) !important;
+  }
+  :root:not([data-theme="light"]) .post-card::before{background:linear-gradient(125deg,rgba(255,255,255,0) 20%,rgba(255,255,255,.06) 45%,rgba(200,100,255,.04) 62%,rgba(255,255,255,0) 100%);opacity:.7}
+  :root:not([data-theme="light"]) .post-card:hover{box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 22px 52px -8px rgba(0,0,0,.50),0 6px 18px -4px rgba(0,0,0,.30) !important}
+}
+
+/* Dark composer card */
+[data-theme="dark"] .composer-card.ig-compose-inline{
+  background:linear-gradient(135deg,rgba(28,38,58,.68) 0%,rgba(22,30,48,.50) 40%,rgba(30,28,52,.46) 70%,rgba(24,22,46,.50) 100%) !important;
+  border-color:rgba(255,255,255,.10) !important;
+  box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 14px 38px -10px rgba(0,0,0,.40) !important;
+}
+[data-theme="dark"] .composer-card.ig-compose-inline::before{background:linear-gradient(115deg,rgba(255,255,255,0) 25%,rgba(255,255,255,.04) 48%,rgba(200,100,255,.03) 65%,rgba(255,255,255,0) 100%)}
+[data-theme="dark"] .composer-card.ig-compose-inline textarea{background:rgba(255,255,255,.06) !important;border-color:rgba(255,255,255,.10) !important}
+[data-theme="dark"] .composer-card.ig-compose-inline textarea:focus{background:rgba(255,255,255,.10) !important;border-color:rgba(0,162,255,.30) !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .composer-card.ig-compose-inline{
+    background:linear-gradient(135deg,rgba(28,38,58,.68) 0%,rgba(22,30,48,.50) 40%,rgba(30,28,52,.46) 70%,rgba(24,22,46,.50) 100%) !important;
+    border-color:rgba(255,255,255,.10) !important;
+    box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 14px 38px -10px rgba(0,0,0,.40) !important;
+  }
+  :root:not([data-theme="light"]) .composer-card.ig-compose-inline::before{background:linear-gradient(115deg,rgba(255,255,255,0) 25%,rgba(255,255,255,.04) 48%,rgba(200,100,255,.03) 65%,rgba(255,255,255,0) 100%)}
+  :root:not([data-theme="light"]) .composer-card.ig-compose-inline textarea{background:rgba(255,255,255,.06) !important;border-color:rgba(255,255,255,.10) !important}
+  :root:not([data-theme="light"]) .composer-card.ig-compose-inline textarea:focus{background:rgba(255,255,255,.10) !important;border-color:rgba(0,162,255,.30) !important}
+}
+
+/* Dark stories rail */
+[data-theme="dark"] .stories-rail{
+  background:linear-gradient(135deg,rgba(30,42,62,.62) 0%,rgba(22,32,52,.45) 40%,rgba(32,24,52,.42) 70%,rgba(26,22,48,.46) 100%) !important;
+  border-color:rgba(255,255,255,.10) !important;
+  box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 14px 36px -10px rgba(0,0,0,.45) !important;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .stories-rail{
+    background:linear-gradient(135deg,rgba(30,42,62,.62) 0%,rgba(22,32,52,.45) 40%,rgba(32,24,52,.42) 70%,rgba(26,22,48,.46) 100%) !important;
+    border-color:rgba(255,255,255,.10) !important;
+    box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 14px 36px -10px rgba(0,0,0,.45) !important;
+  }
+}
+
+/* Dark post action buttons */
+[data-theme="dark"] .post-actions .act-btn:hover{background:rgba(255,255,255,.08) !important;border-color:rgba(255,255,255,.14) !important;box-shadow:inset 0 1px 1px rgba(255,255,255,.06),0 4px 12px rgba(0,0,0,.20) !important}
+[data-theme="dark"] .post-actions .act-btn.liked{background:rgba(255,48,64,.10) !important;border-color:rgba(255,48,64,.18) !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .post-actions .act-btn:hover{background:rgba(255,255,255,.08) !important;border-color:rgba(255,255,255,.14) !important;box-shadow:inset 0 1px 1px rgba(255,255,255,.06),0 4px 12px rgba(0,0,0,.20) !important}
+  :root:not([data-theme="light"]) .post-actions .act-btn.liked{background:rgba(255,48,64,.10) !important;border-color:rgba(255,48,64,.18) !important}
+}
+
+/* Dark post header more button */
+[data-theme="dark"] .post-header-more{background:rgba(255,255,255,.06) !important;border-color:rgba(255,255,255,.10) !important}
+[data-theme="dark"] .post-header-more:hover{background:rgba(255,255,255,.12) !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .post-header-more{background:rgba(255,255,255,.06) !important;border-color:rgba(255,255,255,.10) !important}
+  :root:not([data-theme="light"]) .post-header-more:hover{background:rgba(255,255,255,.12) !important}
+}
+
+/* Dark comment input */
+[data-theme="dark"] .post-add-comment{border-top-color:rgba(255,255,255,.08) !important}
+[data-theme="dark"] .post-add-comment input{background:rgba(255,255,255,.06) !important;border-color:rgba(255,255,255,.10) !important}
+[data-theme="dark"] .post-add-comment input:focus{background:rgba(255,255,255,.10) !important;border-color:rgba(0,162,255,.25) !important}
+[data-theme="dark"] .post-add-comment .emoji-btn{background:rgba(255,255,255,.06) !important}
+[data-theme="dark"] .post-add-comment .emoji-btn:hover{background:rgba(255,255,255,.12) !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .post-add-comment{border-top-color:rgba(255,255,255,.08) !important}
+  :root:not([data-theme="light"]) .post-add-comment input{background:rgba(255,255,255,.06) !important;border-color:rgba(255,255,255,.10) !important}
+  :root:not([data-theme="light"]) .post-add-comment input:focus{background:rgba(255,255,255,.10) !important;border-color:rgba(0,162,255,.25) !important}
+  :root:not([data-theme="light"]) .post-add-comment .emoji-btn{background:rgba(255,255,255,.06) !important}
+  :root:not([data-theme="light"]) .post-add-comment .emoji-btn:hover{background:rgba(255,255,255,.12) !important}
+}
+
+/* Dark post username: no gradient clip (plain white text) */
+[data-theme="dark"] .post-header-username{background:none !important;-webkit-background-clip:unset !important;-webkit-text-fill-color:var(--text) !important;background-clip:unset !important}
+[data-theme="dark"] .post-caption .author{background:none !important;-webkit-background-clip:unset !important;-webkit-text-fill-color:var(--text) !important;background-clip:unset !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .post-header-username{background:none !important;-webkit-background-clip:unset !important;-webkit-text-fill-color:var(--text) !important;background-clip:unset !important}
+  :root:not([data-theme="light"]) .post-caption .author{background:none !important;-webkit-background-clip:unset !important;-webkit-text-fill-color:var(--text) !important;background-clip:unset !important}
+}
+
+/* Dark empty state */
+[data-theme="dark"] .feed-empty-glass{background:linear-gradient(145deg,rgba(28,38,58,.60) 0%,rgba(22,30,48,.42) 50%,rgba(30,24,52,.38) 100%);border-color:rgba(255,255,255,.08);box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 16px 42px -10px rgba(0,0,0,.40)}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .feed-empty-glass{background:linear-gradient(145deg,rgba(28,38,58,.60) 0%,rgba(22,30,48,.42) 50%,rgba(30,24,52,.38) 100%);border-color:rgba(255,255,255,.08);box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 16px 42px -10px rgba(0,0,0,.40)}
+}
+
+/* Dark floating add button */
+[data-theme="dark"] .floating-add-btn{border-color:rgba(255,255,255,.15) !important;box-shadow:inset 0 1px 1px rgba(255,255,255,.15),0 12px 32px rgba(100,60,255,.25),0 4px 12px rgba(0,0,0,.20) !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .floating-add-btn{border-color:rgba(255,255,255,.15) !important;box-shadow:inset 0 1px 1px rgba(255,255,255,.15),0 12px 32px rgba(100,60,255,.25),0 4px 12px rgba(0,0,0,.20) !important}
+}
+
+/* Dark post-img-wrap */
+[data-theme="dark"] .post-img-wrap{box-shadow:0 6px 24px -4px rgba(0,0,0,.30) !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .post-img-wrap{box-shadow:0 6px 24px -4px rgba(0,0,0,.30) !important}
+}
+
+/* Dark post music toggle */
+[data-theme="dark"] .post-music-toggle{background:rgba(0,0,0,.35) !important;border-color:rgba(255,255,255,.15) !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .post-music-toggle{background:rgba(0,0,0,.35) !important;border-color:rgba(255,255,255,.15) !important}
+}
+
+/* ===== RESPONSIVE — Liquid Glass Home ===== */
+@media (max-width:480px){
+  .post-card{
+    border-radius:24px !important;
+    padding:14px !important;
+    margin:0 8px 6px !important;
+  }
+  .composer-card.ig-compose-inline{
+    border-radius:22px !important;
+    padding:14px !important;
+    margin:0 10px !important;
+  }
+  .stories-rail{
+    border-radius:22px !important;
+    margin:12px 10px 8px !important;
+    padding:14px !important;
+  }
+  .feed-empty-glass{
+    margin:30px 12px;
+    border-radius:24px;
+    padding:40px 24px;
+  }
+  .post-actions .act-btn{
+    width:38px !important;height:38px !important;
+  }
+}
+
 /* Mobile tweaks — keep topbar elegant on small screens */
 @media (max-width:480px){
   .topbar{padding:9px 12px !important;height:58px !important}
@@ -4298,10 +4941,12 @@ body{
   .chat-header.scrolled{padding:6px 12px !important;min-height:48px !important}
 }
 
-/* Reduced motion: disable gradient flow + ring rotation */
+/* Reduced motion: disable gradient flow + ring rotation + ambient orbs */
 @media (prefers-reduced-motion: reduce){
   .topbar::after{animation:none}
   .chat-header .avatar::before{animation:none}
   .topbar .icon-with-dot:has(.dot:not(.hidden)){animation:none}
   .topbar .icon-with-dot:has(.dot:not(.hidden))::before{animation:none}
+  .feed-view::before,.feed-view::after{animation:none}
+  .post-card{animation:none !important}
 }
