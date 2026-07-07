@@ -1045,28 +1045,27 @@ function switchTab(tab) {
   if (typeof updateNotifDots === 'function') updateNotifDots();
 }
 
-// Show the centered app name wordmark on all tabs.
-// Also keep the user's username visible on the chat tabs if needed, but centering the wordmark as requested.
+// Show the centered app name wordmark only on the home page (feed tab).
+// On the chat/DM/groups tabs, hide it and show the Instagram-style username header.
 function updateTopbarHeader(tab) {
   const brand = $id('#brandWordmarkBtn') || $id('#brandWordmark');
   const igH = $id('#igUsernameHeader');
   const igT = $id('#igUsernameText');
   const showUsername = (tab === 'chat' || tab === 'groups');
   
-  // Keep the app name wordmark always visible and centered!
-  if (brand) {
-    brand.classList.remove('hidden');
-  }
-  
-  if (showUsername && State.user) {
+  if (tab === 'feed') {
+    if (brand) brand.classList.remove('hidden');
+    if (igH) igH.classList.add('hidden');
+  } else if (showUsername && State.user) {
+    if (brand) brand.classList.add('hidden');
     if (igT) igT.innerHTML = displayNameWithOwnerBadge(State.user, State.user.username || State.user.displayName || 'you', 'inline');
     if (igH) {
       igH.classList.remove('hidden');
-      // Position username container at the left using CSS grid column 1
-      igH.style.gridColumn = '1';
-      igH.style.justifySelf = 'start';
+      igH.style.gridColumn = '2';
+      igH.style.justifySelf = 'center';
     }
   } else {
+    if (brand) brand.classList.remove('hidden');
     if (igH) igH.classList.add('hidden');
   }
   if (typeof refreshIcons === 'function') refreshIcons();
