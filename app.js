@@ -47,10 +47,34 @@ const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
 const API_BASE = '/api';
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-// DOM element cache for hot-path ID selectors (avoids 5-12x repeated queries)
+// DOM element cache for hot-path ID selectors (avoids 5-12x repeated queries).
+// IMPORTANT: We never cache `null` lookups, and we verify cached elements are
+// still connected to the document. Previously this cache stored null forever
+// for any ID that didn't exist yet — which broke the common "create-on-demand"
+// idiom (`let el = $id('#x'); if (!el) { el = document.createElement(...);
+// el.id = 'x'; ... }`) because every subsequent call still saw the cached
+// null and created a NEW element. That was the root cause of the duplicated
+// "Follow requests" banner bug, and of the follow-requests sheet's close
+// button silently failing (closeFollowRequestsSheet called $id('#sheet') and
+// got back null, so it never added the `hidden` class).
 const _domCache = new Map();
-const $id = (id) => { let el = _domCache.get(id); if (el !== undefined) return el; el = document.getElementById(id && id.charAt(0) === '#' ? id.slice(1) : id); _domCache.set(id, el); return el; };
-function invalidateDomCache(id) { if (id) _domCache.delete(id); else _domCache.clear(); }
+const $id = (id) => {
+  const key = id && id.charAt(0) === '#' ? id.slice(1) : id;
+  const cached = _domCache.get(key);
+  if (cached !== undefined) {
+    // If the cached entry is a live element, fast-path return it.
+    if (cached && cached.isConnected) return cached;
+    // Otherwise (null cache, or detached element) drop the stale entry and
+    // re-query the live DOM.
+    _domCache.delete(key);
+  }
+  const el = document.getElementById(key);
+  // Only cache successful lookups — null results must stay uncached so that
+  // lazily-created elements become visible to subsequent $id() calls.
+  if (el) _domCache.set(key, el);
+  return el;
+};
+function invalidateDomCache(id) { if (id) { const key = id && id.charAt(0) === '#' ? id.slice(1) : id; _domCache.delete(key); } else _domCache.clear(); }
 
 // ====== Robust file-type detection (HEIC/HEIF fix) ======
 // Browsers frequently report file.type as an EMPTY STRING for HEIC/HEIF
@@ -1416,6 +1440,20 @@ function ensureFollowRequestsUi() {
   const section = $id('#dmsPaneSection');
   const notes = $id('#notesRail');
   if (!section || !notes) return null;
+  // Defensive dedup: if a prior build had the $id cache-staleness bug, the
+  // DOM may contain multiple banners/sheets with the same id (the cache
+  // returned null forever, so each call created a new one). Strip all but
+  // the first so the inbox doesn't show N stacked "Follow requests" cards.
+  const strayBanners = document.querySelectorAll('[id="followRequestsBanner"]');
+  for (let i = 1; i < strayBanners.length; i++) strayBanners[i].remove();
+  const straySheets = document.querySelectorAll('[id="followRequestsSheet"]');
+  for (let i = 1; i < straySheets.length; i++) straySheets[i].remove();
+  invalidateDomCache('#followRequestsBanner');
+  invalidateDomCache('#followRequestsSheet');
+  invalidateDomCache('#followRequestsSub');
+  invalidateDomCache('#followRequestsCount');
+  invalidateDomCache('#followRequestsList');
+
   let banner = $id('#followRequestsBanner');
   if (!banner) {
     banner = document.createElement('button');
@@ -1500,8 +1538,13 @@ function openFollowRequestsSheet() {
   refreshIcons();
 }
 function closeFollowRequestsSheet() {
-  const sheet = $id('#followRequestsSheet');
-  if (sheet) sheet.classList.add('hidden');
+  // Hide every follow-requests sheet that exists. Using querySelectorAll
+  // (not $id) on purpose: $id's cache could in principle hold a stale
+  // reference if a sheet was replaced, and we want to be sure the visible
+  // modal actually goes away. This was the "back button not working" bug —
+  // the close click landed here, $id returned a cached null, and the sheet
+  // stayed open forever, trapping the user.
+  document.querySelectorAll('[id="followRequestsSheet"]').forEach(s => s.classList.add('hidden'));
 }
 async function respondToFollowRequest(requesterId, action) {
   try {
