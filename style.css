@@ -727,7 +727,7 @@ img{user-select:none;-webkit-user-drag:none}
 /* ===== App Shell (mobile-first IG layout) ===== */
 .app-shell{
   display:grid;
-  grid-template-rows:54px 1fr;
+  grid-template-rows: auto 1fr;
   height:100%;background:var(--bg);animation:fade-in .3s ease;
   width:100%;max-width:100vw;overflow-x:hidden;box-sizing:border-box;
 }
@@ -748,6 +748,10 @@ img{user-select:none;-webkit-user-drag:none}
     0 6px 22px -8px rgba(20,30,40,0.18);
   z-index:5;height:60px;position:relative;overflow:hidden;
   border-radius:0 0 18px 18px;
+}
+.topbar > div:last-child {
+  grid-column: 3;
+  justify-self: end;
 }
 [data-theme="dark"] .topbar,
 
@@ -802,9 +806,10 @@ img{user-select:none;-webkit-user-drag:none}
   position:absolute;inset:0;
   display:flex;align-items:center;justify-content:center;
   font-family:inherit;font-weight:inherit;font-size:inherit;line-height:1;letter-spacing:inherit;
-  background: #ff8da1 !important; /* Sakura Pink color */
-  -webkit-background-clip:text;background-clip:text;
-  -webkit-text-fill-color:transparent;
+  color: #ff8da1 !important; /* Pure Sakura Pink color */
+  -webkit-text-fill-color: #ff8da1 !important;
+  text-shadow: none !important;
+  filter: none !important;
   pointer-events:none;
 }
 .brand-wordmark::after{
@@ -3964,6 +3969,10 @@ body{
   border-bottom:1px solid rgba(255,255,255,0.5) !important;
   border-radius:0 0 22px 22px !important;
   transition:box-shadow .3s ease, transform .3s ease, background .3s ease !important;
+}
+.topbar > div:last-child {
+  grid-column: 3 !important;
+  justify-self: end !important;
 }
 /* Animated gradient accent strip along the bottom edge of the topbar */
 .topbar::after{

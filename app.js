@@ -1046,26 +1046,21 @@ function switchTab(tab) {
 }
 
 // Show the centered app name wordmark only on the home page (feed tab).
-// On the chat/DM/groups tabs, hide it and show the Instagram-style username header.
+// Hide it on all other tabs (chat, search, profile, groups, etc.).
 function updateTopbarHeader(tab) {
   const brand = $id('#brandWordmarkBtn') || $id('#brandWordmark');
   const igH = $id('#igUsernameHeader');
   const igT = $id('#igUsernameText');
-  const showUsername = (tab === 'chat' || tab === 'groups');
+  const topbar = brand ? brand.closest('.topbar') : null;
   
   if (tab === 'feed') {
+    if (topbar) topbar.style.display = 'grid';
     if (brand) brand.classList.remove('hidden');
     if (igH) igH.classList.add('hidden');
-  } else if (showUsername && State.user) {
-    if (brand) brand.classList.add('hidden');
-    if (igT) igT.innerHTML = displayNameWithOwnerBadge(State.user, State.user.username || State.user.displayName || 'you', 'inline');
-    if (igH) {
-      igH.classList.remove('hidden');
-      igH.style.gridColumn = '2';
-      igH.style.justifySelf = 'center';
-    }
   } else {
-    if (brand) brand.classList.remove('hidden');
+    // Hide the entire topbar header entirely on non-home pages (search, profile, chats, etc.)
+    if (topbar) topbar.style.display = 'none';
+    if (brand) brand.classList.add('hidden');
     if (igH) igH.classList.add('hidden');
   }
   if (typeof refreshIcons === 'function') refreshIcons();
