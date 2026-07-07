@@ -4026,3 +4026,375 @@ body{
 @keyframes profileSheetFadeOnly{from{opacity:0}to{opacity:1}}
 @keyframes profileCardFadeOnly{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:scale(1)}}
 
+
+/* ============================================================
+   PREMIUM TOP BAR + CHAT HEADER BEAUTIFICATION (v83)
+   - Refined glassmorphism with multi-layer depth
+   - Animated gradient accent strip
+   - Scroll-reactive chat header (collapses on scroll-down)
+   - Premium notification button with pulse glow
+   ============================================================ */
+
+/* ----- TOP BAR (.topbar) — premium glass with gradient accent ----- */
+.topbar{
+  position:relative;
+  padding:10px 16px !important;
+  height:62px !important;
+  background:linear-gradient(180deg,
+    rgba(255,255,255,0.85) 0%,
+    rgba(255,255,255,0.68) 60%,
+    rgba(248,240,250,0.55) 100%) !important;
+  -webkit-backdrop-filter:saturate(190%) blur(24px) brightness(1.05) !important;
+  backdrop-filter:saturate(190%) blur(24px) brightness(1.05) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.9) inset,
+    0 -1px 0 rgba(120,80,160,0.06) inset,
+    0 8px 28px -10px rgba(120,80,160,0.22),
+    0 2px 8px -2px rgba(20,30,40,0.08) !important;
+  border-bottom:1px solid rgba(255,255,255,0.5) !important;
+  border-radius:0 0 22px 22px !important;
+  transition:box-shadow .3s ease, transform .3s ease, background .3s ease !important;
+}
+/* Animated gradient accent strip along the bottom edge of the topbar */
+.topbar::after{
+  content:'';
+  position:absolute;
+  left:14px;right:14px;bottom:-1px;
+  height:2px;
+  background:linear-gradient(90deg,
+    transparent 0%,
+    rgba(255,90,140,0.0) 8%,
+    rgba(255,90,140,0.85) 22%,
+    rgba(195,61,255,0.85) 50%,
+    rgba(91,139,255,0.85) 78%,
+    rgba(91,139,255,0.0) 92%,
+    transparent 100%);
+  background-size:220% 100%;
+  border-radius:2px;
+  pointer-events:none;
+  opacity:.85;
+  animation:topbarAccentFlow 7s linear infinite;
+  filter:blur(.4px);
+}
+@keyframes topbarAccentFlow{
+  0%{background-position:0% 0}
+  100%{background-position:-220% 0}
+}
+[data-theme="dark"] .topbar,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .topbar{
+    background:linear-gradient(180deg,
+      rgba(28,38,58,0.85) 0%,
+      rgba(16,24,38,0.72) 60%,
+      rgba(20,12,32,0.6) 100%) !important;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.08) inset,
+      0 8px 28px -10px rgba(0,0,0,0.65),
+      0 2px 8px -2px rgba(0,0,0,0.4) !important;
+    border-bottom:1px solid rgba(255,255,255,0.1) !important;
+  }
+}
+
+/* Brand wordmark — refined glass pill with subtle floating shimmer */
+.brand-wordmark{
+  font-size:31px !important;
+  padding:7px 18px 9px !important;
+  background:linear-gradient(135deg,
+    rgba(255,255,255,0.7) 0%,
+    rgba(255,240,245,0.35) 55%,
+    rgba(240,220,250,0.4) 100%) !important;
+  border:1px solid rgba(255,255,255,0.65) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.95) inset,
+    0 -1px 0 rgba(120,80,160,0.12) inset,
+    0 8px 22px -6px rgba(255,90,140,0.4),
+    0 2px 8px -2px rgba(195,61,255,0.18),
+    0 0 0 1px rgba(255,255,255,0.18) !important;
+  transition:transform .25s cubic-bezier(0.34,1.56,0.64,1), filter .25s ease, box-shadow .25s ease !important;
+}
+.brand-wordmark:hover{
+  transform:scale(1.03) translateY(-1px);
+  filter:brightness(1.08) saturate(1.1);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.95) inset,
+    0 -1px 0 rgba(120,80,160,0.18) inset,
+    0 12px 30px -6px rgba(255,90,140,0.5),
+    0 4px 12px -2px rgba(195,61,255,0.25),
+    0 0 0 1px rgba(255,255,255,0.25) !important;
+}
+.brand-wordmark:active{
+  transform:scale(0.97);
+}
+
+/* Top notification button — premium with pulse + ring glow */
+.topbar .icon-with-dot{
+  position:relative;
+  background:linear-gradient(135deg,
+    rgba(255,255,255,0.55),
+    rgba(255,228,235,0.4)) !important;
+  border:1px solid rgba(255,90,140,0.22) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.9) inset,
+    0 4px 14px -4px rgba(255,90,140,0.35),
+    0 0 0 1px rgba(255,255,255,0.15) !important;
+  overflow:visible;
+}
+.topbar .icon-with-dot::before{
+  content:'';
+  position:absolute;
+  inset:-3px;
+  border-radius:50%;
+  background:radial-gradient(circle, rgba(255,90,140,0.32), transparent 70%);
+  opacity:0;
+  transition:opacity .35s ease;
+  pointer-events:none;
+  z-index:-1;
+}
+.topbar .icon-with-dot:hover::before{opacity:1}
+.topbar .icon-with-dot i{
+  stroke-width:2.1 !important;
+  color:#ff3d77 !important;
+  transition:transform .35s cubic-bezier(0.34,1.56,0.64,1), color .2s ease !important;
+}
+.topbar .icon-with-dot:hover i{
+  transform:scale(1.15) rotate(-8deg);
+}
+.topbar .icon-with-dot:active i{transform:scale(0.92)}
+/* Pulse ring when notification dot is visible */
+.topbar .icon-with-dot .dot:not(.hidden) ~ i::after,
+.topbar .icon-with-dot:has(.dot:not(.hidden)){
+  animation:topNotifPulse 2.2s ease-in-out infinite;
+}
+.topbar .icon-with-dot:has(.dot:not(.hidden))::before{
+  opacity:.65;
+  animation:topNotifGlow 2.2s ease-in-out infinite;
+}
+@keyframes topNotifPulse{
+  0%,100%{transform:scale(1)}
+  50%{transform:scale(1.08)}
+}
+@keyframes topNotifGlow{
+  0%,100%{opacity:.35}
+  50%{opacity:.75}
+}
+
+/* ----- CHAT HEADER (.chat-header) — premium glass + scroll-reactive ----- */
+.chat-header{
+  position:sticky;
+  top:0;
+  z-index:20;
+  min-height:68px !important;
+  padding:12px 14px !important;
+  background:linear-gradient(180deg,
+    rgba(255,255,255,0.92) 0%,
+    rgba(255,255,255,0.78) 100%) !important;
+  -webkit-backdrop-filter:saturate(185%) blur(22px) brightness(1.04) !important;
+  backdrop-filter:saturate(185%) blur(22px) brightness(1.04) !important;
+  border-bottom:1px solid rgba(255,255,255,0.55) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.9) inset,
+    0 6px 20px -8px rgba(120,80,160,0.18),
+    0 1px 4px -1px rgba(20,30,40,0.06) !important;
+  transition:
+    min-height .3s cubic-bezier(.2,.85,.2,1),
+    padding .3s cubic-bezier(.2,.85,.2,1),
+    box-shadow .3s ease,
+    background .3s ease !important;
+}
+[data-theme="dark"] .chat-header,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .chat-header{
+    background:linear-gradient(180deg,
+      rgba(28,38,58,0.92) 0%,
+      rgba(16,24,38,0.82) 100%) !important;
+    border-bottom:1px solid rgba(255,255,255,0.1) !important;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.08) inset,
+      0 6px 20px -8px rgba(0,0,0,0.55) !important;
+  }
+}
+
+/* Chat title — refined typography */
+.chat-title{
+  font-size:16.5px !important;
+  font-weight:800 !important;
+  letter-spacing:-.2px !important;
+  background:linear-gradient(135deg, var(--text), var(--text-2));
+  -webkit-background-clip:text;
+  background-clip:text;
+  -webkit-text-fill-color:transparent;
+  transition:font-size .3s ease, letter-spacing .3s ease !important;
+}
+.chat-subtitle{
+  font-size:12px !important;
+  font-weight:600 !important;
+  letter-spacing:.1px !important;
+  opacity:.85;
+  transition:font-size .3s ease, opacity .3s ease !important;
+}
+
+/* Avatar in chat header — gradient ring */
+.chat-header .avatar{
+  position:relative;
+  box-shadow:
+    0 0 0 2px rgba(255,255,255,0.9),
+    0 0 0 4px transparent,
+    0 6px 14px -4px rgba(120,80,160,0.4) !important;
+  transition:transform .3s cubic-bezier(.2,.85,.2,1), box-shadow .3s ease !important;
+}
+.chat-header .avatar::before{
+  content:'';
+  position:absolute;
+  inset:-4px;
+  border-radius:50%;
+  background:conic-gradient(from 0deg,
+    #ff3d77, #c33dff, #5b8bff, #00c6ff, #ff3d77);
+  z-index:-1;
+  opacity:.6;
+  animation:avatarRingRotate 6s linear infinite;
+}
+[data-theme="dark"] .chat-header .avatar{
+  box-shadow:
+    0 0 0 2px rgba(20,30,45,0.95),
+    0 0 0 4px transparent,
+    0 6px 14px -4px rgba(0,0,0,0.5) !important;
+}
+@keyframes avatarRingRotate{
+  to{transform:rotate(360deg)}
+}
+
+/* Call button — premium gradient + pulse to invite tapping */
+.action-circle-btn.call-combo-btn{
+  background:linear-gradient(135deg,
+    rgba(0,198,255,0.18),
+    rgba(0,114,255,0.22)) !important;
+  border:1px solid rgba(0,162,255,0.35) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.3) inset,
+    0 4px 14px -4px rgba(0,162,255,0.45),
+    0 0 0 1px rgba(0,162,255,0.15) !important;
+}
+.action-circle-btn.call-combo-btn i{
+  color:#00a2ff !important;
+  stroke-width:2.2 !important;
+}
+.action-circle-btn.call-combo-btn:hover{
+  background:linear-gradient(135deg,
+    rgba(0,198,255,0.28),
+    rgba(0,114,255,0.34)) !important;
+  transform:translateY(-1px) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.4) inset,
+    0 6px 18px -4px rgba(0,162,255,0.55),
+    0 0 0 1px rgba(0,162,255,0.25) !important;
+}
+
+/* More-options button — subtle glass */
+#chatMoreMenuBtn{
+  background:rgba(255,255,255,0.5) !important;
+  border:1px solid rgba(255,255,255,0.5) !important;
+}
+[data-theme="dark"] #chatMoreMenuBtn,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) #chatMoreMenuBtn{
+    background:rgba(255,255,255,0.06) !important;
+    border:1px solid rgba(255,255,255,0.1) !important;
+  }
+}
+
+/* ----- SCROLL-REACTIVE CHAT HEADER -----
+   When the user scrolls messages down, the chat-header collapses to a
+   compact, more focused bar (smaller avatar, tighter padding, condensed
+   title). When they scroll back to top, it expands. The .chat-header.scrolled
+   class is toggled by a scroll listener added in app.js. */
+
+.chat-header.scrolled{
+  min-height:52px !important;
+  padding:7px 14px !important;
+  background:linear-gradient(180deg,
+    rgba(255,255,255,0.96) 0%,
+    rgba(255,255,255,0.88) 100%) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.95) inset,
+    0 10px 30px -10px rgba(120,80,160,0.28),
+    0 2px 8px -2px rgba(20,30,40,0.12) !important;
+}
+[data-theme="dark"] .chat-header.scrolled,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .chat-header.scrolled{
+    background:linear-gradient(180deg,
+      rgba(32,42,62,0.96) 0%,
+      rgba(20,28,42,0.92) 100%) !important;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.1) inset,
+      0 10px 30px -10px rgba(0,0,0,0.7) !important;
+  }
+}
+.chat-header.scrolled .chat-title{
+  font-size:14.5px !important;
+  letter-spacing:-.1px !important;
+}
+.chat-header.scrolled .chat-subtitle{
+  font-size:11px !important;
+  opacity:.7;
+}
+.chat-header.scrolled .avatar{
+  transform:scale(0.82);
+  box-shadow:
+    0 0 0 1.5px rgba(255,255,255,0.9),
+    0 4px 10px -3px rgba(120,80,160,0.4) !important;
+}
+.chat-header.scrolled .avatar::before{
+  inset:-3px;
+  opacity:.4;
+  animation-duration:12s;
+}
+.chat-header.scrolled .action-circle-btn{
+  transform:scale(0.9);
+}
+/* Add a fade-in top accent line when scrolled (signals "you've scrolled away from top") */
+.chat-header.scrolled::after{
+  content:'';
+  position:absolute;
+  left:14px;right:14px;bottom:-1px;
+  height:1.5px;
+  background:linear-gradient(90deg,
+    transparent 0%,
+    rgba(255,90,140,0.5) 30%,
+    rgba(195,61,255,0.5) 70%,
+    transparent 100%);
+  border-radius:2px;
+  pointer-events:none;
+  animation:scrolledAccentFadeIn .4s ease both;
+}
+@keyframes scrolledAccentFadeIn{from{opacity:0}to{opacity:1}}
+
+/* Back button — visible on chat-thread-open mobile, refined */
+.back-btn{
+  background:rgba(255,255,255,0.45) !important;
+  border:1px solid rgba(255,255,255,0.5) !important;
+  box-shadow:0 1px 0 rgba(255,255,255,0.8) inset, 0 2px 6px -2px rgba(0,0,0,0.08) !important;
+}
+[data-theme="dark"] .back-btn,
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .back-btn{
+    background:rgba(255,255,255,0.06) !important;
+    border:1px solid rgba(255,255,255,0.1) !important;
+  }
+}
+
+/* Mobile tweaks — keep topbar elegant on small screens */
+@media (max-width:480px){
+  .topbar{padding:9px 12px !important;height:58px !important}
+  .brand-wordmark{font-size:27px !important;padding:6px 14px 7px !important}
+  .chat-header{padding:10px 12px !important;min-height:62px !important}
+  .chat-header.scrolled{padding:6px 12px !important;min-height:48px !important}
+}
+
+/* Reduced motion: disable gradient flow + ring rotation */
+@media (prefers-reduced-motion: reduce){
+  .topbar::after{animation:none}
+  .chat-header .avatar::before{animation:none}
+  .topbar .icon-with-dot:has(.dot:not(.hidden)){animation:none}
+  .topbar .icon-with-dot:has(.dot:not(.hidden))::before{animation:none}
+}

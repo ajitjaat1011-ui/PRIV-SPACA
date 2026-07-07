@@ -2708,11 +2708,38 @@ function bindComposer() {
   }
 
   const scroller = $('#messagesScroll');
+  const chatHeader = document.querySelector('.chat-header');
+  // Scroll-reactive chat header: collapse to compact bar when user scrolls
+  // down (adds .scrolled class — see style.css). Throttled via rAF so we
+  // don't thrash layout on every scroll event.
+  let _scrollRafPending = false;
+  let _lastScrollTop = 0;
+  function updateChatHeaderScrolled() {
+    _scrollRafPending = false;
+    if (!chatHeader) return;
+    // Toggle "scrolled" state when user has scrolled more than 24px down
+    // from the top of the messages list. This makes the header collapse to
+    // a more compact, focused bar — giving the messages more vertical room
+    // and signaling "you're reading history". Scrolling back to top expands.
+    const st = scroller.scrollTop;
+    const shouldCollapse = st > 24;
+    if (chatHeader.classList.contains('scrolled') !== shouldCollapse) {
+      chatHeader.classList.toggle('scrolled', shouldCollapse);
+    }
+    _lastScrollTop = st;
+  }
   scroller.addEventListener('scroll', () => {
     const atBottom = (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 80;
     lastMessagesScrollAtBottom = atBottom;
     $('#scrollBottomBtn').classList.toggle('hidden', atBottom);
+    // Throttle the chat-header scrolled-state update to one rAF per frame
+    if (!_scrollRafPending) {
+      _scrollRafPending = true;
+      requestAnimationFrame(updateChatHeaderScrolled);
+    }
   });
+  // Also update on initial mount (in case we restored a non-zero scroll position)
+  requestAnimationFrame(updateChatHeaderScrolled);
   $('#scrollBottomBtn').addEventListener('click', () => {
     scroller.scrollTop = scroller.scrollHeight;
   });
