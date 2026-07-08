@@ -5070,6 +5070,162 @@ body{
   :root:not([data-theme="light"]) .member-typing{-webkit-text-fill-color:transparent}
 }
 
+/* ===== Clean Settings Redesign v92 ===== */
+
+/* 1. Settings body — more breathing room, flex gap between groups */
+.settings-body{padding:6px 16px 40px;display:flex;flex-direction:column;gap:22px}
+
+/* 2. Section titles — no uppercase, lighter, pulled closer to card */
+.settings-section-title{
+  font-size:12.5px;font-weight:700;letter-spacing:0;text-transform:none;
+  color:var(--muted-2);padding:0 4px;margin-bottom:-14px;
+}
+
+/* 3. Strips — borderless card with soft shadow */
+.settings-strip{
+  border:none!important;background:var(--surface)!important;
+  border-radius:18px;overflow:hidden;box-shadow:var(--shadow-xs);
+  display:flex;flex-direction:column;
+}
+
+/* 4. Rows — generous padding, no individual borders, softer hover */
+.settings-row{
+  border:none!important;border-bottom:1px solid var(--line)!important;
+  border-radius:0!important;padding:14px 16px!important;margin:0!important;
+  min-height:auto!important;background:transparent!important;
+  font-weight:600;font-size:14px;
+  transition:background .15s ease;
+}
+.settings-row:last-child{border-bottom:none!important}
+.settings-row:hover{background:var(--accent-softer)!important}
+.settings-row:active{transform:scale(.995);background:rgba(var(--accent-rgb),.06)!important}
+.settings-row i{width:20px;height:20px;color:var(--muted);flex-shrink:0}
+.settings-row .chev{margin-left:auto;color:var(--muted-2);opacity:.5}
+.settings-row.danger{color:var(--red)}
+.settings-row.danger i{color:var(--red);opacity:.65}
+.settings-row.danger .chev{color:var(--red);opacity:.4}
+.settings-row.danger:hover{background:rgba(237,73,86,.06)!important}
+
+/* 5. Toggle row — refined */
+.settings-toggle-row{padding:14px 16px!important;min-height:auto!important}
+.settings-toggle-meta{font-weight:600;font-size:14px;color:var(--text)}
+.settings-toggle-meta i,.settings-toggle-meta svg{color:var(--muted)!important;width:20px!important;height:20px!important}
+.settings-toggle-hint{font-size:12.5px;font-weight:600;color:var(--muted-2);letter-spacing:0}
+.settings-toggle-row.active .settings-toggle-hint{color:var(--accent)}
+
+/* 6. Switch — modern, borderless, smooth */
+.settings-switch{
+  width:48px;height:30px;border-radius:999px;
+  border:none!important;background:var(--line-2);
+  padding:3px;transition:background .25s ease;
+}
+.settings-switch-knob{
+  width:24px;height:24px;border-radius:50%;background:#fff;
+  box-shadow:0 2px 8px rgba(0,0,0,.10);
+  transition:transform .25s cubic-bezier(.4,0,.2,1),background .25s ease;
+}
+.settings-toggle-input:checked+.settings-switch{background:var(--accent)}
+.settings-toggle-input:checked+.settings-switch .settings-switch-knob{transform:translateX(18px);background:#fff}
+
+/* 7. Chips — softer, smaller text, no uppercase */
+.settings-chip{
+  font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;
+  letter-spacing:0;text-transform:none;
+  background:var(--bg-soft);color:var(--muted);
+  transition:all .2s ease;
+}
+.settings-chip.on{background:rgba(35,165,90,.08);color:var(--green)}
+.settings-chip.live{background:rgba(var(--accent-rgb),.08);color:var(--accent)}
+
+/* 8. Theme toggle — refined pill */
+.theme-toggle{
+  background:var(--bg-soft);border-radius:12px;padding:3px;gap:2px;
+}
+.theme-toggle .theme-opt{
+  background:transparent;border:0;cursor:pointer;color:var(--muted);
+  width:34px;height:30px;border-radius:10px;display:inline-flex;
+  align-items:center;justify-content:center;font-weight:800;font-size:11px;
+  transition:all .2s ease;
+}
+.theme-toggle .theme-opt i{width:14px;height:14px}
+.theme-toggle .theme-opt.active{
+  background:var(--surface);color:var(--accent);
+  box-shadow:0 1px 4px rgba(0,0,0,.06);
+}
+
+/* 9. Color picker — slightly larger, refined active ring */
+.color-picker{gap:8px}
+.color-swatch{
+  width:26px;height:26px;border-radius:50%;
+  border:2.5px solid transparent;cursor:pointer;
+  transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease;
+}
+.color-swatch:hover{transform:scale(1.15)}
+.color-swatch.active{
+  border-color:var(--text);transform:scale(1.1);
+  box-shadow:0 2px 8px rgba(0,0,0,.10);
+}
+
+/* 10. VIP key row — blends into card, softer */
+.vip-settings-strip{padding:4px!important}
+.vip-key-row{
+  background:var(--bg-soft);border:1px solid var(--line);
+  border-radius:14px;padding:10px 12px;
+  transition:border-color .2s ease,box-shadow .2s ease;
+}
+.vip-key-row:focus-within{border-color:rgba(var(--accent-rgb),.35);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.06)}
+.vip-key-row i,.vip-key-row svg{width:18px!important;height:18px!important}
+.vip-key-row input{font-size:13px;font-weight:600}
+.vip-key-row button{
+  border:0;border-radius:10px;background:#159cff;color:#fff;
+  font-size:12px;font-weight:800;padding:8px 14px;cursor:pointer;
+  transition:all .15s ease;
+}
+.vip-key-row button:hover{filter:brightness(1.08)}
+.vip-key-row button:active{transform:scale(.95)}
+
+/* 11. Select — softer, rounded */
+.settings-select{
+  margin-left:auto;border:1px solid var(--line);background:var(--bg-soft);
+  color:var(--text);border-radius:12px;padding:7px 28px 7px 12px;
+  font-weight:700;font-size:12px;outline:none;
+  transition:border-color .2s ease;
+}
+.settings-select:focus{border-color:var(--accent)}
+
+/* 12. Footer — lighter, more subtle */
+.settings-foot{
+  text-align:center;color:var(--muted-2);font-size:11.5px;
+  padding:4px 8px 8px;letter-spacing:0;
+}
+.settings-foot a{color:var(--accent);text-decoration:none;font-weight:600}
+
+/* 13. Settings sheet card — refined radius */
+#settingsSheet .sheet-card{border-radius:26px 26px 0 0}
+#settingsSheet .sheet-head h3{font-size:17px;font-weight:800;letter-spacing:-.2px}
+
+/* 14. Dark mode parity */
+[data-theme="dark"] .settings-strip{background:var(--surface)!important;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+[data-theme="dark"] .settings-row:hover{background:rgba(255,255,255,.04)!important}
+[data-theme="dark"] .settings-row:active{background:rgba(255,255,255,.06)!important}
+[data-theme="dark"] .settings-row.danger:hover{background:rgba(237,73,86,.08)!important}
+[data-theme="dark"] .settings-switch{background:rgba(255,255,255,.12)}
+[data-theme="dark"] .color-swatch.active{border-color:rgba(255,255,255,.45)}
+[data-theme="dark"] .vip-key-row{background:rgba(255,255,255,.05);border-color:var(--border)}
+[data-theme="dark"] .vip-key-row:focus-within{border-color:rgba(var(--accent-rgb),.4)}
+[data-theme="dark"] .settings-select{background:rgba(255,255,255,.06);border-color:var(--border)}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .settings-strip{background:var(--surface)!important;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  :root:not([data-theme="light"]) .settings-row:hover{background:rgba(255,255,255,.04)!important}
+  :root:not([data-theme="light"]) .settings-row:active{background:rgba(255,255,255,.06)!important}
+  :root:not([data-theme="light"]) .settings-row.danger:hover{background:rgba(237,73,86,.08)!important}
+  :root:not([data-theme="light"]) .settings-switch{background:rgba(255,255,255,.12)}
+  :root:not([data-theme="light"]) .color-swatch.active{border-color:rgba(255,255,255,.45)}
+  :root:not([data-theme="light"]) .vip-key-row{background:rgba(255,255,255,.05);border-color:var(--border)}
+  :root:not([data-theme="light"]) .vip-key-row:focus-within{border-color:rgba(var(--accent-rgb),.4)}
+  :root:not([data-theme="light"]) .settings-select{background:rgba(255,255,255,.06);border-color:var(--border)}
+}
+
 /* ===== RESPONSIVE — Liquid Glass Home ===== */
 @media (max-width:480px){
   .post-card{
