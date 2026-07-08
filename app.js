@@ -1052,17 +1052,19 @@ function updateTopbarHeader(tab) {
   const igH = $id('#igUsernameHeader');
   const igT = $id('#igUsernameText');
   const topbar = brand ? brand.closest('.topbar') : null;
-  const appShell = document.getElementById('appShell');
-  
+  const feedWrap = document.querySelector('.feed-wrap');
+
   if (tab === 'feed') {
+    // Move topbar inside feed-wrap so it scrolls with feed content
+    if (topbar && feedWrap && topbar.parentElement !== feedWrap) {
+      feedWrap.insertBefore(topbar, feedWrap.firstChild);
+    }
     if (topbar) topbar.style.display = 'flex';
-    if (appShell) appShell.style.gridTemplateRows = 'auto 1fr';
     if (brand) brand.classList.remove('hidden');
     if (igH) igH.classList.add('hidden');
   } else {
-    // Hide the entire topbar header entirely on non-home pages (search, profile, chats, etc.)
+    // Hide topbar on non-feed views (it stays in feed-wrap DOM but is display:none)
     if (topbar) topbar.style.display = 'none';
-    if (appShell) appShell.style.gridTemplateRows = '1fr';
     if (brand) brand.classList.add('hidden');
     if (igH) igH.classList.add('hidden');
   }
@@ -2745,19 +2747,38 @@ function bindComposer() {
   }
 
   const scroller = $id('#messagesScroll');
-  // Move the chat-header inside messages-scroll so it scrolls with messages
   const chatHeader = document.querySelector('.chat-header');
-  const chatPane = document.querySelector('.chat-pane');
-  if (chatHeader && scroller && chatPane && chatHeader.parentElement === chatPane) {
-    scroller.insertBefore(chatHeader, scroller.firstChild);
+  // Scroll-reactive chat header: collapse to compact bar when user scrolls
+  // down (adds .scrolled class — see style.css). Throttled via rAF so we
+  // don't thrash layout on every scroll event.
+  let _scrollRafPending = false;
+  let _lastScrollTop = 0;
+  function updateChatHeaderScrolled() {
+    _scrollRafPending = false;
+    if (!chatHeader) return;
+    // Toggle "scrolled" state when user has scrolled more than 24px down
+    // from the top of the messages list. This makes the header collapse to
+    // a more compact, focused bar — giving the messages more vertical room
+    // and signaling "you're reading history". Scrolling back to top expands.
+    const st = scroller.scrollTop;
+    const shouldCollapse = st > 24;
+    if (chatHeader.classList.contains('scrolled') !== shouldCollapse) {
+      chatHeader.classList.toggle('scrolled', shouldCollapse);
+    }
+    _lastScrollTop = st;
   }
-  // Chat header no longer uses scroll-reactive .scrolled class
-  // (header scrolls with content instead of being sticky).
   scroller.addEventListener('scroll', () => {
     const atBottom = (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 80;
     lastMessagesScrollAtBottom = atBottom;
     $id('#scrollBottomBtn').classList.toggle('hidden', atBottom);
+    // Throttle the chat-header scrolled-state update to one rAF per frame
+    if (!_scrollRafPending) {
+      _scrollRafPending = true;
+      requestAnimationFrame(updateChatHeaderScrolled);
+    }
   });
+  // Also update on initial mount (in case we restored a non-zero scroll position)
+  requestAnimationFrame(updateChatHeaderScrolled);
   $id('#scrollBottomBtn').addEventListener('click', () => {
     scroller.scrollTop = scroller.scrollHeight;
   });
