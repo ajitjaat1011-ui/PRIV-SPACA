@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v89';
+const APP_VERSION = 'priv-spaca-v90';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -167,6 +167,8 @@ let startupFallback = null;
 async function api(path, options = {}) {
   const opts = Object.assign({ method: 'GET', headers: {} }, options);
   opts.headers = Object.assign({}, opts.headers, authHeaders());
+  // v90: Tell the server our version so it can 426-reject stale clients
+  if (APP_VERSION) opts.headers['X-App-Version'] = APP_VERSION;
   if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(opts.body);
@@ -196,6 +198,24 @@ async function api(path, options = {}) {
     let data = null;
     try { data = await res.json(); } catch (_) { data = null; }
     if (!res.ok) {
+      // v90: Server says we're running an outdated version — force reload.
+      // This clears all caches and storage so the new SW + code load cleanly.
+      if (res.status === 426) {
+        console.warn('[api] 426 upgrade required:', data && data.minVersion);
+        sessionStorage.setItem('ps_version_reload_done', '1');
+        sessionStorage.setItem('ps_sw_reload_once', '1');
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHES' });
+        }
+        toast('Updating to latest version...', 'info');
+        setTimeout(() => {
+          try { localStorage.clear(); } catch (_) {}
+          try { sessionStorage.clear(); } catch (_) {}
+          location.replace('/?v=' + Date.now());
+        }, 800);
+        // Return a promise that never resolves so the caller hangs cleanly
+        return new Promise(() => {});
+      }
       if (res.status === 401 && State.token && !path.startsWith('/auth/')) {
         logout(true);
       }
@@ -8171,7 +8191,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=89').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=90').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
@@ -8201,33 +8221,54 @@ function registerServiceWorker() {
     }).catch(err => console.warn('[sw] register failed', err.message));
   });
 
-  // ====== Smooth version update: periodic probe ======
-  // Every 2 min (while tab is visible), silently fetch /sw.js and check if
-  // SW_VERSION changed. If it did, reload ONCE per session with a toast.
-  // Loop protection: ps_sw_reload_once (sessionStorage) + ps_version_reload_done
+  // ====== v90: Aggressive version probe with /api/health + /sw.js ======
+  // Probes every 30s (while visible + online). Checks BOTH the health endpoint
+  // (for server-side APP_MIN_VERSION 426 signal) and sw.js (for SW_VERSION).
+  // On version mismatch, clears caches and reloads once per session.
+  const VERSION_PROBE_MS = 30 * 1000;
   setInterval(async () => {
-    // Guard 1: already reloaded in this session for a version update
     if (sessionStorage.getItem('ps_version_reload_done')) return;
-    // Guard 2: tab is not visible — don't interrupt background tabs
     if (document.hidden) return;
-    // Guard 3: no network
     if (!navigator.onLine) return;
     try {
-      const res = await fetch('/sw.js?t=' + Date.now(), { cache: 'no-store' });
-      if (!res.ok) return;
-      const text = await res.text();
+      // 1) Check /api/health for server-side minVersion signal
+      const hRes = await fetch('/api/health?t=' + Date.now(), { cache: 'no-store' });
+      if (hRes.ok) {
+        const hData = await hRes.json();
+        if (hData.minVersion) {
+          const parseV = (v) => { const m = String(v).match(/v(\d+)$/); return m ? parseInt(m[1], 10) : 0; };
+          if (parseV(APP_VERSION) < parseV(hData.minVersion)) {
+            console.log('[update] server requires minVersion:', hData.minVersion, '(current:', APP_VERSION + ')');
+            sessionStorage.setItem('ps_version_reload_done', '1');
+            sessionStorage.setItem('ps_sw_reload_once', '1');
+            toast('Updating to latest version...', 'info');
+            setTimeout(() => {
+              try { localStorage.clear(); } catch (_) {}
+              try { sessionStorage.clear(); } catch (_) {}
+              location.replace('/?v=' + Date.now());
+            }, 800);
+            return;
+          }
+        }
+      }
+      // 2) Check /sw.js for SW_VERSION change (catches deploys without env set)
+      const sRes = await fetch('/sw.js?t=' + Date.now(), { cache: 'no-store' });
+      if (!sRes.ok) return;
+      const text = await sRes.text();
       const match = text.match(/SW_VERSION\s*=\s*['"`]([^'"`]+)['"`]/);
       if (!match) return;
       const serverVersion = match[1];
-      if (serverVersion === APP_VERSION) return; // same version, nothing to do
-      // New version detected on server — reload once
-      console.log('[update] new version available: ' + serverVersion + ' (current: ' + APP_VERSION + ')');
+      if (serverVersion === APP_VERSION) return;
+      console.log('[update] new version available:', serverVersion, '(current:', APP_VERSION + ')');
       sessionStorage.setItem('ps_version_reload_done', '1');
-      sessionStorage.setItem('ps_sw_reload_once', '1'); // also guard SW handler
-      toast('New version available — refreshing…', 'info');
+      sessionStorage.setItem('ps_sw_reload_once', '1');
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHES' });
+      }
+      toast('New version available — refreshing...', 'info');
       setTimeout(() => location.reload(), 1200);
     } catch (_) { /* network error, ignore */ }
-  }, 2 * 60 * 1000); // every 2 minutes
+  }, VERSION_PROBE_MS);
 }
 
 // ====== Self-healing utilities ======
