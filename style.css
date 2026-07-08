@@ -4882,6 +4882,194 @@ body{
   :root:not([data-theme="light"]) .post-music-toggle{background:rgba(0,0,0,.35) !important;border-color:rgba(255,255,255,.15) !important}
 }
 
+/* ===== Professional Soft Redesign v91 ===== */
+
+/* ── 1. Bottom Navigation — Animated Active Underline + Premium Polish ── */
+.bn-btn{position:relative}
+.bn-btn::after{
+  content:'';position:absolute;bottom:1px;left:50%;
+  width:22px;height:3px;border-radius:3px;
+  background:var(--accent);
+  transform:translateX(-50%) scaleX(0);transform-origin:center;
+  transition:transform .4s cubic-bezier(.34,1.56,.64,1),opacity .3s ease;
+  opacity:0;
+}
+.bn-btn.active::after{transform:translateX(-50%) scaleX(1);opacity:1}
+.bn-btn:hover:not(.active){background:rgba(var(--accent-rgb),.04)!important}
+.bn-btn .dot{animation:dot-pop .3s ease-out both,dotPulseRing 2.2s ease-in-out 1.2s infinite}
+@keyframes dotPulseRing{0%,100%{box-shadow:0 0 0 0 rgba(255,107,138,.28)}50%{box-shadow:0 0 0 4px rgba(255,107,138,0)}}
+.bn-btn:hover i,.bn-btn:hover svg{transform:translateY(-.5px)}
+.bn-dp-btn.active .bn-avatar-lg{box-shadow:0 0 0 3px rgba(0,162,255,.18),0 2px 8px rgba(0,0,0,.06)!important}
+.floating-add-btn{transition:transform .3s cubic-bezier(.34,1.56,.64,1),box-shadow .3s ease!important}
+
+/* ── 2. Chat List — Active Accent Border + Card Polish ── */
+.member-item{
+  position:relative;
+  contain:layout style paint;
+  border-radius:18px!important;
+  min-height:72px!important;
+  gap:14px!important;
+  padding:10px 6px 10px 10px!important;
+  transition:background .2s ease,transform .15s ease,box-shadow .2s ease!important;
+}
+.member-item::before{
+  content:'';position:absolute;left:0;top:50%;
+  width:3.5px;height:0;border-radius:3px;
+  background:var(--accent);
+  transform:translateY(-50%);
+  transition:height .35s cubic-bezier(.34,1.56,.64,1);
+}
+.member-item.active::before{height:30px}
+.member-item.active{
+  background:var(--accent-softer)!important;
+  border-radius:0 18px 18px 0!important;
+  padding-left:14px!important;
+}
+.member-item:hover:not(.active){background:rgba(var(--accent-rgb),.035)!important}
+.member-item .meta .nm{font-size:15.5px!important;font-weight:800!important;letter-spacing:-.15px;transition:color .2s}
+.member-item.active .meta .nm{color:var(--accent)!important}
+.member-item .meta .un,.member-item .last-msg{font-size:13.5px!important;font-weight:650!important}
+.member-typing{
+  font-weight:750!important;
+  background:linear-gradient(90deg,var(--accent),#a855f7,var(--accent));
+  background-size:200% 100%;
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;
+  animation:typeGrad 2s ease-in-out infinite;
+}
+@keyframes typeGrad{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+.member-item .row-time{font-weight:750!important;font-size:12.5px!important;letter-spacing:.2px}
+
+/* ── 3. Search — Professional Bar + Refined Result Cards + Entrance Animations ── */
+.search-bar{
+  border-radius:18px;
+  border:1.5px solid var(--line);
+  transition:all .3s cubic-bezier(.4,0,.2,1);
+}
+.search-bar:focus-within{
+  border-color:var(--accent)!important;
+  box-shadow:0 0 0 4px rgba(var(--accent-rgb),.08),0 4px 20px rgba(0,0,0,.04)!important;
+  background:var(--bg-2)!important;
+}
+.search-results{gap:8px!important}
+.search-results li{
+  border-radius:20px!important;
+  border:1px solid var(--line)!important;
+  padding:14px 16px!important;
+  background:var(--surface)!important;
+  box-shadow:var(--shadow-xs)!important;
+  transition:all .25s cubic-bezier(.4,0,.2,1)!important;
+  animation:searchResultIn .32s cubic-bezier(.2,.85,.2,1) both;
+}
+.search-results li:nth-child(1){animation-delay:.02s}
+.search-results li:nth-child(2){animation-delay:.06s}
+.search-results li:nth-child(3){animation-delay:.10s}
+.search-results li:nth-child(4){animation-delay:.14s}
+.search-results li:nth-child(5){animation-delay:.18s}
+.search-results li:nth-child(n+6){animation-delay:.22s}
+@keyframes searchResultIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+.search-results li:hover{
+  transform:translateY(-1px)!important;
+  box-shadow:var(--shadow-sm)!important;
+  border-color:rgba(var(--accent-rgb),.15)!important;
+  background:var(--surface-2)!important;
+}
+.search-results li:active{transform:scale(.985)!important}
+.search-results .online-dot{
+  width:10px!important;height:10px!important;
+  box-shadow:0 0 0 2.5px rgba(35,165,90,.18);
+}
+.search-results li .meta .nm{font-size:15.5px!important;font-weight:800!important;letter-spacing:-.1px}
+.search-results li .meta .un{font-size:13px!important}
+.search-results li .ghost-btn{
+  width:40px!important;height:40px!important;
+  border-radius:50%!important;
+  background:var(--accent-soft)!important;
+  color:var(--accent)!important;
+  border:none!important;
+  box-shadow:none!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+  transition:all .2s cubic-bezier(.4,0,.2,1)!important;
+}
+.search-results li .ghost-btn:hover{
+  background:var(--accent)!important;color:#fff!important;
+  transform:scale(1.08);box-shadow:0 4px 12px rgba(0,162,255,.25)!important;
+}
+.search-results li .ghost-btn:active{transform:scale(.92)!important}
+.search-results li .ghost-btn i,.search-results li .ghost-btn svg{width:18px!important;height:18px!important}
+.search-section-title{padding:14px 6px 6px;font-size:12px;letter-spacing:.8px;font-weight:800}
+.search-empty{padding:52px 24px;font-size:14.5px;font-weight:500}
+
+/* ── 4. Profile — Animated Tab Indicator + Refined Spacing + Avatar Glow ── */
+.ig-profile-head{padding:22px 20px 14px;gap:24px}
+.avatar.xxl{
+  box-shadow:0 4px 24px rgba(0,0,0,.06);
+  transition:box-shadow .3s ease,transform .3s ease;
+}
+.avatar.xxl:active{transform:scale(.96)}
+.avatar.xxl.online::after{box-shadow:0 0 0 3px rgba(35,165,90,.18)}
+.stat-btn{padding:8px 16px;border-radius:14px;transition:all .2s ease}
+.stat-btn:hover{background:var(--accent-softer);transform:translateY(-1px)}
+.stat-btn:active{transform:scale(.95)}
+.stat-btn strong{font-size:18px;font-weight:900;letter-spacing:-.3px}
+.stat-btn span{font-size:12.5px;font-weight:600}
+/* Animated sliding underline for active tab — replaces inset box-shadow */
+.ig-tab{position:relative;transition:color .25s ease}
+.ig-tab.active{box-shadow:none!important}
+.ig-tab::after{
+  content:'';position:absolute;bottom:0;left:20%;
+  width:60%;height:2.5px;border-radius:3px;
+  background:var(--accent);
+  transform:scaleX(0);transform-origin:center;
+  transition:transform .35s cubic-bezier(.34,1.56,.64,1);
+}
+.ig-tab.active::after{transform:scaleX(1)}
+/* Softer action buttons */
+.ig-action-btn{border-radius:14px;font-weight:700;transition:all .2s cubic-bezier(.4,0,.2,1)}
+.ig-action-btn:active{transform:scale(.97)}
+.ig-action-btn.primary{box-shadow:0 4px 16px rgba(0,162,255,.22)}
+.ig-action-btn.primary:active{box-shadow:0 2px 8px rgba(0,162,255,.15);transform:scale(.97)}
+/* Discover cards — hover lift */
+.discover-card{border-radius:18px;box-shadow:var(--shadow-xs);transition:all .2s ease}
+.discover-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-sm)}
+.discover-card:active{transform:scale(.97)}
+/* Profile banner pill hover */
+.profile-banner-pill{transition:all .2s ease}
+.profile-banner-pill:hover{background:var(--accent-soft)!important;border-color:rgba(var(--accent-rgb),.2)!important}
+/* IG profile meta spacing */
+.ig-profile-meta{padding:2px 20px 12px;gap:2px}
+.ig-profile-actions{padding:6px 20px 16px}
+/* Posts grid refinement */
+.ig-posts-grid{gap:2.5px;padding:2.5px}
+.ig-grid-cell{border-radius:3px;transition:transform .2s ease}
+.ig-grid-cell:active{transform:scale(.97)}
+
+/* ── 5. Dark Mode — Professional Overrides ── */
+[data-theme="dark"] .member-item::before{background:var(--accent)}
+[data-theme="dark"] .member-item.active{background:rgba(var(--accent-rgb),.08)!important}
+[data-theme="dark"] .search-results li{background:var(--surface)!important;border-color:var(--border)!important}
+[data-theme="dark"] .search-results li:hover{background:var(--surface-2)!important;border-color:rgba(var(--accent-rgb),.2)!important}
+[data-theme="dark"] .search-bar:focus-within{box-shadow:0 0 0 4px rgba(var(--accent-rgb),.12),0 4px 20px rgba(0,0,0,.2)!important}
+[data-theme="dark"] .ig-profile-head{background:var(--surface)}
+[data-theme="dark"] .ig-tab::after{background:var(--accent)}
+[data-theme="dark"] .avatar.xxl{box-shadow:0 4px 24px rgba(0,0,0,.2)}
+[data-theme="dark"] .discover-card{box-shadow:0 2px 8px rgba(0,0,0,.15)}
+[data-theme="dark"] .search-results li .ghost-btn{background:rgba(var(--accent-rgb),.12)!important}
+[data-theme="dark"] .member-typing{-webkit-text-fill-color:transparent}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .member-item::before{background:var(--accent)}
+  :root:not([data-theme="light"]) .member-item.active{background:rgba(var(--accent-rgb),.08)!important}
+  :root:not([data-theme="light"]) .search-results li{background:var(--surface)!important;border-color:var(--border)!important}
+  :root:not([data-theme="light"]) .search-results li:hover{background:var(--surface-2)!important;border-color:rgba(var(--accent-rgb),.2)!important}
+  :root:not([data-theme="light"]) .search-bar:focus-within{box-shadow:0 0 0 4px rgba(var(--accent-rgb),.12),0 4px 20px rgba(0,0,0,.2)!important}
+  :root:not([data-theme="light"]) .ig-profile-head{background:var(--surface)}
+  :root:not([data-theme="light"]) .ig-tab::after{background:var(--accent)}
+  :root:not([data-theme="light"]) .avatar.xxl{box-shadow:0 4px 24px rgba(0,0,0,.2)}
+  :root:not([data-theme="light"]) .discover-card{box-shadow:0 2px 8px rgba(0,0,0,.15)}
+  :root:not([data-theme="light"]) .search-results li .ghost-btn{background:rgba(var(--accent-rgb),.12)!important}
+  :root:not([data-theme="light"]) .member-typing{-webkit-text-fill-color:transparent}
+}
+
 /* ===== RESPONSIVE — Liquid Glass Home ===== */
 @media (max-width:480px){
   .post-card{
