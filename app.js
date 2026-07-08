@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v85';
+const APP_VERSION = 'priv-spaca-v89';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -8171,7 +8171,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=85').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=89').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
@@ -8188,7 +8188,8 @@ function registerServiceWorker() {
             if (!sessionStorage.getItem('ps_sw_reload_once')) {
               sessionStorage.setItem('ps_sw_reload_once', '1');
               console.log('[sw] activated new version; reloading once');
-              setTimeout(() => location.reload(), 300);
+              toast('Updating to latest version…', 'info');
+              setTimeout(() => location.reload(), 600);
             }
           }
         });
@@ -8199,6 +8200,34 @@ function registerServiceWorker() {
       }
     }).catch(err => console.warn('[sw] register failed', err.message));
   });
+
+  // ====== Smooth version update: periodic probe ======
+  // Every 2 min (while tab is visible), silently fetch /sw.js and check if
+  // SW_VERSION changed. If it did, reload ONCE per session with a toast.
+  // Loop protection: ps_sw_reload_once (sessionStorage) + ps_version_reload_done
+  setInterval(async () => {
+    // Guard 1: already reloaded in this session for a version update
+    if (sessionStorage.getItem('ps_version_reload_done')) return;
+    // Guard 2: tab is not visible — don't interrupt background tabs
+    if (document.hidden) return;
+    // Guard 3: no network
+    if (!navigator.onLine) return;
+    try {
+      const res = await fetch('/sw.js?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const text = await res.text();
+      const match = text.match(/SW_VERSION\s*=\s*['"`]([^'"`]+)['"`]/);
+      if (!match) return;
+      const serverVersion = match[1];
+      if (serverVersion === APP_VERSION) return; // same version, nothing to do
+      // New version detected on server — reload once
+      console.log('[update] new version available: ' + serverVersion + ' (current: ' + APP_VERSION + ')');
+      sessionStorage.setItem('ps_version_reload_done', '1');
+      sessionStorage.setItem('ps_sw_reload_once', '1'); // also guard SW handler
+      toast('New version available — refreshing…', 'info');
+      setTimeout(() => location.reload(), 1200);
+    } catch (_) { /* network error, ignore */ }
+  }, 2 * 60 * 1000); // every 2 minutes
 }
 
 // ====== Self-healing utilities ======
@@ -8221,7 +8250,7 @@ const SelfHeal = {
   },
   clearStorage() {
     // Keys that must survive a heal cycle to prevent reload loops
-    const PROTECTED_KEYS = ['ps_sw_reload_once', 'ps_heal_attempts', 'ps_deep_heal_reason'];
+    const PROTECTED_KEYS = ['ps_sw_reload_once', 'ps_heal_attempts', 'ps_deep_heal_reason', 'ps_version_reload_done'];
     try {
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const key = localStorage.key(i);
