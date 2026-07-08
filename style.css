@@ -1206,7 +1206,7 @@ img{user-select:none;-webkit-user-drag:none}
 
 /* Chat pane */
 .chat-pane{
-  display:grid;grid-template-rows:auto 1fr auto auto auto auto;
+  display:flex;flex-direction:column;
   background:
     radial-gradient(900px 500px at 100% 0%, rgba(0,162,255,.06), transparent 55%),
     radial-gradient(900px 500px at 0% 100%, rgba(150,47,191,.04), transparent 55%),
@@ -1214,7 +1214,7 @@ img{user-select:none;-webkit-user-drag:none}
   min-width:0;height:100%;overflow:hidden;min-height:0;
   padding-bottom:72px;box-sizing:border-box;
 }
-.messages-scroll{min-height:0}
+.messages-scroll{min-height:0;flex-shrink:0}
 .chat-header{
   display:flex;justify-content:space-between;align-items:center;gap:8px;
   background:var(--bg-2);padding:10px 14px;border-bottom:1px solid var(--line);
@@ -1282,7 +1282,7 @@ img{user-select:none;-webkit-user-drag:none}
 .back-btn{padding:6px;flex-shrink:0}
 .back-btn i{width:22px;height:22px}
 
-.messages-scroll{position:relative;overflow-y:auto;padding:16px 18px 8px}
+.messages-scroll{position:relative;overflow-y:auto;padding:16px 18px 8px;flex:1;min-height:0}
 .messages-list{display:flex;flex-direction:column;gap:4px;max-width:920px;margin:0 auto}
 .day-divider{
   display:flex;align-items:center;gap:10px;margin:14px 0 8px;
@@ -4054,10 +4054,9 @@ body{
   50%{opacity:.75}
 }
 
-/* ----- CHAT HEADER (.chat-header) — premium glass + scroll-reactive ----- */
+/* ----- CHAT HEADER (.chat-header) — premium glass (scrolls with content) ----- */
 .chat-header{
-  position:sticky;
-  top:0;
+  position:static;
   z-index:20;
   min-height:68px !important;
   padding:12px 14px !important;
