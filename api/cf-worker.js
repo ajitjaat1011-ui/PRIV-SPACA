@@ -90,6 +90,12 @@ let CLOUDINARY_FOLDER = 'priv-spaca';
 let STREAM_API_KEY = '';
 let STREAM_API_SECRET = '';
 let STREAM_APP_ID = '';
+// When set to a non-empty version string (e.g. 'priv-spaca-v90'), ALL
+// authenticated API requests from clients running an older APP_VERSION will
+// be rejected with 426 + { minVersion, upgradeUrl }. This force-logs-out
+// every user on older code so they pick up the new version. Set to '' to
+// disable (normal operation).
+let APP_MIN_VERSION = '';
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true; // curl/server/API agents send no Origin
   try {
@@ -146,6 +152,7 @@ function loadConfig(env) {
   if (env.STREAM_API_KEY) STREAM_API_KEY = String(env.STREAM_API_KEY).trim();
   if (env.STREAM_API_SECRET) STREAM_API_SECRET = String(env.STREAM_API_SECRET).trim();
   if (env.STREAM_APP_ID) STREAM_APP_ID = String(env.STREAM_APP_ID).trim();
+  if (env.APP_MIN_VERSION) APP_MIN_VERSION = String(env.APP_MIN_VERSION).trim();
 }
 
 const JWT_EXPIRES_DAYS = 7;
@@ -1307,6 +1314,23 @@ const _AUTH_CACHE_TTL_MS = 30000;   // 30s is plenty for auth validation
 
 // Hono middleware
 async function requireAuth(c, next) {
+  // v90: Force version gate — reject ALL authed requests from stale clients.
+  // The client sends its APP_VERSION in the X-App-Version header. If the
+  // server has APP_MIN_VERSION set and the client version is older, we
+  // return 426 so the client knows to reload. We also check the /sw.js
+  // probe response which already carries SW_VERSION.
+  if (APP_MIN_VERSION) {
+    const clientVer = c.req.header('x-app-version') || '';
+    // Compare version numbers: extract the numeric suffix (e.g. 'priv-spaca-v90' -> 90)
+    const parseV = (v) => { const m = v.match(/v(\d+)$/); return m ? parseInt(m[1], 10) : 0; };
+    if (parseV(clientVer) < parseV(APP_MIN_VERSION)) {
+      return c.json({
+        error: 'App update required',
+        minVersion: APP_MIN_VERSION,
+        upgradeUrl: '/?v=' + Date.now(),
+      }, 426);
+    }
+  }
   const p = await authFromRequest(c);
   if (!p || !p.uid) return c.json({ error: 'Missing or invalid token' }, 401);
   // Fast path: in-memory cache hit
@@ -1962,6 +1986,7 @@ app.get('/api/health', (c) => c.json({
   secondaryPersistence: isTursoConfigured() ? 'turso-structured-social' : null,
   runtime: 'cloudflare-workers',
   time: nowMs(), version: 'phase2-turso-json-primary',
+  ...(APP_MIN_VERSION ? { minVersion: APP_MIN_VERSION } : {}),
 }));
 
 app.get('/api/diag', requireAdmin, async (c) => {

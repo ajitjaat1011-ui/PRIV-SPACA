@@ -5,15 +5,15 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v89';
-const STATIC_CACHE = 'priv-spaca-static-v89';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v89';
+const SW_VERSION = 'priv-spaca-v90';
+const STATIC_CACHE = 'priv-spaca-static-v90';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v90';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=97',
-  '/app.min.js?v=97',
+  '/style.min.css?v=100',
+  '/app.min.js?v=100',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',
@@ -156,6 +156,7 @@ self.addEventListener('message', (event) => {
     self.skipWaiting();
   }
   if (event.data.type === 'CLEAR_CACHES') {
+    // v90: Also clear the STATIC_CACHE on demand (used by 426/version probe)
     event.waitUntil(
       caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
         .then(() => event.source && event.source.postMessage({ type: 'CACHES_CLEARED' }))
