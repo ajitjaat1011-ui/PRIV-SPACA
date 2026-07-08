@@ -920,58 +920,62 @@ img{user-select:none;-webkit-user-drag:none}
   z-index:60;pointer-events:none;box-sizing:border-box;
 }
 .bottom-nav-pill{
-  flex:1;height:56px;background:var(--surface);
-  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
-  border:1px solid var(--border);border-radius:9999px;
-  box-shadow:0 10px 32px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.05);
+  flex:1;height:62px;
+  background:rgba(255,255,255,0.72);
+  backdrop-filter:blur(28px) saturate(1.6);-webkit-backdrop-filter:blur(28px) saturate(1.6);
+  border:1px solid rgba(255,255,255,0.65);border-radius:9999px;
+  box-shadow:0 4px 20px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
   display:flex;align-items:center;justify-content:space-around;
-  padding:4px;pointer-events:auto;min-width:0;
+  padding:6px 8px;pointer-events:auto;min-width:0;
 }
 .floating-add-btn{
-  width:52px;height:52px;border-radius:50%;
-  background:#0084ff;color:#fff;border:none;
-  box-shadow:0 8px 24px rgba(0,132,255,0.4), 0 2px 6px rgba(0,132,255,0.2);
+  width:48px;height:48px;border-radius:50%;
+  background:linear-gradient(135deg, #6dd5fa 0%, #2980b9 100%);
+  color:#fff;border:none;
+  box-shadow:0 4px 16px rgba(41,128,185,0.25), 0 1px 4px rgba(0,0,0,0.06);
   display:flex;align-items:center;justify-content:center;
   cursor:pointer;flex-shrink:0;
-  transition:transform 0.2s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.2s ease, background-color 0.2s ease;
+  transition:transform 0.3s ease-out, box-shadow 0.3s ease-out;
   pointer-events:auto;
 }
 .floating-add-btn:hover{
-  background:#0073e6;transform:scale(1.08);
-  box-shadow:0 10px 28px rgba(0,132,255,0.5);
+  transform:scale(1.06);
+  box-shadow:0 6px 20px rgba(41,128,185,0.32);
 }
-.floating-add-btn:active{transform:scale(0.88)}
-.floating-add-btn i{width:26px;height:26px;stroke-width:2.5;transition:transform .35s cubic-bezier(.34,1.56,.64,1)}
-.floating-add-btn:hover i{transform:rotate(90deg) scale(1.15)}
-.floating-add-btn:active i{transform:rotate(90deg) scale(0.85)}
+.floating-add-btn:active{transform:scale(0.94)}
+.floating-add-btn i{width:22px;height:22px;stroke-width:2.2;transition:transform .3s ease-out}
+.floating-add-btn:hover i{transform:rotate(90deg)}
+.floating-add-btn:active i{transform:rotate(90deg) scale(0.9)}
 
+/* Soft nav buttons — always show labels, pill active indicator */
 .bn-btn{
-  height:44px;display:flex;flex-direction:row;align-items:center;justify-content:center;
+  height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   background:transparent;border:0;cursor:pointer;color:var(--muted);
-  border-radius:9999px;transition:all 0.25s cubic-bezier(0.2,0.8,0.2,1);
-  position:relative;gap:6px;padding:0 8px;min-width:0;flex:1;
+  border-radius:20px;transition:all 0.3s ease-out;
+  position:relative;gap:2px;padding:0 6px;min-width:0;flex:1;
 }
-.bn-btn:hover{color:var(--text)}
-.bn-btn:hover i{transform:scale(1.18) translateY(-2px)}
-.bn-btn:active{transform:scale(0.92)}
-.bn-btn:active i{transform:scale(0.82)}
+.bn-btn:hover{color:var(--text-2)}
+.bn-btn:active{transform:scale(0.94)}
 .bn-btn .bn-label{
-  display:none;font-weight:700;font-size:14px;letter-spacing:-0.2px;white-space:nowrap;
+  display:block;font-weight:600;font-size:10px;letter-spacing:0.1px;white-space:nowrap;
+  opacity:0.7;transition:all 0.3s ease-out;
 }
 .bn-btn.active{
-  background:var(--surface-2);color:var(--text);padding:0 12px;flex:1.45;
+  background:rgba(0,162,255,0.10);color:var(--accent);
 }
-.bn-btn.active .bn-label{display:inline-block}
-.bn-btn i{width:22px;height:22px;stroke-width:2;transition:transform .3s cubic-bezier(.34,1.56,.64,1),color .2s ease}
+.bn-btn.active .bn-label{
+  display:block;font-weight:700;font-size:10.5px;
+  opacity:1;color:var(--accent);
+}
+.bn-btn i{width:22px;height:22px;stroke-width:1.8;transition:all 0.3s ease-out}
 .bn-btn .i-filled{display:none}
 .bn-btn.active .i-outline{display:none}
 .bn-btn.active .i-filled{display:inline-block}
-.bn-btn.active i{stroke-width:2.5;color:var(--text);transform:scale(1.1);animation:navIconPop .45s cubic-bezier(.34,1.56,.64,1)}
+.bn-btn.active i{stroke-width:2;color:var(--accent);transform:scale(1.05)}
+/* Remove old bounce pop animation — replaced with gentle scale */
 @keyframes navIconPop{
-  0%{transform:scale(0.7) translateY(2px)}
-  50%{transform:scale(1.28) translateY(-3px)}
-  80%{transform:scale(0.94) translateY(1px)}
-  100%{transform:scale(1.1) translateY(0)}
+  0%{transform:scale(0.92)}
+  100%{transform:scale(1.05)}
 }
 .bn-btn .bn-avatar{
   width:26px;height:26px;border-radius:50%;
@@ -979,28 +983,32 @@ img{user-select:none;-webkit-user-drag:none}
   background-color:var(--bg-soft);
   display:inline-flex;align-items:center;justify-content:center;
   color:#fff;font-weight:700;font-size:11px;letter-spacing:.5px;
-  border:1.5px solid transparent;transition:border .15s;
+  border:2px solid rgba(0,0,0,0.06);transition:all 0.3s ease-out;
 }
-.bn-btn.active .bn-avatar{border-color:var(--text)}
-/* Centered DP button in bottom nav (Instagram-style) */
+.bn-btn.active .bn-avatar{border-color:var(--accent);box-shadow:0 0 0 2px rgba(0,162,255,0.15)}
+/* Centered DP button in bottom nav */
 .bn-dp-btn{padding:0!important;display:flex;align-items:center;justify-content:center}
 .bn-dp-btn .bn-avatar-lg{
-  width:38px;height:38px;border-radius:50%;
+  width:36px;height:36px;border-radius:50%;
   background-size:cover;background-position:center;
   display:inline-flex;align-items:center;justify-content:center;
-  color:#fff;font-weight:700;font-size:14px;letter-spacing:.5px;
-  border:2.5px solid transparent;transition:all .15s;
-  box-shadow:0 2px 8px rgba(0,0,0,.12);
+  color:#fff;font-weight:700;font-size:13px;letter-spacing:.5px;
+  border:2.5px solid rgba(0,0,0,0.06);transition:all 0.3s ease-out;
+  box-shadow:0 2px 8px rgba(0,0,0,0.06);
 }
 .bn-dp-btn.active .bn-avatar-lg,
-.bn-dp-btn:active .bn-avatar-lg{border-color:var(--accent,#00a2ff);transform:scale(.92)}
+.bn-dp-btn:active .bn-avatar-lg{
+  border-color:var(--accent,#00a2ff);
+  box-shadow:0 0 0 3px rgba(0,162,255,0.12);
+  transform:scale(0.94);
+}
 
-/* Notification dot */
+/* Notification dot — softer */
 .bn-btn .dot{
-  position:absolute;top:6px;right:8px;
-  width:8px;height:8px;background:var(--red);border-radius:50%;
-  border:1.5px solid var(--surface);
-  animation:dot-pop .25s cubic-bezier(.2,.8,.2,1) both;
+  position:absolute;top:4px;right:10px;
+  width:7px;height:7px;background:#ff6b8a;border-radius:50%;
+  border:1.5px solid rgba(255,255,255,0.9);
+  animation:dot-pop .3s ease-out both;
 }
 .icon-with-dot{position:relative}
 .icon-with-dot .dot{
@@ -3748,36 +3756,37 @@ body{
 .sheet .ghost-btn:active,
 .modal .ghost-btn:active{transform:scale(.92)!important}
 
-/* Bottom navigation liquid glass update requested. */
+/* Bottom navigation — soft glass (matches base, kept for specificity) */
 .bottom-nav-pill{
-  background:rgba(255,255,255,.72)!important;
-  border:1px solid rgba(255,255,255,.86)!important;
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.95),0 14px 36px rgba(15,35,60,.16)!important;
-  backdrop-filter:blur(22px) saturate(1.45)!important;
-  -webkit-backdrop-filter:blur(22px) saturate(1.45)!important;
+  background:rgba(255,255,255,0.72)!important;
+  border:1px solid rgba(255,255,255,0.65)!important;
+  box-shadow:0 4px 20px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)!important;
+  backdrop-filter:blur(28px) saturate(1.6)!important;
+  -webkit-backdrop-filter:blur(28px) saturate(1.6)!important;
 }
+/* Remove individual icon circle backgrounds — let icons breathe */
 .bottom-nav-pill .bn-btn i,
 .bottom-nav-pill .bn-btn svg,
 .bottom-nav-pill .bn-avatar:not(.bn-avatar-lg){
-  background:rgba(255,255,255,.62);
-  border:1px solid rgba(255,255,255,.72);
-  border-radius:18px;
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.82),0 6px 14px rgba(15,35,60,.08);
-  backdrop-filter:blur(12px) saturate(1.25);
-  -webkit-backdrop-filter:blur(12px) saturate(1.25);
+  background:transparent!important;
+  border:none!important;
+  border-radius:0!important;
+  box-shadow:none!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
 }
-.bottom-nav-pill .bn-avatar-lg{box-shadow:0 2px 10px rgba(15,35,60,.15)}
+.bottom-nav-pill .bn-avatar-lg{box-shadow:0 2px 8px rgba(0,0,0,0.06)!important}
 .bottom-nav-pill .bn-btn i,
-.bottom-nav-pill .bn-btn svg{width:42px!important;height:42px!important;padding:9px!important}
+.bottom-nav-pill .bn-btn svg{width:22px!important;height:22px!important;padding:0!important}
 .bottom-nav-pill .bn-btn.active{
-  background:rgba(255,255,255,.58)!important;
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.8),0 8px 20px rgba(15,35,60,.08)!important;
+  background:rgba(0,162,255,0.10)!important;
+  box-shadow:none!important;
 }
 .bottom-nav-pill .bn-btn:active{transform:scale(.94)!important}
 .floating-add-btn{
-  background:linear-gradient(135deg,rgba(0,162,255,.96),rgba(0,105,255,.92))!important;
-  border:1px solid rgba(255,255,255,.55)!important;
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.45),0 14px 34px rgba(0,132,255,.36)!important;
+  background:linear-gradient(135deg, #6dd5fa 0%, #2980b9 100%)!important;
+  border:1px solid rgba(255,255,255,0.35)!important;
+  box-shadow:0 4px 16px rgba(41,128,185,0.25), 0 1px 4px rgba(0,0,0,0.06)!important;
 }
 .floating-add-btn:active{transform:scale(.9)!important}
 
@@ -4727,27 +4736,18 @@ body{
 
 /* ---- Floating add button: enhanced liquid glow ---- */
 .floating-add-btn{
-  background:linear-gradient(135deg,
-    rgba(0,162,255,.95) 0%,
-    rgba(120,80,255,.90) 50%,
-    rgba(200,60,255,.88) 100%) !important;
-  border:1.5px solid rgba(255,255,255,.50) !important;
-  box-shadow:
-    inset 0 1px 1px rgba(255,255,255,.40),
-    0 12px 32px rgba(100,60,255,.35),
-    0 4px 12px rgba(0,100,200,.20) !important;
+  background:linear-gradient(135deg, #4fa8d6 0%, #1a5276 100%) !important;
+  border:1px solid rgba(255,255,255,.15) !important;
+  box-shadow:0 4px 16px rgba(41,128,185,0.20), 0 1px 4px rgba(0,0,0,.12) !important;
   transition:all .3s cubic-bezier(.2,.8,.2,1) !important;
 }
 .floating-add-btn:hover{
-  transform:scale(1.10) !important;
-  box-shadow:
-    inset 0 1px 1px rgba(255,255,255,.50),
-    0 16px 40px rgba(100,60,255,.45),
-    0 6px 16px rgba(0,100,200,.25) !important;
+  transform:scale(1.06) !important;
+  box-shadow:0 6px 20px rgba(41,128,185,0.32) !important;
 }
 .floating-add-btn::after{
   content:'';position:absolute;inset:0;border-radius:50%;pointer-events:none;
-  background:linear-gradient(135deg,rgba(255,255,255,.35),rgba(255,255,255,0) 50%);
+  background:linear-gradient(135deg,rgba(255,255,255,.20),rgba(255,255,255,0) 50%);
 }
 
 /* ===== DARK MODE — Liquid Glass Home Page ===== */
@@ -4855,9 +4855,25 @@ body{
 }
 
 /* Dark floating add button */
-[data-theme="dark"] .floating-add-btn{border-color:rgba(255,255,255,.15) !important;box-shadow:inset 0 1px 1px rgba(255,255,255,.15),0 12px 32px rgba(100,60,255,.25),0 4px 12px rgba(0,0,0,.20) !important}
+[data-theme="dark"] .floating-add-btn{border-color:rgba(255,255,255,.10) !important;box-shadow:0 4px 16px rgba(41,128,185,0.15), 0 1px 4px rgba(0,0,0,.20) !important}
+[data-theme="dark"] .bottom-nav-pill{
+  background:rgba(28,38,58,0.72)!important;
+  border:1px solid rgba(255,255,255,0.08)!important;
+  box-shadow:0 4px 20px rgba(0,0,0,0.20), 0 1px 3px rgba(0,0,0,0.10)!important;
+}
+[data-theme="dark"] .bn-btn.active{
+  background:rgba(0,162,255,0.15)!important;
+}
 @media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .floating-add-btn{border-color:rgba(255,255,255,.15) !important;box-shadow:inset 0 1px 1px rgba(255,255,255,.15),0 12px 32px rgba(100,60,255,.25),0 4px 12px rgba(0,0,0,.20) !important}
+  :root:not([data-theme="light"]) .floating-add-btn{border-color:rgba(255,255,255,.10) !important;box-shadow:0 4px 16px rgba(41,128,185,0.15), 0 1px 4px rgba(0,0,0,.20) !important}
+  :root:not([data-theme="light"]) .bottom-nav-pill{
+    background:rgba(28,38,58,0.72)!important;
+    border:1px solid rgba(255,255,255,0.08)!important;
+    box-shadow:0 4px 20px rgba(0,0,0,0.20), 0 1px 3px rgba(0,0,0,0.10)!important;
+  }
+  :root:not([data-theme="light"]) .bn-btn.active{
+    background:rgba(0,162,255,0.15)!important;
+  }
 }
 
 /* Dark post-img-wrap */
