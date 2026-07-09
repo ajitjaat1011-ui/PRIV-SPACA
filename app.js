@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.4';
+const APP_VERSION = 'priv-spaca-v93.5';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -208,21 +208,8 @@ async function api(path, options = {}) {
           navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHES' });
         }
         toast('Updating to latest version...', 'info');
-        // v93.3.1 FIX: Preserve auth tokens across the version-update reload.
-        // Previously this called localStorage.clear() which wiped ps_token +
-        // ps_user, logging the user out after every deploy. The SW cache
-        // clear above is sufficient to bust stale JS/CSS; the auth state
-        // should survive so the user lands back in the app post-reload.
-        const PROTECTED_KEYS = ['ps_token', 'ps_user', 'ps_theme', 'ps_accent',
-                                'ps_sw_reload_once', 'ps_version_reload_done',
-                                'ps_heal_attempts', 'ps_close_friends',
-                                'ps_saved_posts', 'ps_secret', 'ps_story_views'];
-        try {
-          const preserved = {};
-          PROTECTED_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) preserved[k] = v; });
-          localStorage.clear();
-          Object.keys(preserved).forEach(k => { try { localStorage.setItem(k, preserved[k]); } catch (_) {} });
-        } catch (_) {}
+        // v93.5: Use consolidated helper (fixes divergent PROTECTED_KEYS bug)
+        clearStoragePreservingAuth();
         setTimeout(() => {
           try { sessionStorage.clear(); } catch (_) {}
           // Re-set the version-reload guard so we don't loop
@@ -243,9 +230,9 @@ async function api(path, options = {}) {
     if (!isGet) {
       _apiCache.delete('/notifications');
       if (path.startsWith('/messages')) {
-        for (const k of [..._apiCache.keys()]) if (k.startsWith('/messages')) _apiCache.delete(k);
+        bustApiCache('/messages');
       } else if (path.startsWith('/posts')) {
-        for (const k of [..._apiCache.keys()]) if (k.startsWith('/posts') || k.startsWith('/feed')) _apiCache.delete(k);
+        bustApiCache('/posts', '/feed');
       } else if (path.startsWith('/user')) {
         _apiCache.delete('/users'); _apiCache.delete('/auth/me');
         // Follow/unfollow changes the feed — bust it
@@ -384,7 +371,7 @@ function renderAvatar(el, user, opts = {}) {
   const url = user && user.photoUrl;
   if (url && !_brokenPhotoUrls.has(url)) {
     // Probe load asynchronously; if it fails, swap to initials
-    el.style.backgroundImage = `url("${String(url).replace(/"/g, '%22')}")`;
+    el.style.backgroundImage = bgImg(url);
     const probe = new Image();
     probe.onerror = () => {
       _markPhotoBroken(url);
@@ -480,6 +467,81 @@ function refreshIcons(scopeEl) {
   });
 }
 
+/* ====== v93.5 Consolidated DOM/storage helpers ====== */
+// These replace ~60 duplicated try/catch localStorage patterns and ~68
+// `hide(el)` guards across the codebase.
+
+// Canonical list of localStorage keys that must survive a version-update
+// reload. Previously this list was defined 3× with DIFFERENT members — a
+// latent bug where one path preserved ps_close_friends and another didn't.
+const PROTECTED_LS_KEYS = [
+  'ps_token', 'ps_user', 'ps_theme', 'ps_accent',
+  'ps_close_friends', 'ps_saved_posts', 'ps_secret', 'ps_story_views',
+  'ps_sw_reload_once', 'ps_version_reload_done', 'ps_heal_attempts',
+  'ps_rtcLastSignalAt'
+];
+
+// v93.5: Consolidated upload-size constant (was 4 inline copies)
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15MB
+
+// Safe CSS background-image URL (was 3 inline copies of the same replace pattern)
+function bgImg(url) { return `url("${String(url).replace(/"/g, '%22')}")`; }
+
+// localStorage helpers that swallow the throw (Safari private mode, quota)
+function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+function lsRemove(k) { try { localStorage.removeItem(k); } catch (_) {} }
+function lsGetJSON(k, fallback) {
+  const v = lsGet(k);
+  if (!v) return fallback;
+  try { return JSON.parse(v); } catch (_) { return fallback; }
+}
+
+// Persist State.user to localStorage (was duplicated 8× as try/catch one-liners)
+function persistUser() {
+  if (State.user) lsSet('ps_user', JSON.stringify(State.user));
+}
+
+// Clear localStorage but preserve auth tokens + user prefs across version
+// updates. Was duplicated 3× with divergent key lists (bug).
+function clearStoragePreservingAuth() {
+  try {
+    const preserved = {};
+    PROTECTED_LS_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) preserved[k] = v; });
+    localStorage.clear();
+    Object.keys(preserved).forEach(k => { try { localStorage.setItem(k, preserved[k]); } catch (_) {} });
+  } catch (_) {}
+}
+
+// DOM visibility helpers — null-safe (was 68+ `hide(el)`)
+function hide(el) { hide(el); }
+function show(el) { show(el); }
+function toggle(el, force) { if (el) el.classList.toggle('hidden', force); }
+
+// Slide a bottom-sheet card up (was duplicated 8× as motionAnimate calls)
+function slideSheetUp(card) {
+  motionAnimate(card,
+    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
+    { duration: 0.34, easing: [0.2, 0.85, 0.15, 1] }
+  );
+}
+
+// Toggle a notification dot with pop-in animation when it appears
+function toggleDot(selector, show) {
+  $$(selector).forEach(d => {
+    const wasHidden = d.classList.contains('hidden');
+    d.classList.toggle('hidden', !show);
+    if (wasHidden && show) popIn(d, { duration: 0.32 });
+  });
+}
+
+// Bust API cache entries matching any of the given prefixes (was 4 inline loops)
+function bustApiCache(...prefixes) {
+  for (const k of [..._apiCache.keys()]) {
+    if (prefixes.some(p => k.startsWith(p))) _apiCache.delete(k);
+  }
+}
+
 /* ====== Motion One animation helpers ====== */
 // Motion One exposes a global `Motion` object (UMD build). Falls back silently to CSS if unavailable.
 const M = (window.Motion && (window.Motion.animate || (window.Motion.default && window.Motion.default.animate)))
@@ -563,7 +625,7 @@ function resolveAuthor(rawAuthor, fallbackUserId, authorSnapshot) {
 // third-party host in the chain at all anymore.
 async function uploadImage(file, onProgress) {
   if (!file) throw new Error('No file');
-  if (file.size > 15 * 1024 * 1024) throw new Error('File too large (max 15MB)');
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error('File too large (max 15MB)');
   if (onProgress) onProgress(10);
   const dataUrl = await new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -652,7 +714,7 @@ function hydrateMeChips() {
 function logout(silent) {
   Object.values(State.pollTimers).forEach(t => clearInterval(t));
   State.pollTimers = {};
-  if (typeof disconnectSSE === 'function') disconnectSSE();
+  disconnectSSE();
   State.token = null;
   State.user = null;
   State.messages = [];
@@ -771,9 +833,9 @@ function bindAuth() {
       const splash = $id('#splash');
       const auth = $id('#authShell');
       const app = $id('#appShell');
-      if (auth) auth.classList.add('hidden');
-      if (app) app.classList.add('hidden');
-      if (splash) splash.classList.remove('hidden');
+      hide(auth);
+      hide(app);
+      show(splash);
     });
   }
 
@@ -872,8 +934,8 @@ function bindAuth() {
 function acceptSession(data) {
   State.token = data.token;
   State.user = data.user;
-  try { localStorage.setItem('ps_token', State.token); } catch (_) {}
-  try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+  lsSet('ps_token', State.token);
+  persistUser()
   // Clear PIN fields
   $$('.pin-input').forEach(clearPin);
   showApp();
@@ -897,16 +959,16 @@ function openPostComposer() {
 }
 function closePostComposer() {
   const card = $id('#inlineComposerCard');
-  if (card) card.classList.add('hidden');
+  hide(card);
   const inp = $id('#postInput');
   if (inp) inp.value = '';
   _postDraftMusic = null; updatePostMusicUI();
-  const picker = $id('#postSongPicker'); if (picker) picker.classList.add('hidden');
+  const picker = $id('#postSongPicker'); hide(picker);
   const chk = $id('#postScratchCheckbox');
   if (chk) chk.checked = false;
-  if (typeof clearPostAttach === 'function') clearPostAttach();
+  clearPostAttach();
   const pm = $id('#postComposerModal');
-  if (pm) pm.classList.add('hidden');
+  hide(pm);
 }
 
 const _scrollMemory = {
@@ -955,12 +1017,15 @@ function rememberCurrentScroll() {
     if (el) _scrollMemory[key] = el.scrollTop || 0;
   });
 }
+// v93.5: Lookup map for tab → scroll container selector (was 4 if-branches)
+const TAB_SCROLL_SEL = {
+  feed: '#feedView', search: '#searchView', profile: '#profileView'
+};
 function restoreScrollForTab(tab) {
   requestAnimationFrame(() => {
-    if (tab === 'feed') { const el = $id('#feedView'); if (el) el.scrollTop = _scrollMemory.feed || 0; }
-    if (tab === 'search') { const el = $id('#searchView'); if (el) el.scrollTop = _scrollMemory.search || 0; }
-    if (tab === 'profile') { const el = $id('#profileView'); if (el) el.scrollTop = _scrollMemory.profile || 0; }
-  if (tab === 'chat' || tab === 'groups') {
+    const sel = TAB_SCROLL_SEL[tab];
+    if (sel) { const el = $id(sel); if (el) el.scrollTop = _scrollMemory[tab] || 0; }
+    if (tab === 'chat' || tab === 'groups') {
       const rooms = $('.rooms-pane'); if (rooms) rooms.scrollTop = _scrollMemory.roomsPane || 0;
       const members = $id('#membersList'); if (members) members.scrollTop = _scrollMemory.membersList || 0;
       const msgs = $id('#messagesScroll'); if (msgs && !$id('#chatView').classList.contains('show-rooms')) msgs.scrollTop = _scrollMemory.messagesScroll || 0;
@@ -1079,7 +1144,7 @@ function switchTab(tab) {
   if (tab === 'reels') {
     // Reels are coming soon — show a friendly toast and snap back to feed
     // (the reelsView container doesn't exist; the nav button is a placeholder).
-    if (typeof toast === 'function') toast('Reels — coming soon', 'info');
+    toast('Reels — coming soon', 'info');
     // Revert active class on the reels nav button + snap back to feed
     $$('.bn-btn[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'feed'));
     State.currentTab = 'feed';
@@ -1092,7 +1157,7 @@ function switchTab(tab) {
   updateChatThreadChrome();
   restoreScrollForTab(tab);
   if (activeView) springIn(activeView, { duration: 0.22 });
-  if (typeof updateNotifDots === 'function') updateNotifDots();
+  updateNotifDots();
   // ===== DEFERRED PATH (runs on next tick — heavy data work) =====
   // v93.3 PERF: loadMembers/loadFeed/renderSearch/renderOwnProfile kick off
   // network requests + DOM rebuilds. Deferring them past the current frame
@@ -1145,15 +1210,15 @@ function updateTopbarHeader(tab) {
       feedWrap.insertBefore(topbar, feedWrap.firstChild);
     }
     if (topbar) topbar.style.display = 'flex';
-    if (brand) brand.classList.remove('hidden');
-    if (igH) igH.classList.add('hidden');
+    show(brand);
+    hide(igH);
   } else {
     // Hide topbar on non-feed views (it stays in feed-wrap DOM but is display:none)
     if (topbar) topbar.style.display = 'none';
-    if (brand) brand.classList.add('hidden');
-    if (igH) igH.classList.add('hidden');
+    hide(brand);
+    hide(igH);
   }
-  if (typeof refreshIcons === 'function') refreshIcons();
+  refreshIcons();
 }
 
 // ====== Rooms & Members ======
@@ -1163,7 +1228,7 @@ async function loadMembers(force = false) {
   if (_loadMembersPromise) return _loadMembersPromise;
   if (!force && _lastMembersLoadedAt && (Date.now() - _lastMembersLoadedAt) < 2500 && Array.isArray(State.members) && State.members.length) {
     renderMembers();
-    if (typeof renderStoriesRail === 'function') renderStoriesRail();
+    renderStoriesRail();
     return State.members;
   }
   _loadMembersPromise = (async () => {
@@ -1172,7 +1237,7 @@ async function loadMembers(force = false) {
       State.members = data.users || [];
       _lastMembersLoadedAt = Date.now();
       renderMembers();
-      if (typeof renderStoriesRail === 'function') renderStoriesRail();
+      renderStoriesRail();
       return State.members;
     } catch (_) {
       return State.members;
@@ -1378,7 +1443,7 @@ function openNoteViewer(u) {
 }
 function closeNoteViewer() {
   const modal = $id('#noteViewerModal');
-  if (modal) modal.classList.add('hidden');
+  hide(modal);
   stopNotePreviewAudio();
 }
 
@@ -1416,19 +1481,19 @@ function openNoteModal() {
   if (input) input.value = cur;
   updateNotePreview();
   updateNoteMusicRow();
-  const picker = $id('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+  const picker = $id('#noteSongPicker'); hide(picker);
   const chev = $id('#noteMusicChev'); if (chev) chev.style.transform = '';
   const clearBtn = $id('#noteClearBtn');
   if (clearBtn) clearBtn.style.display = (cur || _noteDraftMusic) ? '' : 'none';
   modal.classList.remove('hidden');
   const card = modal.querySelector('.sheet-card');
-  if (card) motionAnimate(card, { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] }, { duration: 0.34, easing: [0.2, 0.85, 0.15, 1] });
+  if (card) slideSheetUp(card);
   if (input) setTimeout(() => input.focus(), 120);
   refreshIcons();
 }
 function closeNoteModal() {
-  const m = $id('#noteModal'); if (m) m.classList.add('hidden');
-  const picker = $id('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+  const m = $id('#noteModal'); hide(m);
+  const picker = $id('#noteSongPicker'); hide(picker);
   const chev = $id('#noteMusicChev'); if (chev) chev.style.transform = '';
   stopNotePreviewAudio();
 }
@@ -1471,11 +1536,11 @@ function updateNoteMusicRow() {
   if (_noteDraftMusic && _noteDraftMusic.title) {
     if (title) title.textContent = _noteDraftMusic.title;
     if (artist) artist.textContent = _noteDraftMusic.artist || 'Song attached';
-    if (remove) remove.classList.remove('hidden');
+    show(remove);
   } else {
     if (title) title.textContent = 'Add music';
     if (artist) artist.textContent = 'Search a song for your note';
-    if (remove) remove.classList.add('hidden');
+    hide(remove);
   }
 }
 function renderNoteSongResults(list) {
@@ -1498,7 +1563,7 @@ function renderNoteSongResults(list) {
       _noteDraftMusic = { title: s.title, artist: s.artist, audio: s.audio || '', art: s.art || '' };
       updateNoteMusicRow(); updateNotePreview();
       stopNotePreviewAudio();
-      const picker = $id('#noteSongPicker'); if (picker) picker.classList.add('hidden');
+      const picker = $id('#noteSongPicker'); hide(picker);
       const clearBtn = $id('#noteClearBtn'); if (clearBtn) clearBtn.style.display = '';
     });
     box.appendChild(item);
@@ -1624,10 +1689,7 @@ function openFollowRequestsSheet() {
   renderFollowRequestsSheet();
   ui.sheet.classList.remove('hidden');
   const card = ui.sheet.querySelector('.sheet-card');
-  if (card) motionAnimate(card,
-    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
-    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
-  );
+  if (card) slideSheetUp(card);
   refreshIcons();
 }
 function closeFollowRequestsSheet() {
@@ -1765,7 +1827,7 @@ function updateChatThreadChrome() {
   }
   const headerLeft = $id('#chatHeaderProfileTap');
   if (headerLeft) headerLeft.classList.toggle('is-profile-link', !!(State.currentRoom && State.currentRoom.kind === 'dm' && State.currentRoom.target));
-  if (typeof refreshIcons === 'function') refreshIcons();
+  refreshIcons();
 }
 
 function backToChatList() {
@@ -1813,7 +1875,7 @@ function refreshSecretChatUI() {
   const btn = $id('#secretChatBtn');
   const banner = $id('#secretBanner');
   const disRow = $id('#disappearRow');
-  if (banner) banner.classList.add('hidden');
+  hide(banner);
   if (!btn) return;
   if (!room || room.kind !== 'dm' || !room.target) {
     btn.style.display = 'none';
@@ -1925,16 +1987,16 @@ function setInboxSegment(seg) {
   const gs = $id('#groupsPaneSection'); if (gs) gs.style.display = (_inboxSeg === 'groups') ? 'block' : 'none';
   const ds = $id('#dmsPaneSection'); if (ds) ds.style.display = (_inboxSeg === 'primary') ? 'block' : 'none';
   // Within Primary, show the main DM list (not the requests sub-view).
-  const rv = $id('#requestsView'); if (rv) rv.classList.add('hidden');
-  const ml = $id('#membersList'); if (ml) ml.classList.remove('hidden');
+  const rv = $id('#requestsView'); hide(rv);
+  const ml = $id('#membersList'); show(ml);
   const banner = $id('#requestsBanner');
   const me = $id('#membersEmpty');
   if (_inboxSeg === 'primary') {
     renderMembers();
     // Refresh from the server so newly-joined people appear in Primary/Requests.
-    if (typeof loadMembers === 'function') loadMembers();
+    loadMembers();
   } else {
-    if (banner) banner.classList.add('hidden'); if (me) me.classList.add('hidden');
+    hide(banner); hide(me);
   }
   refreshIcons();
 }
@@ -1954,18 +2016,18 @@ function bindInboxSegment() {
   const banner = $id('#requestsBanner');
   if (banner) banner.addEventListener('click', () => {
     _inboxShowRequests = true;
-    const ml = $id('#membersList'); if (ml) ml.classList.add('hidden');
+    const ml = $id('#membersList'); hide(ml);
     banner.classList.add('hidden');
-    const me = $id('#membersEmpty'); if (me) me.classList.add('hidden');
-    const rv = $id('#requestsView'); if (rv) rv.classList.remove('hidden');
+    const me = $id('#membersEmpty'); hide(me);
+    const rv = $id('#requestsView'); show(rv);
     renderMembers();
     refreshIcons();
   });
   const backBtn = $id('#requestsBackBtn');
   if (backBtn) backBtn.addEventListener('click', () => {
     _inboxShowRequests = false;
-    const rv = $id('#requestsView'); if (rv) rv.classList.add('hidden');
-    const ml = $id('#membersList'); if (ml) ml.classList.remove('hidden');
+    const rv = $id('#requestsView'); hide(rv);
+    const ml = $id('#membersList'); show(ml);
     renderMembers();
     refreshIcons();
   });
@@ -2183,8 +2245,7 @@ const E2E = (() => {
 
 // ---- Secret Chat per-DM toggle (persisted in localStorage) ----
 function _secretSettings() {
-  try { return JSON.parse(localStorage.getItem('ps_secret') || '{}'); }
-  catch (_) { return {}; }
+  return lsGetJSON('ps_secret', {});
 }
 function _saveSecretSettings(s) { localStorage.setItem('ps_secret', JSON.stringify(s)); }
 function isSecretChatOn(roomId) {
@@ -2411,7 +2472,7 @@ function createVoiceNoteElement(src, isMine, opts = {}) {
 
   const setIcon = (name) => {
     playBtn.innerHTML = '<i data-lucide="' + name + '"></i>';
-    if (typeof refreshIcons === 'function') refreshIcons();
+    refreshIcons();
   };
   const updateProgress = () => {
     const dur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
@@ -2455,7 +2516,7 @@ function createVoiceNoteElement(src, isMine, opts = {}) {
   audio.addEventListener('ended', () => { root.classList.remove('playing'); setIcon('rotate-ccw'); updateProgress(); });
   audio.addEventListener('error', () => { duration.textContent = 'Audio unavailable'; root.classList.add('voice-error'); });
 
-  requestAnimationFrame(() => { if (typeof refreshIcons === 'function') refreshIcons(); });
+  requestAnimationFrame(() => { refreshIcons(); });
   return root;
 }
 
@@ -2792,7 +2853,7 @@ function bindComposer() {
 
   $id('#attachBtn').addEventListener('click', () => {
     $id('#fileInput').click();
-    const addMenu = $id('#composerAddMenu'); if (addMenu) addMenu.classList.add('hidden');
+    const addMenu = $id('#composerAddMenu'); hide(addMenu);
   });
   $id('#fileInput').addEventListener('change', async (e) => {
     const f = e.target.files && e.target.files[0];
@@ -2871,7 +2932,7 @@ function bindComposer() {
 
 async function handleAttach(file) {
   if (!isImageFile(file)) { toast('Only image files', 'error'); return; }
-  if (file.size > 15 * 1024 * 1024) { toast('Max 15MB', 'error'); return; }
+  if (file.size > MAX_UPLOAD_BYTES) { toast('Max 15MB', 'error'); return; }
   if (isHeicFile(file)) {
     $id('#attachName').textContent = file.name + ' · converting…';
     $id('#attachPreview').classList.remove('hidden');
@@ -3174,11 +3235,7 @@ function handleRealtimeEvent(type, evt) {
       renderMessages(false);
     }
     // Bust message cache so a manual switch will reload fresh
-    if (_apiCache) {
-      for (const k of [..._apiCache.keys()]) {
-        if (k.startsWith('/messages')) _apiCache.delete(k);
-      }
-    }
+    bustApiCache('/messages');
     // Trigger notification refresh (chat dot)
     pollNotifications();
   } else if (type === 'new_post') {
@@ -3195,11 +3252,7 @@ function handleRealtimeEvent(type, evt) {
     maybeNativeNotify(data);
     // If it's a like/comment on a post, refresh feed so new counts/comments appear live
     if ((data.kind === 'like' || data.kind === 'comment') && data.postId) {
-      if (_apiCache) {
-        for (const k of [..._apiCache.keys()]) {
-          if (k.startsWith('/posts')) _apiCache.delete(k);
-        }
-      }
+      bustApiCache('/posts');
       boostPolling(15000);
       if (State.currentTab === 'feed') loadFeed(true);
     }
@@ -3320,27 +3373,10 @@ function updateNotifDots() {
   const showFeed = (_lastNotif.feedUnread > 0) && (State.currentTab !== 'feed');
   // Top-bar heart icon shows red dot if any unread server notification
   const showHeader = (_lastNotif.headerUnread || 0) > 0;
-  $$('[data-dot="chat"]').forEach(d => {
-    const wasHidden = d.classList.contains('hidden');
-    d.classList.toggle('hidden', !showChat);
-    if (wasHidden && showChat) popIn(d, { duration: 0.32 });
-  });
-  $$('[data-dot="chat-top"]').forEach(d => {
-    const wasHidden = d.classList.contains('hidden');
-    d.classList.toggle('hidden', !showChat);
-    if (wasHidden && showChat) popIn(d, { duration: 0.32 });
-  });
-  $$('[data-dot="feed"]').forEach(d => {
-    const wasHidden = d.classList.contains('hidden');
-    d.classList.toggle('hidden', !showFeed);
-    if (wasHidden && showFeed) popIn(d, { duration: 0.32 });
-  });
-  // Top-bar heart icon dot (data-dot="feed-top") = headerUnread (server notifications)
-  $$('[data-dot="feed-top"]').forEach(d => {
-    const wasHidden = d.classList.contains('hidden');
-    d.classList.toggle('hidden', !showHeader);
-    if (wasHidden && showHeader) popIn(d, { duration: 0.32 });
-  });
+  toggleDot('[data-dot="chat"]', showChat);
+  toggleDot('[data-dot="chat-top"]', showChat);
+  toggleDot('[data-dot="feed"]', showFeed);
+  toggleDot('[data-dot="feed-top"]', showHeader);
 }
 
 // ====== Feed ======
@@ -3486,7 +3522,7 @@ function buildStoryCell(user, isMe) {
     inner.textContent = initialsOf(user ? (user.displayName || user.username) : '?');
   };
   if (url && !_brokenPhotoUrls.has(url)) {
-    inner.style.backgroundImage = `url("${String(url).replace(/"/g, '%22')}")`;
+    inner.style.backgroundImage = bgImg(url);
     const probe = new Image();
     probe.onerror = () => { _markPhotoBroken(url); setInitials(); };
     probe.src = url;
@@ -3500,7 +3536,7 @@ function buildStoryCell(user, isMe) {
     badge.textContent = '+';
     badge.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (typeof openStoryCreator === 'function') openStoryCreator();
+      openStoryCreator();
     });
     ring.appendChild(badge);
   }
@@ -3512,8 +3548,7 @@ function buildStoryCell(user, isMe) {
   cell.addEventListener('click', () => {
     if (isMe) {
       if (hasStory) openStoryFor(user);
-      else if (typeof openStoryCreator === 'function') openStoryCreator();
-      else { const ta = $id('#postInput'); if (ta) ta.focus(); }
+      else openStoryCreator();
     } else if (hasStory) {
       openStoryFor(user);
     }
@@ -4427,8 +4462,7 @@ async function openSavedPostsSheet() {
 }
 
 function getSaved() {
-  try { return JSON.parse(localStorage.getItem('ps_saved') || '{}'); }
-  catch (_) { return {}; }
+  return lsGetJSON('ps_saved', {});
 }
 function toggleSaved(p, btn) {
   const all = getSaved();
@@ -4533,10 +4567,7 @@ function openCommentsSheet(p) {
   const sheet = $id('#commentsSheet');
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
-  if (card) motionAnimate(card,
-    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
-    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
-  );
+  if (card) slideSheetUp(card);
   // Stagger the comments in
   const items = sheet.querySelectorAll('.comments-sheet-list li');
   if (items.length) staggerIn([...items].slice(0, 8), { delayPer: 0.03 });
@@ -4582,11 +4613,10 @@ function bindCommentsSheet() {
 // ===== Story viewed-state (per user, persisted) =====
 // Stores { userId: { lastPostTs: timestamp, viewedAt: timestamp } }
 function _getStoryViewed() {
-  try { return JSON.parse(localStorage.getItem('ps_storyViewed') || '{}'); }
-  catch (_) { return {}; }
+  return lsGetJSON('ps_storyViewed', {});
 }
 function _setStoryViewed(obj) {
-  try { localStorage.setItem('ps_storyViewed', JSON.stringify(obj)); } catch (_) {}
+  lsSet('ps_storyViewed', JSON.stringify(obj));
 }
 function isStoryViewed(userId) {
   const map = _getStoryViewed();
@@ -4948,7 +4978,7 @@ function updateStoryFooter(story, isMyStory) {
   const ai = $id('#storyActionIcons');
   const snd = $id('#storyReplySend');
   if (isMyStory) {
-    if (replyBar) replyBar.classList.add('hidden');
+    hide(replyBar);
     if (seenBtn) {
       const n = typeof story.viewCount === 'number' ? story.viewCount : (Array.isArray(story.views) ? story.views.length : 0);
       const cnt = $id('#storySeenByCount');
@@ -4956,11 +4986,11 @@ function updateStoryFooter(story, isMyStory) {
       seenBtn.classList.remove('hidden');
     }
   } else {
-    if (seenBtn) seenBtn.classList.add('hidden');
-    if (replyBar) replyBar.classList.remove('hidden');
-    if (qr) qr.classList.add('hidden');
-    if (ai) ai.classList.remove('hidden');
-    if (snd) snd.classList.add('hidden');
+    hide(seenBtn);
+    show(replyBar);
+    hide(qr);
+    show(ai);
+    hide(snd);
     const inp = $id('#storyReplyInput');
     if (inp) inp.value = '';
     const lb = $id('#storyLikeBtn');
@@ -4983,7 +5013,7 @@ async function openStoryViewersSheet() {
   listEl.innerHTML = '<div class="story-viewers-empty">Loading…</div>';
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
-  if (card) motionAnimate(card, { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] }, { duration: 0.34, easing: [0.2, 0.85, 0.15, 1] });
+  if (card) slideSheetUp(card);
   refreshIcons();
   try {
     const data = await api('/stories/' + encodeURIComponent(story.id) + '/viewers');
@@ -5012,7 +5042,7 @@ async function openStoryViewersSheet() {
 }
 function closeStoryViewersSheet() {
   const sheet = $id('#storyViewersSheet');
-  if (sheet) sheet.classList.add('hidden');
+  hide(sheet);
   resumeStoryFromHold();
 }
 
@@ -5043,8 +5073,8 @@ function bindStoryReplyUI() {
       e.preventDefault(); e.stopPropagation();
       btn.classList.remove('burst'); void btn.offsetWidth; btn.classList.add('burst');
       sendStoryReply(btn.dataset.emoji, '');
-      const qr = $id('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
-      const ai = $id('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
+      const qr = $id('#storyQuickReacts'); hide(qr);
+      const ai = $id('#storyActionIcons'); show(ai);
     });
   });
   // Reply text form
@@ -5056,25 +5086,25 @@ function bindStoryReplyUI() {
       const txt = (inp && inp.value || '').trim();
       if (!txt) return;
       if (inp) inp.value = '';
-      const snd = $id('#storyReplySend'); if (snd) snd.classList.add('hidden');
-      const qr = $id('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
-      const ai = $id('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
+      const snd = $id('#storyReplySend'); hide(snd);
+      const qr = $id('#storyQuickReacts'); hide(qr);
+      const ai = $id('#storyActionIcons'); show(ai);
       sendStoryReply('', txt);
     });
     const inp = $id('#storyReplyInput');
     if (inp) {
       inp.addEventListener('focus', () => {
         try { pauseStoryForHold(); } catch (_) {}
-        const qr = $id('#storyQuickReacts'); if (qr) qr.classList.remove('hidden');
-        const ai = $id('#storyActionIcons'); if (ai) ai.classList.add('hidden');
+        const qr = $id('#storyQuickReacts'); show(qr);
+        const ai = $id('#storyActionIcons'); hide(ai);
       });
       inp.addEventListener('blur', () => {
         try { resumeStoryFromHold(); } catch (_) {}
         setTimeout(() => {
           if (!inp.value.trim()) {
-            const qr = $id('#storyQuickReacts'); if (qr) qr.classList.add('hidden');
-            const ai = $id('#storyActionIcons'); if (ai) ai.classList.remove('hidden');
-            const snd = $id('#storyReplySend'); if (snd) snd.classList.add('hidden');
+            const qr = $id('#storyQuickReacts'); hide(qr);
+            const ai = $id('#storyActionIcons'); show(ai);
+            const snd = $id('#storyReplySend'); hide(snd);
           }
         }, 150);
       });
@@ -5200,11 +5230,11 @@ function closeStory() {
   const v = $id('#storyViewer');
   v.classList.add('hidden');
   v.classList.remove('is-loading', 'holding', 'paused');
-  const seenBtn = $id('#storySeenBy'); if (seenBtn) seenBtn.classList.add('hidden');
-  const replyBar = $id('#storyReplyBar'); if (replyBar) replyBar.classList.add('hidden');
-  const vSheet = $id('#storyViewersSheet'); if (vSheet) vSheet.classList.add('hidden');
+  const seenBtn = $id('#storySeenBy'); hide(seenBtn);
+  const replyBar = $id('#storyReplyBar'); hide(replyBar);
+  const vSheet = $id('#storyViewersSheet'); hide(vSheet);
   _currentStoryItem = null;
-  if (typeof renderStoriesRail === 'function') renderStoriesRail();
+  renderStoriesRail();
 }
 
 // ---- Hold-to-pause + edge tap feedback ----
@@ -5389,7 +5419,7 @@ window.startStickerScale = (e, id) => {
   let rafId = 0;
   let pendingScale = startScale;
   const guide = $id('#storySafeAreaGuide');
-  if (guide) guide.classList.remove('hidden');
+  show(guide);
 
   const flush = () => {
     rafId = 0;
@@ -5411,7 +5441,7 @@ window.startStickerScale = (e, id) => {
   const end = () => {
     if (rafId) cancelAnimationFrame(rafId);
     flush();
-    if (guide) guide.classList.add('hidden');
+    hide(guide);
     window.removeEventListener('mousemove', move);
     window.removeEventListener('mouseup', end);
     window.removeEventListener('touchmove', move);
@@ -5486,7 +5516,7 @@ function makeStickerDraggable(el, onMoveCallback) {
     const stageEl = el.closest('.story-editor-stage');
     if (stageEl) stageEl.classList.add('dragging-active');
     const guide = $id('#storySafeAreaGuide');
-    if (guide) guide.classList.remove('hidden');
+    show(guide);
   };
 
   const move = (e) => {
@@ -5507,18 +5537,18 @@ function makeStickerDraggable(el, onMoveCallback) {
     if (Math.abs(newLeft - centerX) < 14) {
       newLeft = centerX;
       snappedX = true;
-      if (guideV) guideV.classList.remove('hidden');
+      show(guideV);
     } else {
       snappedX = false;
-      if (guideV) guideV.classList.add('hidden');
+      hide(guideV);
     }
     if (Math.abs(newTop - centerY) < 14) {
       newTop = centerY;
       snappedY = true;
-      if (guideH) guideH.classList.remove('hidden');
+      show(guideH);
     } else {
       snappedY = false;
-      if (guideH) guideH.classList.add('hidden');
+      hide(guideH);
     }
     // Subtle haptic tick on snap-in, if the device supports it (no-op elsewhere).
     if ((snappedX && !wasSnappedX) || (snappedY && !wasSnappedY)) {
@@ -5538,13 +5568,13 @@ function makeStickerDraggable(el, onMoveCallback) {
     el.style.transition = 'transform 0.15s ease';
     const guideV = $id('#storyAlignGuide');
     const guideH = $id('#storyAlignGuideH');
-    if (guideV) guideV.classList.add('hidden');
-    if (guideH) guideH.classList.add('hidden');
+    hide(guideV);
+    hide(guideH);
     snappedX = false; snappedY = false;
     const stageEl = el.closest('.story-editor-stage');
     if (stageEl) stageEl.classList.remove('dragging-active');
     const guide = $id('#storySafeAreaGuide');
-    if (guide) guide.classList.add('hidden');
+    hide(guide);
   };
 
   el.addEventListener('mousedown', start);
@@ -5569,7 +5599,7 @@ window.openStoryTextEditor = () => {
 
 window.closeStoryTextEditor = () => {
   const screen = $id('#storyTextEditorScreen');
-  if (screen) screen.classList.add('hidden');
+  hide(screen);
 };
 
 window.finishStoryTextEditor = () => {
@@ -5600,7 +5630,7 @@ window.finishStoryTextEditor = () => {
 window.removeStoryTextOverlay = (e) => {
   if (e) e.stopPropagation();
   const stg = $id('#storyStageTextOverlay');
-  if (stg) stg.classList.add('hidden');
+  hide(stg);
   activeStoryText = '';
   const inp = $id('#storyTextOverlayInput');
   if (inp) inp.value = '';
@@ -5706,8 +5736,8 @@ window.openStoryCreator = () => {
       if (slotsLeft <= 0) { toast('You can add up to 3 photos per story', 'error'); return; }
       const batch = files.slice(0, slotsLeft);
       if (files.length > slotsLeft) toast('Added first ' + slotsLeft + ' photo(s) — max 3 per story');
-      if (ph) ph.classList.add('hidden');
-      if (loadingEl) loadingEl.classList.remove('hidden');
+      hide(ph);
+      show(loadingEl);
       for (let f of batch) {
         if (!isImageFile(f)) { toast('Skipped a non-image file', 'error'); continue; }
         if (f.size > 20 * 1024 * 1024) { toast('Skipped a photo over 20MB', 'error'); continue; }
@@ -5727,7 +5757,7 @@ window.openStoryCreator = () => {
         }
         if (url) State.storyCreatorImages.push(url);
       }
-      if (loadingEl) loadingEl.classList.add('hidden');
+      hide(loadingEl);
       // First image is the primary preview + legacy single-image field.
       State.storyCreatorImgUrl = State.storyCreatorImages[0] || null;
       if (prev && State.storyCreatorImgUrl) { prev.src = State.storyCreatorImgUrl; prev.classList.remove('hidden'); }
@@ -5742,7 +5772,7 @@ window.openStoryCreator = () => {
   // (see makeStickerDraggable / startStickerScale) — kept hidden by default so the
   // canvas looks clean, matching the "cleaner preview/publish flow" goal.
   const guide = $id('#storySafeAreaGuide');
-  if (guide) guide.classList.add('hidden');
+  hide(guide);
 };
 
 // Handle a video pick in the story editor: validate size/duration, preview it,
@@ -5770,8 +5800,8 @@ async function handleStoryVideoPick(file, ph, prev, loadingEl) {
   // Clear any photo selection (a story item is video OR photos, not both).
   State.storyCreatorImages = [];
   renderStoryEditorPhotoStrip();
-  if (ph) ph.classList.add('hidden');
-  if (loadingEl) loadingEl.classList.remove('hidden');
+  hide(ph);
+  show(loadingEl);
   // Show a local preview immediately.
   const vidPrev = $id('#storyEditorPreviewVideo');
   const localUrl = URL.createObjectURL(file);
@@ -5792,9 +5822,9 @@ async function handleStoryVideoPick(file, ph, prev, loadingEl) {
     toast('Video upload failed: ' + (err.message || ''), 'error');
     State.storyCreatorVideoUrl = null;
     if (vidPrev) { vidPrev.src = ''; vidPrev.classList.add('hidden'); }
-    if (ph) ph.classList.remove('hidden');
+    show(ph);
   } finally {
-    if (loadingEl) loadingEl.classList.add('hidden');
+    hide(loadingEl);
   }
 }
 
@@ -5809,7 +5839,7 @@ function renderStoryEditorPhotoStrip() {
   if (imgs.length <= 1) {
     strip.classList.add('hidden');
     strip.innerHTML = '';
-    if (countBadge) countBadge.classList.add('hidden');
+    hide(countBadge);
     return;
   }
   strip.classList.remove('hidden');
@@ -5832,7 +5862,7 @@ function renderStoryEditorPhotoStrip() {
       const prev = $id('#storyEditorPreviewImg');
       if (prev) {
         if (State.storyCreatorImgUrl) { prev.src = State.storyCreatorImgUrl; prev.classList.remove('hidden'); }
-        else { prev.src = ''; prev.classList.add('hidden'); const phEl = $id('#storyEditorPlaceholder'); if (phEl) phEl.classList.remove('hidden'); }
+        else { prev.src = ''; prev.classList.add('hidden'); const phEl = $id('#storyEditorPlaceholder'); show(phEl); }
       }
       renderStoryEditorPhotoStrip();
     });
@@ -5851,11 +5881,11 @@ function renderStoryEditorPhotoStrip() {
 
 window.closeStoryCreator = () => {
   const mod = $id('#storyEditorModal');
-  if (mod) mod.classList.add('hidden');
+  hide(mod);
   State.storyCreatorImages = [];
   State.storyCreatorVideoUrl = null;
   const strip = $id('#storyEditorPhotoStrip'); if (strip) { strip.classList.add('hidden'); strip.innerHTML = ''; }
-  const countBadge = $id('#storyEditorPhotoCount'); if (countBadge) countBadge.classList.add('hidden');
+  const countBadge = $id('#storyEditorPhotoCount'); hide(countBadge);
   const vidPrev = $id('#storyEditorPreviewVideo'); if (vidPrev) { try { vidPrev.pause(); } catch (_) {} vidPrev.src = ''; vidPrev.classList.add('hidden'); }
   const player = $id('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
@@ -5882,14 +5912,14 @@ window.closeStoryCreator = () => {
   }
   if (stgTextSpan) stgTextSpan.textContent = 'Text';
   const trim = $id('#storyMusicTrimmer');
-  if (trim) trim.classList.add('hidden');
+  hide(trim);
   const prev = $id('#storyEditorPreviewImg');
   if (prev) { prev.src = ''; prev.classList.add('hidden'); }
-  const loadingEl = $id('#storyEditorImgLoading'); if (loadingEl) loadingEl.classList.add('hidden');
-  const fc = $id('#storyFontControls'); if (fc) fc.classList.add('hidden');
-  const colorRow = $id('#storyTextColorsRow'); if (colorRow) colorRow.classList.add('hidden');
+  const loadingEl = $id('#storyEditorImgLoading'); hide(loadingEl);
+  const fc = $id('#storyFontControls'); hide(fc);
+  const colorRow = $id('#storyTextColorsRow'); hide(colorRow);
   const slider = $id('#storyTextSizeSlider'); if (slider) slider.value = '28';
-  const guide = $id('#storySafeAreaGuide'); if (guide) guide.classList.add('hidden');
+  const guide = $id('#storySafeAreaGuide'); hide(guide);
   $$('#storyMusicLayoutRow .music-layout-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
   activeStoryFont = 'modern'; activeStoryText = ''; activeStoryTextColor = '#ffffff';
   activeStoryTextBg = false; activeStoryTextBgMode = 'none'; activeStoryTextAlign = 'center'; activeStoryTextSize = 28;
@@ -5898,7 +5928,7 @@ window.closeStoryCreator = () => {
   State.musicPosX = 50; State.musicPosY = 32; State.musicStartTime = 0; State.musicScale = 1.0; State.musicClipDur = 30;
   State.textPosX = 50; State.textPosY = 68; State.textScale = 1.0;
   const ph = $id('#storyEditorPlaceholder');
-  if (ph) ph.classList.remove('hidden');
+  show(ph);
   const cap = $id('#storyEditorCaptionInput');
   if (cap) { cap.value = ''; cap.style.fontFamily = ''; cap.style.fontWeight = ''; cap.style.fontStyle = ''; cap.style.textTransform = ''; cap.style.letterSpacing = ''; }
   State.storyCreatorImgUrl = null;
@@ -5921,13 +5951,13 @@ window.promptStoryMention = () => {
 
 window.openStoryMusicSheet = () => {
   const sh = $id('#storyMusicSheet');
-  if (sh) sh.classList.remove('hidden');
+  show(sh);
   window.filterStorySongs();
 };
 
 window.closeStoryMusicSheet = () => {
   const sh = $id('#storyMusicSheet');
-  if (sh) sh.classList.add('hidden');
+  hide(sh);
 };
 
 window.closeStoryMusicSheetOnBackdrop = (e) => {
@@ -6101,7 +6131,7 @@ window.updateMusicStartTime = (val) => {
 
 window.closeMusicTrimmer = () => {
   const trim = $id('#storyMusicTrimmer');
-  if (trim) trim.classList.add('hidden');
+  hide(trim);
 };
 
 window.removeStoryMusic = (e) => {
@@ -6110,7 +6140,7 @@ window.removeStoryMusic = (e) => {
   const player = $id('#storyBgAudioPlayer');
   if (player) { player.pause(); player.src = ''; }
   const stk = $id('#storyStageMusicSticker');
-  if (stk) stk.classList.add('hidden');
+  hide(stk);
 };
 
 window.publishStoryWithMusic = async (isCf = false) => {
@@ -6213,7 +6243,7 @@ function renderPostSongResults(list) {
       stopNotePreviewAudio();
       _postDraftMusic = { title: s.title, artist: s.artist || '', audio: s.audio || '', art: s.art || '' };
       updatePostMusicUI();
-      const picker = $id('#postSongPicker'); if (picker) picker.classList.add('hidden');
+      const picker = $id('#postSongPicker'); hide(picker);
     });
     box.appendChild(item);
   });
@@ -6297,7 +6327,7 @@ function bindFeedComposer() {
 
     for (let f of toUpload) {
       if (!isImageFile(f)) { toast('Only images allowed', 'error'); continue; }
-      if (f.size > 15 * 1024 * 1024) { toast('Max 15MB per image', 'error'); continue; }
+      if (f.size > MAX_UPLOAD_BYTES) { toast('Max 15MB per image', 'error'); continue; }
       // HEIC must be converted BEFORE creating the preview object URL too —
       // Chrome/Firefox/Edge can't render a HEIC blob in an <img> src any
       // more than they can draw it to a canvas, so the thumbnail would
@@ -6348,7 +6378,7 @@ function bindFeedComposer() {
       $id('#postInput').value = '';
       if (chk) chk.checked = false;
       _postDraftMusic = null; updatePostMusicUI();
-      const picker = $id('#postSongPicker'); if (picker) picker.classList.add('hidden');
+      const picker = $id('#postSongPicker'); hide(picker);
       clearPostAttach();
       lastPostsSignature = null; // force next loadPosts() to re-render even if list becomes empty
       loadPosts();
@@ -6452,7 +6482,7 @@ function bindProfile() {
     let f = e.target.files && e.target.files[0]; e.target.value = '';
     if (!f) return;
     if (!isImageFile(f)) { toast('Only images', 'error'); return; }
-    if (f.size > 15 * 1024 * 1024) { toast('Max 15MB', 'error'); return; }
+    if (f.size > MAX_UPLOAD_BYTES) { toast('Max 15MB', 'error'); return; }
     const status = $id('#profilePhotoStatus');
     if (isHeicFile(f)) { status.textContent = 'Converting…'; f = await convertHeicIfNeeded(f); }
     status.textContent = 'Uploading 0%';
@@ -6460,7 +6490,7 @@ function bindProfile() {
       const res = await uploadPermanentImage(f, { kind: 'avatar', maxDim: 500, quality: 0.85, onProgress: (p) => { status.textContent = 'Uploading ' + p + '%'; }});
       const data = await api('/user/update', { method: 'POST', body: { photoUrl: res.url } });
       State.user = data.user;
-      localStorage.setItem('ps_user', JSON.stringify(State.user));
+      persistUser()
       // Clear broken-photo cache so new avatar always loads
       _brokenPhotoUrls.delete(res.url);
       try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {}
@@ -6485,7 +6515,7 @@ function bindProfile() {
         dateOfBirth: String(fd.get('dateOfBirth') || '').trim()
       }});
       State.user = data.user;
-      localStorage.setItem('ps_user', JSON.stringify(State.user));
+      persistUser()
       hydrateMeChips();
       status.textContent = 'Saved ✓';
       toast('Profile updated', 'success');
@@ -6587,10 +6617,7 @@ async function openNotifications() {
   list.innerHTML = '<li class="notif-empty"><div class="ico"><i data-lucide="bell"></i></div><div>Loading…</div></li>';
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
-  if (card) motionAnimate(card,
-    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
-    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
-  );
+  if (card) slideSheetUp(card);
   refreshIcons();
   try {
     const data = await api('/notifications');
@@ -6671,7 +6698,7 @@ function buildNotifRow(n, i) {
     if (post && post.imageUrl) {
       const t = document.createElement('div');
       t.className = 'thumb';
-      t.style.backgroundImage = `url("${String(post.imageUrl).replace(/"/g, '%22')}")`;
+      t.style.backgroundImage = bgImg(post.imageUrl);
       li.appendChild(t);
     }
   }
@@ -6802,10 +6829,7 @@ function openSettings() {
   const sheet = $id('#settingsSheet');
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
-  if (card) motionAnimate(card,
-    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
-    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
-  );
+  if (card) slideSheetUp(card);
   // Sync visual state of theme + accent inside the sheet
   const stored = localStorage.getItem('ps_theme') || 'auto';
   ensurePrivateAccountSettingRow();
@@ -6866,7 +6890,7 @@ function bindSettingsSheet() {
       const data = await api('/user/vip/redeem', { method: 'POST', body: { key } });
       if (data.user) {
         State.user = { ...State.user, ...data.user };
-        try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+        persistUser()
         const selfMember = (State.members || []).find(u => u.id === State.user.id);
         if (selfMember) Object.assign(selfMember, data.user);
         hydrateMeChips();
@@ -6895,7 +6919,7 @@ function bindSettingsSheet() {
       try {
         const data = await api('/user/update', { method: 'POST', body: { isPrivate: nextValue } });
         State.user = { ...State.user, ...data.user };
-        try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+        persistUser()
         const selfMember = (State.members || []).find(u => u.id === State.user.id);
         if (selfMember) Object.assign(selfMember, data.user);
         syncPrivateAccountToggle();
@@ -6932,7 +6956,7 @@ function bindSettingsSheet() {
       try {
         const data = await api('/user/update', { method: 'POST', body: { cardVisibility: cvs.value } });
         State.user = data.user;
-        localStorage.setItem('ps_user', JSON.stringify(State.user));
+        persistUser()
         toast('Profile card visibility updated', 'success');
       } catch (e) { toast(e.message || 'Visibility update failed', 'error'); }
       finally { cvs.disabled = false; }
@@ -6964,7 +6988,7 @@ async function loadCloseFriends() {
   try {
     const data = await api('/user/close-friends');
     State.closeFriends = Array.isArray(data.ids) ? data.ids : [];
-    try { localStorage.setItem('ps_closeFriends', JSON.stringify(State.closeFriends)); } catch (_) {}
+    lsSet('ps_closeFriends', JSON.stringify(State.closeFriends));
     updateCloseFriendsStatus();
     return State.closeFriends;
   } catch (_) {
@@ -6978,21 +7002,18 @@ function openCloseFriendsSheet() {
   renderCloseFriendsSheet();
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
-  if (card) motionAnimate(card,
-    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
-    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
-  );
+  if (card) slideSheetUp(card);
   refreshIcons();
 }
 function closeCloseFriendsSheet() {
   const sheet = $id('#closeFriendsSheet');
-  if (sheet) sheet.classList.add('hidden');
+  hide(sheet);
 }
 async function toggleCloseFriend(targetId) {
   try {
     const data = await api('/user/close-friends', { method: 'POST', body: { targetId, action: 'toggle' } });
     State.closeFriends = Array.isArray(data.ids) ? data.ids : [];
-    try { localStorage.setItem('ps_closeFriends', JSON.stringify(State.closeFriends)); } catch (_) {}
+    lsSet('ps_closeFriends', JSON.stringify(State.closeFriends));
     updateCloseFriendsStatus();
     renderCloseFriendsSheet();
     toast(data.added ? 'Added to Close Friends' : 'Removed from Close Friends', 'success');
@@ -7069,15 +7090,12 @@ function openStoryManageSheet() {
   renderStoryManageSheet();
   sheet.classList.remove('hidden');
   const card = sheet.querySelector('.sheet-card');
-  if (card) motionAnimate(card,
-    { transform: ['translateY(100%)', 'translateY(0)'], opacity: [0.6, 1] },
-    { duration: 0.36, easing: [0.2, 0.85, 0.15, 1] }
-  );
+  if (card) slideSheetUp(card);
   refreshIcons();
 }
 function closeStoryManageSheet() {
   const sheet = $id('#storyManageSheet');
-  if (sheet) sheet.classList.add('hidden');
+  hide(sheet);
 }
 function hoursUntilExpiry(story) {
   const exp = storyExpiresAt(story);
@@ -7278,7 +7296,7 @@ async function openUserProfile(userId) {
   $id('#upStatFollowing').textContent = '·';
   $id('#upPostsGrid').innerHTML = '';
   const privateNotice = ensurePrivateProfileNotice();
-  if (privateNotice) privateNotice.classList.add('hidden');
+  hide(privateNotice);
   renderAvatar($id('#upAvatar'), null);
   try {
     const data = await api('/user/' + encodeURIComponent(userId) + '/profile');
@@ -7572,7 +7590,7 @@ function openProfileCard(profileData = null, fallbackUser = null) {
 }
 function closeProfileCard() {
   const sheet = $id('#profileCardSheet');
-  if (sheet) sheet.classList.add('hidden');
+  hide(sheet);
 }
 function isSafeUrlForCss(url) {
   return typeof url === 'string' && (/^https?:\/\//i.test(url) || /^data:image\//i.test(url));
@@ -7725,7 +7743,7 @@ async function renderOwnProfile() {
       const serverFollowers = Array.isArray(u.followerIds) ? u.followerIds : localFollowers;
       const serverFollowing = Array.isArray(u.followingIds) ? u.followingIds : localFollowing;
       State.user = { ...State.user, ...u, followers: serverFollowers, following: serverFollowing };
-      try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+      persistUser()
     }
     const realUsername = u.username || State.user.username || cachedUsername;
     $id('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
@@ -8344,19 +8362,9 @@ function registerServiceWorker() {
             sessionStorage.setItem('ps_version_reload_done', '1');
             sessionStorage.setItem('ps_sw_reload_once', '1');
             toast('Updating to latest version...', 'info');
-            // v93.3.1 FIX: Preserve auth tokens (ps_token, ps_user) and user
-            // prefs across the version-update reload. Previously this called
-            // localStorage.clear() which logged users out on every deploy.
-            const PROTECTED_KEYS = ['ps_token', 'ps_user', 'ps_theme', 'ps_accent',
-                                    'ps_close_friends', 'ps_saved_posts',
-                                    'ps_secret', 'ps_story_views'];
+            // v93.5: Use consolidated helper (fixes divergent PROTECTED_KEYS bug)
             setTimeout(() => {
-              try {
-                const preserved = {};
-                PROTECTED_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) preserved[k] = v; });
-                localStorage.clear();
-                Object.keys(preserved).forEach(k => { try { localStorage.setItem(k, preserved[k]); } catch (_) {} });
-              } catch (_) {}
+              clearStoragePreservingAuth();
               try { sessionStorage.clear(); } catch (_) {}
               try { sessionStorage.setItem('ps_version_reload_done', '1'); } catch (_) {}
               location.replace('/?v=' + Date.now());
@@ -8612,12 +8620,12 @@ function bindInstallPrompt() {
     _installPrompt = e;
     // Show our own "Install app" button in the profile view (added in HTML)
     const btn = $id('#installAppBtn');
-    if (btn) btn.classList.remove('hidden');
+    show(btn);
   });
   window.addEventListener('appinstalled', () => {
     _installPrompt = null;
     const btn = $id('#installAppBtn');
-    if (btn) btn.classList.add('hidden');
+    hide(btn);
     toast('Installed! Find PRIV SPACA on your home screen.', 'success');
   });
 }
@@ -8692,12 +8700,12 @@ function pauseAllAudioForHide() {
         _postMusicState.title = '';
         _postMusicState.artist = '';
       }
-      if (typeof syncPostMusicUI === 'function') { try { syncPostMusicUI(); } catch (_) {} }
+      try { syncPostMusicUI(); } catch (_) {}
     }
   } catch (_) {}
   try {
     // 2. Note preview audio (top of profile / note editor)
-    if (typeof stopNotePreviewAudio === 'function') { try { stopNotePreviewAudio(); } catch (_) {} }
+    try { stopNotePreviewAudio(); } catch (_) {}
   } catch (_) {}
   try {
     // 3. Story music preview in the editor (#storyBgAudioPlayer)
@@ -8730,7 +8738,7 @@ function pauseAllAudioForHide() {
   try {
     // 6. Incoming-call ringtone (WebAudio oscillator loop). It's an
     //    intrusive alert that must stop the moment the tab is hidden.
-    if (typeof stopIncomingCallAlert === 'function') { try { stopIncomingCallAlert(); } catch (_) {} }
+    try { stopIncomingCallAlert(); } catch (_) {}
   } catch (_) {}
   try {
     // 7. Story playback (already handled in its own visibilitychange
@@ -8827,7 +8835,7 @@ function boot() {
     api('/auth/me').then(d => {
       if (d && d.user) {
         State.user = d.user;
-        try { localStorage.setItem('ps_user', JSON.stringify(State.user)); } catch (_) {}
+        persistUser()
         hydrateMeChips();
       } else {
         // Got a response but no user object -- treat as 401, kick out
@@ -9450,7 +9458,7 @@ function startCallTimer() {
   _callConnectedAt = Date.now();
   clearInterval(_callTimerInterval);
   const el = $id('#callTimer');
-  if (el) el.classList.remove('hidden');
+  show(el);
   _callTimerInterval = setInterval(() => {
     if (!el) return;
     const s = Math.floor((Date.now() - _callConnectedAt) / 1000);
@@ -9493,8 +9501,8 @@ function endCall(remote) {
   isVideoCall = false;
   const overlay = $id('#callOverlay');
   if (overlay) { overlay.classList.add('hidden'); overlay.classList.remove('video-active'); }
-  const videos = $id('#callVideos'); if (videos) videos.classList.add('hidden');
-  const controls = $id('#callActiveControls'); if (controls) controls.classList.add('hidden');
+  const videos = $id('#callVideos'); hide(videos);
+  const controls = $id('#callActiveControls'); hide(controls);
   const localVid = $id('#rtcLocalVideo'); if (localVid) localVid.srcObject = null;
   const remoteVid = $id('#rtcRemoteVideo'); if (remoteVid) remoteVid.srcObject = null;
 }
