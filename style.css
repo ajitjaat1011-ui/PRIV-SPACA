@@ -774,10 +774,11 @@ img{user-select:none;-webkit-user-drag:none}
 /* Shows unread message preview or incoming call UI in the topbar slot.
    Empty by default (clean, no content). Transparent — no background. */
 .top-notif-banner{
-  flex:1;min-width:0;height:44px;
+  flex:1;min-width:0;max-width:calc(100% - 180px);height:40px;
   display:flex;align-items:center;
   overflow:hidden;
   transition:opacity .3s ease;
+  margin:0 8px;
 }
 .top-notif-banner:empty{display:flex}  /* keep flex space so layout doesn't jump */
 /* Message state — transparent, COMPACT floating content (v93.9: smaller) */
@@ -889,6 +890,7 @@ img{user-select:none;-webkit-user-drag:none}
   position:relative;
   grid-column: auto;
   justify-self: auto;
+  flex-shrink:0;  /* v93.10: don't let banner squeeze the brand name */
   font-family:'Dancing Script', 'Playfair Display', cursive;
   font-weight:700;font-size:30px;line-height:1;
   letter-spacing:0.4px;
