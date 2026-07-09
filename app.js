@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.10';
+const APP_VERSION = 'priv-spaca-v93.11';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3424,6 +3424,9 @@ async function pollNotifications() {
       }
     });
   } catch (_) {}
+  // v93.11: Set _lastNotif.chatUnread BEFORE calling _setTopNotifMessage,
+  // so updateTopNotifBanner() sees the correct value and doesn't clear-then-reshow.
+  _lastNotif.chatUnread = chatUnread;
   if (_latestUnreadMsg) _setTopNotifMessage(_latestUnreadMsg.sender, _latestUnreadMsg.preview, _latestUnreadMsg.createdAt, _latestUnreadMsg.roomId);
 
   // 3) Keep posts cached for stories rail + saved tab, but avoid re-fetching
@@ -3445,7 +3448,6 @@ async function pollNotifications() {
     });
   } catch (_) {}
 
-  _lastNotif.chatUnread = chatUnread;
   _lastNotif.feedUnread = feedUnread;
   _lastNotif.headerUnread = headerUnread;
   updateNotifDots();
@@ -3481,7 +3483,8 @@ function updateNotifDots() {
 */
 let _topNotifBannerEl = null;
 let _topNotifCurrent = null;  // 'message' | 'call' | null
-let _topNotifLastMsg = null;  // { sender, preview, createdAt }
+let _topNotifLastMsg = null;  // { sender, preview, createdAt, roomId }
+let _topNotifRenderedSig = ''; // v93.11: signature of what's currently rendered (prevents flicker)
 
 // Show/hide the banner — called from pollNotifications, markTabSeen, switchTab
 function updateTopNotifBanner() {
@@ -3489,7 +3492,6 @@ function updateTopNotifBanner() {
   if (!_topNotifBannerEl) return;
 
   // Call state takes priority — if a call banner is active, leave it
-  // (call banner is cleared by _clearTopNotifCallBanner() when call ends)
   if (_topNotifCurrent === 'call') return;
 
   // Determine if we should show a message banner
@@ -3511,8 +3513,14 @@ function _setTopNotifMessage(sender, preview, createdAt, roomId) {
 function _renderTopNotifMessage(msg) {
   if (!_topNotifBannerEl) _topNotifBannerEl = $id('#topNotifBanner');
   if (!_topNotifBannerEl) return;
-  _topNotifCurrent = 'message';
+  // v93.11: Signature guard — don't re-render if the same message is already
+  // showing. This prevents the banner from flickering/popping on every poll
+  // cycle (every 10s pollNotifications re-calls this with the same data).
   const sender = msg.sender || {};
+  const sig = (sender.id || '') + '|' + (msg.preview || '') + '|' + (msg.createdAt || 0);
+  if (_topNotifCurrent === 'message' && sig === _topNotifRenderedSig) return; // already showing this exact message
+  _topNotifRenderedSig = sig;
+  _topNotifCurrent = 'message';
   const name = sender.displayName || sender.username || 'Someone';
   const initials = (name || '?').trim().slice(0, 2).toUpperCase();
   const avatarHtml = sender.photoUrl
@@ -3618,6 +3626,7 @@ function _clearTopNotifBanner() {
   if (!_topNotifBannerEl) _topNotifBannerEl = $id('#topNotifBanner');
   if (!_topNotifBannerEl) return;
   _topNotifCurrent = null;
+  _topNotifRenderedSig = '';  // v93.11: reset signature so next render is allowed
   _topNotifBannerEl.innerHTML = '';
   _topNotifBannerEl.onclick = null;
   _topNotifBannerEl.style.cursor = 'default';
