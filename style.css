@@ -5076,7 +5076,7 @@ body{
 .settings-section-title{
   font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;
   color:var(--muted-2);padding:0 6px;margin-top:14px;margin-bottom:4px;
-  flex-shrink:0;
+  flex-shrink:0!important;
 }
 .settings-section-title:first-child{margin-top:2px}
 
@@ -5085,9 +5085,9 @@ body{
   border:none!important;background:var(--surface)!important;
   border-radius:16px;overflow:hidden;box-shadow:var(--shadow-xs);
   display:flex;flex-direction:column;
-  flex-shrink:0;  /* prevent flex parent from squishing the strip — critical for overflow:auto scrolling */
+  flex-shrink:0!important;  /* prevent flex parent from squishing the strip — critical for overflow:auto scrolling */
 }
-.vip-settings-strip{padding:8px!important;overflow:visible!important;flex-shrink:0}
+.vip-settings-strip{padding:8px!important;overflow:visible!important;flex-shrink:0!important}
 
 /* 4. Rows — uniform height, no overlap, no truncation */
 .settings-row{
@@ -5241,7 +5241,7 @@ body{
 /* 12. Footer — lighter, more subtle */
 .settings-foot{
   text-align:center;color:var(--muted-2);font-size:11.5px;
-  padding:10px 8px 4px;letter-spacing:0;flex-shrink:0;
+  padding:10px 8px 4px;letter-spacing:0;flex-shrink:0!important;
 }
 .settings-foot a{color:var(--accent);text-decoration:none;font-weight:600}
 
