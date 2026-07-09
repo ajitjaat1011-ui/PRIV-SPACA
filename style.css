@@ -5089,23 +5089,24 @@ body{
   display:flex;flex-direction:column;
 }
 
-/* 4. Rows — generous padding, subtle dividers, no overlap */
+/* 4. Rows — clean layout, no truncation, proper spacing */
 .settings-row{
   border:none!important;border-bottom:1px solid var(--line)!important;
-  border-radius:0!important;padding:13px 16px!important;margin:0!important;
+  border-radius:0!important;padding:12px 14px!important;margin:0!important;
   min-height:auto!important;background:transparent!important;
   font-weight:600;font-size:14px;
   transition:background .15s ease;
-  display:flex;align-items:center;gap:12px;
+  display:flex;align-items:center;gap:10px;
 }
 .settings-row:last-child{border-bottom:none!important}
 .settings-row:hover{background:var(--accent-softer)!important}
 .settings-row:active{transform:scale(.998);background:rgba(var(--accent-rgb),.05)!important}
-.settings-row i{width:20px;height:20px;color:var(--muted);flex-shrink:0}
-.settings-row > span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.settings-row i{width:18px;height:18px;color:var(--muted);flex-shrink:0}
+/* Text span — takes available space, no forced truncation */
+.settings-row > span{flex:1;min-width:0}
 /* Chevron — subtle ponytail arrow */
 .settings-row .chev{
-  margin-left:auto;color:var(--muted-2);opacity:.35;
+  margin-left:auto;color:var(--muted-2);opacity:.3;
   width:16px!important;height:16px!important;flex-shrink:0;
 }
 .settings-row.danger{color:var(--red)}
@@ -5113,22 +5114,22 @@ body{
 .settings-row.danger .chev{color:var(--red);opacity:.35}
 .settings-row.danger:hover{background:rgba(237,73,86,.06)!important}
 
-/* 5. Toggle row — refined */
-.settings-toggle-row{padding:13px 16px!important;min-height:auto!important}
-.settings-toggle-meta{font-weight:600;font-size:14px;color:var(--text)}
-.settings-toggle-meta i,.settings-toggle-meta svg{color:var(--muted)!important;width:20px!important;height:20px!important}
-.settings-toggle-hint{font-size:12.5px;font-weight:600;color:var(--muted-2);letter-spacing:0;white-space:nowrap;flex-shrink:0}
+/* 5. Toggle row — compact, 2-line if needed, no truncation */
+.settings-toggle-row{padding:11px 14px!important;min-height:auto!important;flex-wrap:wrap;gap:4px 10px}
+.settings-toggle-meta{font-weight:600;font-size:14px;color:var(--text);display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0}
+.settings-toggle-meta i,.settings-toggle-meta svg{color:var(--muted)!important;width:18px!important;height:18px!important}
+.settings-toggle-hint{font-size:11.5px;font-weight:600;color:var(--muted-2);letter-spacing:0;flex:0 0 auto}
 .settings-toggle-row.active .settings-toggle-hint{color:var(--accent)}
 
-/* 6. Switch — modern, borderless, smooth */
+/* 6. Switch — compact, modern */
 .settings-switch{
-  width:46px;height:28px;border-radius:999px;
+  width:44px;height:26px;border-radius:999px;
   border:none!important;background:var(--line-2);
   padding:3px;transition:background .25s ease;flex-shrink:0;
 }
 .settings-switch-knob{
-  width:22px;height:22px;border-radius:50%;background:#fff;
-  box-shadow:0 1px 6px rgba(0,0,0,.10);
+  width:20px;height:20px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 5px rgba(0,0,0,.10);
   transition:transform .25s cubic-bezier(.4,0,.2,1),background .25s ease;
 }
 .settings-toggle-input:checked+.settings-switch{background:var(--accent)}
@@ -5144,17 +5145,17 @@ body{
 .settings-chip.on{background:rgba(35,165,90,.08);color:var(--green)}
 .settings-chip.live{background:rgba(var(--accent-rgb),.08);color:var(--accent)}
 
-/* 8. Theme toggle — compact pill, softer */
+/* 8. Theme toggle — compact pill */
 .theme-toggle{
-  background:var(--bg-soft);border-radius:10px;padding:3px;gap:2px;flex-shrink:0;
+  background:var(--bg-soft);border-radius:9px;padding:2px;gap:2px;flex-shrink:0;
 }
 .theme-toggle .theme-opt{
   background:transparent;border:0;cursor:pointer;color:var(--muted);
-  width:32px;height:28px;border-radius:8px;display:inline-flex;
+  width:30px;height:26px;border-radius:7px;display:inline-flex;
   align-items:center;justify-content:center;font-weight:800;font-size:11px;
   transition:all .2s ease;
 }
-.theme-toggle .theme-opt i{width:13px;height:13px}
+.theme-toggle .theme-opt i{width:12px;height:12px}
 .theme-toggle .theme-opt.active{
   background:var(--surface);color:var(--accent);
   box-shadow:0 1px 3px rgba(0,0,0,.05);
@@ -5173,34 +5174,34 @@ body{
   box-shadow:0 2px 6px rgba(0,0,0,.08);
 }
 
-/* 10. VIP key row — proper flex, no overlap */
+/* 10. VIP key row — proper flex, compact button */
 .vip-settings-strip{padding:6px!important;overflow:visible!important}
 .vip-key-row{
   display:flex;align-items:center;gap:8px;width:100%;
   background:var(--bg-soft);border:1px solid var(--line);
-  border-radius:14px;padding:8px 10px;
+  border-radius:12px;padding:7px 8px;
   transition:border-color .2s ease,box-shadow .2s ease;
 }
-.vip-key-row i,.vip-key-row svg{width:16px!important;height:16px!important;flex-shrink:0;color:var(--accent)!important}
+.vip-key-row i,.vip-key-row svg{width:15px!important;height:15px!important;flex-shrink:0;color:var(--accent)!important}
 .vip-key-row input{flex:1;min-width:0;border:0;background:transparent;outline:none;color:var(--text);font:inherit;font-size:13px;font-weight:600}
 .vip-key-row input::placeholder{color:var(--muted);font-weight:500}
 .vip-key-row button{
-  border:0;border-radius:10px;background:var(--accent);color:#fff;
-  font-size:12px;font-weight:800;padding:7px 14px;cursor:pointer;
+  border:0;border-radius:8px;background:var(--accent);color:#fff;
+  font-size:11.5px;font-weight:800;padding:6px 12px;cursor:pointer;
   flex-shrink:0;white-space:nowrap;
   transition:all .15s ease;
 }
 .vip-key-row button:hover{filter:brightness(1.08)}
 .vip-key-row button:active{transform:scale(.95)}
 
-/* 11. Select — compact, never clipped */
+/* 11. Select — compact, never clipped, custom arrow */
 .settings-select{
   margin-left:auto;border:1px solid var(--line);background:var(--bg-soft);
-  color:var(--text);border-radius:10px;padding:6px 26px 6px 10px;
-  font-weight:700;font-size:12px;outline:none;flex-shrink:0;
+  color:var(--text);border-radius:8px;padding:5px 22px 5px 8px;
+  font-weight:700;font-size:11.5px;outline:none;flex-shrink:0;
   -webkit-appearance:none;appearance:none;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat:no-repeat;background-position:right 8px center;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 6px center;
   transition:border-color .2s ease;
 }
 .settings-select:focus{border-color:var(--accent)}
