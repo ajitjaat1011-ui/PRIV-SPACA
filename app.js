@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.5.1';
+const APP_VERSION = 'priv-spaca-v93.7';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3337,12 +3337,40 @@ async function pollNotifications() {
 
   // 2) New general-group messages (client tracks per-tab lastSeen so unread is true unread)
   const seenChat = _getLastSeen('ps_seenChatAt') || (Date.now() - 24*3600*1000);
+  let _latestUnreadMsg = null;
   try {
     const r = await api('/messages?roomId=general-group');
     (r.messages || []).forEach(m => {
-      if (m.userId !== meId && m.createdAt > seenChat) chatUnread++;
+      if (m.userId !== meId && m.createdAt > seenChat) {
+        chatUnread++;
+        // Track the latest unread message for the topbar banner
+        if (!_latestUnreadMsg || m.createdAt > _latestUnreadMsg.createdAt) {
+          const sender = (State.members || []).find(u => u.id === m.userId) || {};
+          _latestUnreadMsg = {
+            sender,
+            preview: m.text || (m.kind === 'voice' ? '🎤 Voice note' : (m.imageUrl ? '📷 Photo' : 'New message')),
+            createdAt: m.createdAt
+          };
+        }
+      }
     });
   } catch (_) {}
+  // Also scan server message notifications for a sender (covers DMs)
+  try {
+    (_notifData && _notifData.notifications || []).forEach(n => {
+      if (n.seenAt || n.kind !== 'message') return;
+      if (!_latestUnreadMsg || (n.createdAt || 0) > _latestUnreadMsg.createdAt) {
+        const sender = (State.members || []).find(u => u.id === n.fromUserId) ||
+                       { displayName: n.fromUserName, username: n.fromUsername, photoUrl: n.fromUserPhoto };
+        _latestUnreadMsg = {
+          sender,
+          preview: n.preview || n.text || 'New message',
+          createdAt: n.createdAt || Date.now()
+        };
+      }
+    });
+  } catch (_) {}
+  if (_latestUnreadMsg) _setTopNotifMessage(_latestUnreadMsg.sender, _latestUnreadMsg.preview, _latestUnreadMsg.createdAt);
 
   // 3) Keep posts cached for stories rail + saved tab, but avoid re-fetching
   // them on every notification poll if we already refreshed recently.
@@ -3378,6 +3406,134 @@ function updateNotifDots() {
   toggleDot('[data-dot="chat-top"]', showChat);
   toggleDot('[data-dot="feed"]', showFeed);
   toggleDot('[data-dot="feed-top"]', showHeader);
+  // v93.7: also update the smart banner (hide message when user reads by going to chat tab)
+  updateTopNotifBanner();
+}
+
+/* ===== v93.7 Smart Notification Banner (Design C — Transparent Floral) =====
+   Shows the latest unread message preview OR an incoming call UI in the
+   topbar slot between the brand wordmark and the heart icon.
+
+   States:
+   - empty: nothing to show (clean, no content)
+   - message: sender avatar + name + preview (transparent, no background)
+   - call: caller avatar + INCOMING CALL label + accept/decline buttons
+
+   Rules:
+   - Message shows when chatUnread > 0 AND currentTab !== 'chat'
+   - Call shows when showCallUI(status, user, incoming=true) is invoked
+   - Call takes priority over message (same slot)
+   - Hides when user reads (goes to chat tab) or call ends
+*/
+let _topNotifBannerEl = null;
+let _topNotifCurrent = null;  // 'message' | 'call' | null
+let _topNotifLastMsg = null;  // { sender, preview, createdAt }
+
+// Show/hide the banner — called from pollNotifications, markTabSeen, switchTab
+function updateTopNotifBanner() {
+  if (!_topNotifBannerEl) _topNotifBannerEl = $id('#topNotifBanner');
+  if (!_topNotifBannerEl) return;
+
+  // Call state takes priority — if a call banner is active, leave it
+  // (call banner is cleared by _clearTopNotifCallBanner() when call ends)
+  if (_topNotifCurrent === 'call') return;
+
+  // Determine if we should show a message banner
+  const hasUnread = (_lastNotif.chatUnread > 0) && (State.currentTab !== 'chat');
+  if (hasUnread && _topNotifLastMsg) {
+    _renderTopNotifMessage(_topNotifLastMsg);
+  } else {
+    _clearTopNotifBanner();
+  }
+}
+
+// Track the latest unread message for banner display
+function _setTopNotifMessage(sender, preview, createdAt) {
+  _topNotifLastMsg = { sender, preview, createdAt: createdAt || Date.now() };
+  updateTopNotifBanner();
+}
+
+// Render the message banner (transparent, Design C)
+function _renderTopNotifMessage(msg) {
+  if (!_topNotifBannerEl) _topNotifBannerEl = $id('#topNotifBanner');
+  if (!_topNotifBannerEl) return;
+  _topNotifCurrent = 'message';
+  const sender = msg.sender || {};
+  const name = sender.displayName || sender.username || 'Someone';
+  const initials = (name || '?').trim().slice(0, 2).toUpperCase();
+  const avatarHtml = sender.photoUrl
+    ? `<img src="${escapeHtml(sender.photoUrl)}" alt="" onerror="this.style.display='none'">`
+    : escapeHtml(initials);
+  const preview = escapeHtml(String(msg.preview || '').slice(0, 60));
+  const timeStr = msg.createdAt ? timeAgo(msg.createdAt) : 'now';
+  _topNotifBannerEl.innerHTML = `
+    <div class="tnb-msg">
+      <div class="tnb-av"><div class="tnb-av-inner">${avatarHtml}</div></div>
+      <div class="tnb-content">
+        <div class="tnb-top"><span class="tnb-name">${escapeHtml(name)}</span><span class="tnb-time">· ${escapeHtml(timeStr)}</span></div>
+        <div class="tnb-text">${preview}</div>
+      </div>
+      <svg class="tnb-flower" viewBox="0 0 100 100" aria-hidden="true">
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#ff7ab8" transform="rotate(0 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#c33dff" transform="rotate(72 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#7c5cff" transform="rotate(144 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#c33dff" transform="rotate(216 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#ff7ab8" transform="rotate(288 50 50)" opacity="0.9"/>
+        <circle cx="50" cy="50" r="6" fill="#ffc233"/>
+      </svg>
+    </div>`;
+  // Tap the banner → go to chat tab
+  _topNotifBannerEl.onclick = () => { switchTab('chat'); };
+  _topNotifBannerEl.style.cursor = 'pointer';
+}
+
+// Render the call banner (transparent, Design C) — called from showCallUI
+function _showTopNotifCall(user, isVideo) {
+  if (!_topNotifBannerEl) _topNotifBannerEl = $id('#topNotifBanner');
+  if (!_topNotifBannerEl) return;
+  _topNotifCurrent = 'call';
+  const name = (user && (user.displayName || user.username)) || 'Caller';
+  const initials = (name || '?').trim().slice(0, 2).toUpperCase();
+  const avatarHtml = (user && user.photoUrl)
+    ? `<img src="${escapeHtml(user.photoUrl)}" alt="" onerror="this.style.display='none'">`
+    : escapeHtml(initials);
+  const label = isVideo ? 'INCOMING VIDEO' : 'INCOMING CALL';
+  _topNotifBannerEl.innerHTML = `
+    <div class="tnb-call">
+      <div class="tnb-call-av"><div class="tnb-call-av-inner">${avatarHtml}</div></div>
+      <div class="tnb-call-info">
+        <div class="tnb-call-label">${label}</div>
+        <div class="tnb-call-name">${escapeHtml(name)}</div>
+      </div>
+      <div class="tnb-call-actions">
+        <button class="tnb-call-btn tnb-call-decline" aria-label="Decline" data-tnb-action="decline"><i data-lucide="phone-off"></i></button>
+        <button class="tnb-call-btn tnb-call-accept" aria-label="Accept" data-tnb-action="accept"><i data-lucide="phone"></i></button>
+      </div>
+    </div>`;
+  _topNotifBannerEl.onclick = null;
+  _topNotifBannerEl.style.cursor = 'default';
+  // Wire buttons to the existing RTC accept/reject functions
+  const declineBtn = _topNotifBannerEl.querySelector('[data-tnb-action="decline"]');
+  const acceptBtn = _topNotifBannerEl.querySelector('[data-tnb-action="accept"]');
+  if (declineBtn) declineBtn.addEventListener('click', (e) => { e.stopPropagation(); if (typeof rejectOrEndCall === 'function') rejectOrEndCall(); });
+  if (acceptBtn) acceptBtn.addEventListener('click', (e) => { e.stopPropagation(); if (typeof acceptIncomingCall === 'function') acceptIncomingCall(); });
+  refreshIcons();
+}
+
+// Clear the call banner (call ended/accepted/declined) → fall back to message or empty
+function _clearTopNotifCallBanner() {
+  _topNotifCurrent = null;
+  updateTopNotifBanner();
+}
+
+// Clear the entire banner (back to clean empty state)
+function _clearTopNotifBanner() {
+  if (!_topNotifBannerEl) _topNotifBannerEl = $id('#topNotifBanner');
+  if (!_topNotifBannerEl) return;
+  _topNotifCurrent = null;
+  _topNotifBannerEl.innerHTML = '';
+  _topNotifBannerEl.onclick = null;
+  _topNotifBannerEl.style.cursor = 'default';
 }
 
 // ====== Feed ======
@@ -8958,6 +9114,10 @@ function showCallUI(status, user, incoming) {
   }
   $id('#rtcRejectBtn').classList.remove('hidden');
 
+  // v93.7: Show the smart-banner call UI for incoming calls
+  if (incoming && user) {
+    if (typeof _showTopNotifCall === 'function') _showTopNotifCall(user, isVideoCall);
+  }
   refreshIcons();
 }
 
@@ -8966,6 +9126,8 @@ function onCallConnected() {
   _callConnected = true;
   _callConnecting = false;
   _disarmCallTimeout();
+  // v93.7: Clear the smart-banner call UI once the call is connected
+  if (typeof _clearTopNotifCallBanner === 'function') _clearTopNotifCallBanner();
 
   $id('#callStatusText').textContent = 'Connected';
   $id('#callTimer').classList.remove('hidden');
@@ -9506,6 +9668,8 @@ function endCall(remote) {
   const controls = $id('#callActiveControls'); hide(controls);
   const localVid = $id('#rtcLocalVideo'); if (localVid) localVid.srcObject = null;
   const remoteVid = $id('#rtcRemoteVideo'); if (remoteVid) remoteVid.srcObject = null;
+  // v93.7: Clear the smart-banner call UI when call ends
+  if (typeof _clearTopNotifCallBanner === 'function') _clearTopNotifCallBanner();
 }
 
 })();

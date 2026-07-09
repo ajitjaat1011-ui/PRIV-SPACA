@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PRIV SPACA — Topbar Design Options v2</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Dancing+Script:wght@600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #0a0a14;
+    padding: 30px 0 60px;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 44px;
+  }
+  h1 {
+    text-align: center; font-size: 26px; font-weight: 900; color: #fff;
+    background: linear-gradient(120deg, #ff7ab8, #c33dff, #7c5cff);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .subtitle { text-align: center; font-size: 13px; color: #888; max-width: 380px; margin-top: -30px; }
+  .option { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .option-label {
+    font-size: 13px; font-weight: 700; color: #fff;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 7px 18px; border-radius: 20px;
+    backdrop-filter: blur(10px);
+  }
+  .option-num {
+    font-family: 'Space Grotesk', monospace;
+    color: #c33dff; margin-right: 8px;
+  }
+  .phone {
+    width: 390px; height: 150px;
+    background: #fff;
+    border-radius: 28px;
+    overflow: hidden;
+    box-shadow: 0 12px 48px rgba(195,75,255,0.15), 0 0 0 1px rgba(255,255,255,0.08);
+    position: relative;
+  }
+  .topbar {
+    height: 100%;
+    display: flex; align-items: center;
+    padding: 0 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* Shared */
+  .brand {
+    font-family: 'Dancing Script', cursive;
+    font-weight: 700; font-size: 26px;
+    color: #ff8da1;
+    cursor: pointer; user-select: none; white-space: nowrap;
+    z-index: 2;
+  }
+  .icon-btn {
+    width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none; cursor: pointer;
+    color: #1a1a2e; position: relative; flex-shrink: 0; z-index: 2;
+  }
+  .notif-dot {
+    position: absolute; top: 6px; right: 6px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ff3040; border: 1.5px solid #fff;
+  }
+
+  /* ===== 7: Aurora Flow ===== */
+  .opt7 { background: #0d0d1a; color: #fff; }
+  .opt7 .brand { color: #fff; }
+  .opt7 .icon-btn { color: #fff; }
+  .opt7 .aurora {
+    position: absolute; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse 60% 80% at 30% 50%, rgba(255,122,184,0.35), transparent 60%),
+      radial-gradient(ellipse 50% 70% at 60% 50%, rgba(124,92,255,0.35), transparent 60%),
+      radial-gradient(ellipse 40% 60% at 85% 50%, rgba(35,200,255,0.3), transparent 60%);
+    filter: blur(8px);
+    animation: aurora-shift 8s ease-in-out infinite;
+  }
+  @keyframes aurora-shift {
+    0%, 100% { transform: translateX(0) scale(1); }
+    50% { transform: translateX(20px) scale(1.1); }
+  }
+  .opt7 .aurora-text {
+    position: relative; z-index: 1; margin: 0 auto;
+    font-size: 11px; font-weight: 700; letter-spacing: 3px;
+    color: rgba(255,255,255,0.7); text-transform: uppercase;
+    text-shadow: 0 0 12px rgba(255,122,184,0.6);
+  }
+
+  /* ===== 8: Live Now Pulse ===== */
+  .opt8 { background: linear-gradient(135deg, #faf5ff, #fff0f6); }
+  .opt8 .live-wrap {
+    margin: 0 auto; display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,94,156,0.2);
+    border-radius: 999px; padding: 7px 16px 7px 12px;
+    box-shadow: 0 4px 16px rgba(255,94,156,0.12);
+  }
+  .opt8 .live-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #ff3040; position: relative;
+  }
+  .opt8 .live-dot::after {
+    content: ''; position: absolute; inset: -4px; border-radius: 50%;
+    background: #ff3040; opacity: 0.4;
+    animation: live-pulse 1.6s ease-out infinite;
+  }
+  @keyframes live-pulse {
+    0% { transform: scale(1); opacity: 0.5; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  .opt8 .live-text {
+    font-size: 12px; font-weight: 800; color: #1a1a2e;
+  }
+  .opt8 .live-count {
+    font-size: 11px; color: #888; font-weight: 600;
+  }
+  .opt8 .live-avs {
+    display: flex; margin-left: 4px;
+  }
+  .opt8 .live-av {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 1.5px solid #fff;
+    background: linear-gradient(135deg, #ff7ab8, #c33dff);
+    margin-left: -5px;
+    font-size: 8px; font-weight: 700; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ===== 9: Now Playing Music Widget ===== */
+  .opt9 { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; }
+  .opt9 .brand { color: #fff; }
+  .opt9 .icon-btn { color: #fff; }
+  .opt9 .np {
+    margin: 0 auto; display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 14px; padding: 6px 14px 6px 6px;
+    max-width: 180px;
+  }
+  .opt9 .np-art {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: linear-gradient(135deg, #ff7ab8, #c33dff, #7c5cff);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .opt9 .np-bars { display: flex; gap: 2px; align-items: flex-end; height: 14px; }
+  .opt9 .np-bar {
+    width: 2.5px; background: #fff; border-radius: 2px;
+    animation: np-bounce 0.8s ease-in-out infinite;
+  }
+  .opt9 .np-bar:nth-child(1) { height: 60%; animation-delay: 0s; }
+  .opt9 .np-bar:nth-child(2) { height: 100%; animation-delay: 0.15s; }
+  .opt9 .np-bar:nth-child(3) { height: 75%; animation-delay: 0.3s; }
+  .opt9 .np-bar:nth-child(4) { height: 90%; animation-delay: 0.45s; }
+  @keyframes np-bounce {
+    0%, 100% { transform: scaleY(0.4); }
+    50% { transform: scaleY(1); }
+  }
+  .opt9 .np-meta { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
+  .opt9 .np-title { font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; }
+  .opt9 .np-artist { font-size: 9px; color: rgba(255,255,255,0.5); white-space: nowrap; }
+
+  /* ===== 10: Glass Mood Ring ===== */
+  .opt10 { background: linear-gradient(135deg, #faf5ff, #f0f7ff); }
+  .opt10 .mood {
+    margin: 0 auto; display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.5);
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1.5px solid rgba(255,255,255,0.8);
+    border-radius: 16px; padding: 6px 14px 6px 6px;
+    box-shadow: 0 4px 20px rgba(195,75,255,0.1);
+  }
+  .opt10 .mood-orb {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: conic-gradient(from 0deg, #ff7ab8, #ffc233, #7ee0a8, #7c5cff, #ff7ab8);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    box-shadow: 0 0 12px rgba(255,122,184,0.4);
+    animation: mood-rotate 4s linear infinite;
+  }
+  .opt10 .mood-orb::before {
+    content: ''; position: absolute; width: 22px; height: 22px; border-radius: 50%;
+    background: #fff;
+  }
+  .opt10 .mood-emoji {
+    position: relative; z-index: 1; font-size: 14px;
+    animation: mood-bounce 2s ease-in-out infinite;
+  }
+  @keyframes mood-rotate { to { transform: rotate(360deg); } }
+  @keyframes mood-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-2px); }
+  }
+  .opt10 .mood-text {
+    font-size: 11px; font-weight: 700; color: #555;
+  }
+  .opt10 .mood-text small { display: block; font-size: 9px; color: #aaa; font-weight: 500; }
+
+  /* ===== 11: Floating Bubble Particles ===== */
+  .opt11 { background: linear-gradient(135deg, #fff0f6, #f0f7ff); }
+  .opt11 .bubbles {
+    position: absolute; inset: 0; z-index: 0; overflow: hidden;
+  }
+  .opt11 .bubble {
+    position: absolute; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(255,122,184,0.4));
+    border: 1px solid rgba(255,255,255,0.6);
+    animation: bubble-float 6s ease-in-out infinite;
+  }
+  .opt11 .bubble:nth-child(1) { width: 24px; height: 24px; left: 30%; top: 20%; animation-delay: 0s; }
+  .opt11 .bubble:nth-child(2) { width: 16px; height: 16px; left: 50%; top: 60%; animation-delay: 1s; background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(195,75,255,0.4)); }
+  .opt11 .bubble:nth-child(3) { width: 30px; height: 30px; left: 65%; top: 30%; animation-delay: 2s; }
+  .opt11 .bubble:nth-child(4) { width: 12px; height: 12px; left: 75%; top: 70%; animation-delay: 0.5s; background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(124,92,255,0.4)); }
+  .opt11 .bubble:nth-child(5) { width: 20px; height: 20px; left: 45%; top: 15%; animation-delay: 1.5s; }
+  @keyframes bubble-float {
+    0%, 100% { transform: translateY(0) scale(1); opacity: 0.7; }
+    50% { transform: translateY(-12px) scale(1.1); opacity: 1; }
+  }
+  .opt11 .center-text {
+    position: relative; z-index: 1; margin: 0 auto;
+    font-size: 13px; font-weight: 800;
+    background: linear-gradient(120deg, #ff7ab8, #c33dff);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+
+  /* ===== 12: Neon LIVE Badge ===== */
+  .opt12 { background: #0a0a14; color: #fff; }
+  .opt12 .brand { color: #fff; text-shadow: 0 0 10px rgba(255,122,184,0.5); }
+  .opt12 .icon-btn { color: #fff; }
+  .opt12 .neon-wrap {
+    margin: 0 auto; display: flex; align-items: center; gap: 8px;
+  }
+  .opt12 .neon-badge {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px; font-weight: 700; letter-spacing: 2px;
+    color: #00f0ff;
+    text-shadow:
+      0 0 4px #00f0ff,
+      0 0 12px #00f0ff,
+      0 0 24px rgba(0,240,255,0.5);
+    padding: 4px 12px;
+    border: 1.5px solid #00f0ff;
+    border-radius: 6px;
+    background: rgba(0,240,255,0.05);
+    box-shadow:
+      0 0 8px rgba(0,240,255,0.3),
+      inset 0 0 8px rgba(0,240,255,0.1);
+    animation: neon-flicker 3s ease-in-out infinite;
+  }
+  @keyframes neon-flicker {
+    0%, 100% { opacity: 1; }
+    48% { opacity: 1; }
+    50% { opacity: 0.85; }
+    52% { opacity: 1; }
+  }
+  .opt12 .neon-sub {
+    font-size: 10px; color: rgba(255,255,255,0.5); font-weight: 500;
+  }
+
+  /* ===== 13: Floral Mandala ===== */
+  .opt13 { background: linear-gradient(135deg, #faf5ff, #fff0f6); }
+  .opt13 .mandala-wrap {
+    margin: 0 auto; position: relative;
+    width: 60px; height: 60px;
+  }
+  .opt13 .mandala {
+    width: 100%; height: 100%;
+    animation: mandala-spin 12s linear infinite;
+  }
+  @keyframes mandala-spin { to { transform: rotate(360deg); } }
+  .opt13 .mandala-glow {
+    position: absolute; inset: -8px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(195,75,255,0.2), transparent 70%);
+    animation: mandala-pulse 3s ease-in-out infinite;
+  }
+  @keyframes mandala-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.6; }
+    50% { transform: scale(1.15); opacity: 1; }
+  }
+
+  /* ===== 14: Activity Ticker Marquee ===== */
+  .opt14 { background: linear-gradient(135deg, #16213e, #0f3460); color: #fff; }
+  .opt14 .brand { color: #fff; }
+  .opt14 .icon-btn { color: #fff; }
+  .opt14 .ticker {
+    flex: 1; margin: 0 12px; overflow: hidden;
+    mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent);
+  }
+  .opt14 .ticker-track {
+    display: flex; gap: 24px; white-space: nowrap;
+    animation: ticker-scroll 14s linear infinite;
+    font-size: 11px; font-weight: 600;
+  }
+  .opt14 .ticker-item { display: flex; align-items: center; gap: 5px; color: rgba(255,255,255,0.85); }
+  .opt14 .ticker-dot { width: 5px; height: 5px; border-radius: 50%; background: #7ee0a8; flex-shrink: 0; }
+  .opt14 .ticker-item:nth-child(2) .ticker-dot { background: #ff7ab8; }
+  .opt14 .ticker-item:nth-child(3) .ticker-dot { background: #ffc233; }
+  .opt14 .ticker-item:nth-child(4) .ticker-dot { background: #7c5cff; }
+  @keyframes ticker-scroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
+  /* ===== 15: Time-Aware Sun/Moon ===== */
+  .opt15 { background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 50%, #fd79a8 100%); }
+  .opt15 .time-wrap {
+    margin: 0 auto; display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.35);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.5);
+    border-radius: 16px; padding: 6px 16px 6px 8px;
+  }
+  .opt15 .sun {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: radial-gradient(circle, #fff8dc, #ffd23f);
+    box-shadow: 0 0 16px rgba(255,210,63,0.6);
+    position: relative;
+    animation: sun-glow 3s ease-in-out infinite;
+  }
+  .opt15 .sun::before {
+    content: ''; position: absolute; inset: -5px; border-radius: 50%;
+    background: conic-gradient(from 0deg, transparent 0deg, rgba(255,210,63,0.4) 30deg, transparent 60deg, rgba(255,210,63,0.4) 120deg, transparent 150deg, rgba(255,210,63,0.4) 210deg, transparent 240deg, rgba(255,210,63,0.4) 300deg, transparent 330deg);
+    animation: sun-rays 8s linear infinite;
+  }
+  @keyframes sun-glow {
+    0%, 100% { box-shadow: 0 0 16px rgba(255,210,63,0.6); }
+    50% { box-shadow: 0 0 24px rgba(255,210,63,0.8); }
+  }
+  @keyframes sun-rays { to { transform: rotate(360deg); } }
+  .opt15 .time-text { display: flex; flex-direction: column; }
+  .opt15 .time-h { font-size: 13px; font-weight: 800; color: #5a3a1a; }
+  .opt15 .time-l { font-size: 9px; color: #8a6a3a; font-weight: 600; }
+
+  /* ===== 16: Glass Notification Capsule ===== */
+  .opt16 { background: linear-gradient(135deg, #faf5ff, #f0f7ff); }
+  .opt16 .capsule {
+    margin: 0 auto; display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.45);
+    backdrop-filter: blur(20px) saturate(180%);
+    border: 1.5px solid rgba(255,255,255,0.7);
+    border-radius: 999px; padding: 6px 16px 6px 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+    max-width: 200px;
+  }
+  .opt16 .capsule-icon {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, #ff7ab8, #c33dff);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 14px;
+    box-shadow: 0 2px 8px rgba(195,75,255,0.3);
+  }
+  .opt16 .capsule-text {
+    font-size: 11px; font-weight: 600; color: #444;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .opt16 .capsule-text strong { color: #c33dff; }
+
+  /* ===== 17: Gradient Mesh Orbs ===== */
+  .opt17 { background: #0d0d1a; color: #fff; }
+  .opt17 .brand { color: #fff; }
+  .opt17 .icon-btn { color: #fff; }
+  .opt17 .orbs {
+    position: absolute; inset: 0; z-index: 0; overflow: hidden;
+  }
+  .opt17 .orb {
+    position: absolute; border-radius: 50%; filter: blur(6px);
+    animation: orb-drift 7s ease-in-out infinite;
+  }
+  .opt17 .orb:nth-child(1) {
+    width: 50px; height: 50px; left: 35%; top: 20%;
+    background: radial-gradient(circle, #ff7ab8, transparent 70%);
+  }
+  .opt17 .orb:nth-child(2) {
+    width: 40px; height: 40px; left: 55%; top: 50%;
+    background: radial-gradient(circle, #7c5cff, transparent 70%);
+    animation-delay: 1.5s;
+  }
+  .opt17 .orb:nth-child(3) {
+    width: 35px; height: 35px; left: 70%; top: 25%;
+    background: radial-gradient(circle, #00f0ff, transparent 70%);
+    animation-delay: 3s;
+  }
+  @keyframes orb-drift {
+    0%, 100% { transform: translate(0,0) scale(1); }
+    33% { transform: translate(10px, -8px) scale(1.1); }
+    66% { transform: translate(-8px, 6px) scale(0.95); }
+  }
+  .opt17 .center-label {
+    position: relative; z-index: 1; margin: 0 auto;
+    font-size: 11px; font-weight: 800; letter-spacing: 2px;
+    color: rgba(255,255,255,0.9); text-transform: uppercase;
+  }
+
+  /* ===== 18: Constellation ===== */
+  .opt18 { background: linear-gradient(180deg, #0a0a2e 0%, #16213e 100%); color: #fff; }
+  .opt18 .brand { color: #fff; }
+  .opt18 .icon-btn { color: #fff; }
+  .opt18 .stars {
+    position: absolute; inset: 0; z-index: 0;
+  }
+  .opt18 .star {
+    position: absolute; width: 3px; height: 3px; border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 4px #fff, 0 0 8px rgba(255,255,255,0.5);
+    animation: star-twinkle 2s ease-in-out infinite;
+  }
+  .opt18 .star:nth-child(1) { left: 32%; top: 30%; animation-delay: 0s; }
+  .opt18 .star:nth-child(2) { left: 45%; top: 60%; animation-delay: 0.3s; width: 4px; height: 4px; }
+  .opt18 .star:nth-child(3) { left: 58%; top: 35%; animation-delay: 0.6s; }
+  .opt18 .star:nth-child(4) { left: 68%; top: 55%; animation-delay: 0.9s; width: 2px; height: 2px; }
+  .opt18 .star:nth-child(5) { left: 75%; top: 40%; animation-delay: 1.2s; }
+  @keyframes star-twinkle {
+    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
+  }
+  .opt18 .constellation-svg {
+    position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  }
+  .opt18 .constellation-svg line {
+    stroke: rgba(255,255,255,0.2); stroke-width: 0.5;
+    stroke-dasharray: 2 2;
+    animation: constellation-draw 4s ease-in-out infinite;
+  }
+  @keyframes constellation-draw {
+    0%, 100% { stroke-opacity: 0.2; }
+    50% { stroke-opacity: 0.6; }
+  }
+  .opt18 .center-text {
+    position: relative; z-index: 1; margin: 0 auto;
+    font-size: 11px; font-weight: 700; letter-spacing: 2px;
+    color: rgba(255,255,255,0.6); text-transform: uppercase;
+  }
+
+  /* ===== 19: Liquid Morphing Blob ===== */
+  .opt19 { background: #faf5ff; }
+  .opt19 .blob-wrap {
+    margin: 0 auto; position: relative;
+    width: 80px; height: 60px;
+  }
+  .opt19 .blob {
+    width: 100%; height: 100%;
+    background: linear-gradient(135deg, #ff7ab8, #c33dff, #7c5cff);
+    border-radius: 40% 60% 50% 50% / 50% 40% 60% 50%;
+    animation: blob-morph 6s ease-in-out infinite;
+    box-shadow: 0 4px 20px rgba(195,75,255,0.3);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 11px; font-weight: 800;
+    letter-spacing: 1px;
+  }
+  @keyframes blob-morph {
+    0%, 100% { border-radius: 40% 60% 50% 50% / 50% 40% 60% 50%; transform: rotate(0deg); }
+    33% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; transform: rotate(8deg); }
+    66% { border-radius: 30% 70% 70% 30% / 40% 60% 50% 50%; transform: rotate(-6deg); }
+  }
+
+  /* ===== 20: Bookmark + Save Counter ===== */
+  .opt20 { background: linear-gradient(135deg, #faf5ff, #fff0f6); }
+  .opt20 .save-wrap {
+    margin: 0 auto; display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,122,184,0.2);
+    border-radius: 12px; padding: 7px 14px;
+  }
+  .opt20 .save-icon {
+    width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    color: #ff5e9c;
+  }
+  .opt20 .save-count {
+    font-family: 'Space Grotesk', monospace;
+    font-size: 14px; font-weight: 800; color: #1a1a2e;
+  }
+  .opt20 .save-label { font-size: 9px; color: #888; font-weight: 600; }
+  .opt20 .save-divider { width: 1px; height: 16px; background: #ddd; }
+  .opt20 .save-heat {
+    display: flex; gap: 2px; align-items: flex-end; height: 14px;
+  }
+  .opt20 .heat-bar {
+    width: 3px; border-radius: 2px;
+    background: linear-gradient(180deg, #ff7ab8, #c33dff);
+  }
+  .opt20 .heat-bar:nth-child(1) { height: 40%; }
+  .opt20 .heat-bar:nth-child(2) { height: 65%; }
+  .opt20 .heat-bar:nth-child(3) { height: 90%; }
+  .opt20 .heat-bar:nth-child(4) { height: 75%; }
+  .opt20 .heat-bar:nth-child(5) { height: 100%; }
+
+</style>
+</head>
+<body>
+
+<h1>🌸 More Creative Topbar Options</h1>
+<p class="subtitle">14 new designs — neon, glass, particles, live indicators, mandalas, and more. Pick a number (7-20).</p>
+
+<!-- Reusable SVG symbols -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="heart" viewBox="0 0 24 24">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="none" stroke="currentColor" stroke-width="2"/>
+    </symbol>
+    <symbol id="bookmark" viewBox="0 0 24 24">
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" fill="currentColor"/>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- ===== 7: Aurora Flow ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">07</span>Aurora Flow</div>
+  <div class="phone">
+    <div class="topbar opt7">
+      <div class="aurora"></div>
+      <div class="brand">Priv Spaca</div>
+      <div class="aurora-text">Private • Secure</div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 8: Live Now Pulse ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">08</span>Live Now Pulse</div>
+  <div class="phone">
+    <div class="topbar opt8">
+      <div class="brand">Priv Spaca</div>
+      <div class="live-wrap">
+        <div class="live-dot"></div>
+        <div>
+          <div class="live-text">LIVE NOW</div>
+          <div class="live-count">3 friends online</div>
+        </div>
+        <div class="live-avs">
+          <div class="live-av">A</div>
+          <div class="live-av">R</div>
+          <div class="live-av">M</div>
+        </div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 9: Now Playing Music Widget ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">09</span>Now Playing Widget</div>
+  <div class="phone">
+    <div class="topbar opt9">
+      <div class="brand">Priv Spaca</div>
+      <div class="np">
+        <div class="np-art">
+          <div class="np-bars">
+            <div class="np-bar"></div><div class="np-bar"></div><div class="np-bar"></div><div class="np-bar"></div>
+          </div>
+        </div>
+        <div class="np-meta">
+          <div class="np-title">Sakura Dreams</div>
+          <div class="np-artist">Arvind · playing</div>
+        </div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 10: Glass Mood Ring ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">10</span>Glass Mood Ring</div>
+  <div class="phone">
+    <div class="topbar opt10">
+      <div class="brand">Priv Spaca</div>
+      <div class="mood">
+        <div class="mood-orb"><span class="mood-emoji">😊</span></div>
+        <div class="mood-text">Feeling Happy<small>tap to change</small></div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 11: Floating Bubble Particles ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">11</span>Floating Bubbles</div>
+  <div class="phone">
+    <div class="topbar opt11">
+      <div class="bubbles">
+        <div class="bubble"></div><div class="bubble"></div><div class="bubble"></div><div class="bubble"></div><div class="bubble"></div>
+      </div>
+      <div class="brand">Priv Spaca</div>
+      <div class="center-text">✨ Welcome</div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 12: Neon LIVE Badge ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">12</span>Neon LIVE Badge</div>
+  <div class="phone">
+    <div class="topbar opt12">
+      <div class="brand">Priv Spaca</div>
+      <div class="neon-wrap">
+        <div class="neon-badge">● LIVE</div>
+        <div class="neon-sub">2 streaming</div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 13: Floral Mandala ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">13</span>Floral Mandala</div>
+  <div class="phone">
+    <div class="topbar opt13">
+      <div class="brand">Priv Spaca</div>
+      <div class="mandala-wrap">
+        <div class="mandala-glow"></div>
+        <svg class="mandala" viewBox="0 0 100 100">
+          <g transform="translate(50,50)">
+            <g opacity="0.9">
+              <ellipse cx="0" cy="-22" rx="7" ry="14" fill="#ff7ab8" transform="rotate(0)"/>
+              <ellipse cx="0" cy="-22" rx="7" ry="14" fill="#ff5e9c" transform="rotate(45)"/>
+              <ellipse cx="0" cy="-22" rx="7" ry="14" fill="#c33dff" transform="rotate(90)"/>
+              <ellipse cx="0" cy="-22" rx="7" ry="14" fill="#7c5cff" transform="rotate(135)"/>
+              <ellipse cx="0" cy="-22" rx="7" ry="14" fill="#5b8bff" transform="rotate(180)"/>
+              <ellipse cx="0" cy="-22" rx="7" ry="14" fill="#7c5cff" transform="rotate(225)"/>
+              <ellipse cx="0" cy="-22" rx="7" ry="14" fill="#c33dff" transform="rotate(270)"/>
+              <ellipse cx="0" cy="-22" rx="7" ry="14" fill="#ff5e9c" transform="rotate(315)"/>
+            </g>
+            <circle r="8" fill="#ffc233"/>
+            <circle r="3" fill="#ff8c00" opacity="0.6"/>
+          </g>
+        </svg>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 14: Activity Ticker Marquee ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">14</span>Activity Ticker</div>
+  <div class="phone">
+    <div class="topbar opt14">
+      <div class="brand">Priv Spaca</div>
+      <div class="ticker">
+        <div class="ticker-track">
+          <div class="ticker-item"><span class="ticker-dot"></span>Riya posted a photo</div>
+          <div class="ticker-item"><span class="ticker-dot"></span>Arvind liked your post</div>
+          <div class="ticker-item"><span class="ticker-dot"></span>New story from Mannu</div>
+          <div class="ticker-item"><span class="ticker-dot"></span>Pooza is online</div>
+          <div class="ticker-item"><span class="ticker-dot"></span>Riya posted a photo</div>
+          <div class="ticker-item"><span class="ticker-dot"></span>Arvind liked your post</div>
+          <div class="ticker-item"><span class="ticker-dot"></span>New story from Mannu</div>
+          <div class="ticker-item"><span class="ticker-dot"></span>Pooza is online</div>
+        </div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 15: Time-Aware Sun/Moon ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">15</span>Time-Aware Sun</div>
+  <div class="phone">
+    <div class="topbar opt15">
+      <div class="brand" style="color:#5a3a1a">Priv Spaca</div>
+      <div class="time-wrap">
+        <div class="sun"></div>
+        <div class="time-text">
+          <div class="time-h">Good afternoon</div>
+          <div class="time-l">3:45 PM · Sunny</div>
+        </div>
+      </div>
+      <button class="icon-btn" style="color:#5a3a1a"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 16: Glass Notification Capsule ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">16</span>Glass Notification Capsule</div>
+  <div class="phone">
+    <div class="topbar opt16">
+      <div class="brand">Priv Spaca</div>
+      <div class="capsule">
+        <div class="capsule-icon">❤️</div>
+        <div class="capsule-text"><strong>Riya</strong> liked your post</div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 17: Gradient Mesh Orbs ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">17</span>Gradient Mesh Orbs</div>
+  <div class="phone">
+    <div class="topbar opt17">
+      <div class="orbs">
+        <div class="orb"></div><div class="orb"></div><div class="orb"></div>
+      </div>
+      <div class="brand">Priv Spaca</div>
+      <div class="center-label">✦</div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 18: Constellation ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">18</span>Constellation</div>
+  <div class="phone">
+    <div class="topbar opt18">
+      <div class="stars">
+        <div class="star"></div><div class="star"></div><div class="star"></div><div class="star"></div><div class="star"></div>
+      </div>
+      <svg class="constellation-svg" viewBox="0 0 390 150" preserveAspectRatio="none">
+        <line x1="125" y1="45" x2="176" y2="90"/>
+        <line x1="176" y1="90" x2="226" y2="52"/>
+        <line x1="226" y1="52" x2="265" y2="82"/>
+        <line x1="265" y1="82" x2="292" y2="60"/>
+      </svg>
+      <div class="brand">Priv Spaca</div>
+      <div class="center-text">★ Stargazers</div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 19: Liquid Morphing Blob ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">19</span>Liquid Morphing Blob</div>
+  <div class="phone">
+    <div class="topbar opt19">
+      <div class="brand">Priv Spaca</div>
+      <div class="blob-wrap">
+        <div class="blob">PRIV</div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 20: Bookmark + Save Counter ===== -->
+<div class="option">
+  <div class="option-label"><span class="option-num">20</span>Save Counter + Heat</div>
+  <div class="phone">
+    <div class="topbar opt20">
+      <div class="brand">Priv Spaca</div>
+      <div class="save-wrap">
+        <div class="save-icon"><svg width="18" height="18"><use href="#bookmark"/></svg></div>
+        <div>
+          <div class="save-count">1,284</div>
+          <div class="save-label">saves today</div>
+        </div>
+        <div class="save-divider"></div>
+        <div class="save-heat">
+          <div class="heat-bar"></div><div class="heat-bar"></div><div class="heat-bar"></div><div class="heat-bar"></div><div class="heat-bar"></div>
+        </div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<p style="font-size:12px;color:#666;margin-top:20px;text-align:center;max-width:380px">
+  View on your phone for the real 390px width experience.<br>
+  Tell me the number you like (7-20) and I'll build it in.
+</p>
+
+</body>
+</html>

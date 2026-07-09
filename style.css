@@ -770,6 +770,118 @@ img{user-select:none;-webkit-user-drag:none}
 .ig-username-dot{width:8px;height:8px;border-radius:50%;background:#ff3040}
 .brand-wordmark.hidden{display:none !important}
 
+/* ===== v93.7 Smart Notification Banner (Design C — Transparent Floral) ===== */
+/* Shows unread message preview or incoming call UI in the topbar slot.
+   Empty by default (clean, no content). Transparent — no background. */
+.top-notif-banner{
+  flex:1;min-width:0;height:44px;
+  display:flex;align-items:center;
+  overflow:hidden;
+  transition:opacity .3s ease;
+}
+.top-notif-banner:empty{display:flex}  /* keep flex space so layout doesn't jump */
+/* Message state — transparent, floating content */
+.top-notif-banner .tnb-msg{
+  display:flex;align-items:center;gap:8px;width:100%;
+  animation:tnb-slide-down .4s cubic-bezier(.2,.8,.2,1);
+}
+@keyframes tnb-slide-down{
+  from{transform:translateY(-12px);opacity:0}
+  to{transform:translateY(0);opacity:1}
+}
+.top-notif-banner .tnb-av{
+  width:30px;height:30px;border-radius:50%;padding:2px;flex-shrink:0;
+  background:conic-gradient(from 0deg,#ff7ab8,#ffc233,#7ee0a8,#7c5cff,#ff7ab8);
+  box-shadow:0 2px 8px rgba(195,75,255,0.25);
+}
+.top-notif-banner .tnb-av-inner{
+  width:100%;height:100%;border-radius:50%;background:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:800;color:#c33dff;overflow:hidden;
+}
+.top-notif-banner .tnb-av-inner img{width:100%;height:100%;object-fit:cover}
+.top-notif-banner .tnb-content{display:flex;flex-direction:column;flex:1;min-width:0;overflow:hidden}
+.top-notif-banner .tnb-top{display:flex;align-items:center;gap:5px}
+.top-notif-banner .tnb-name{font-size:11px;font-weight:800;color:#c33dff;white-space:nowrap}
+.top-notif-banner .tnb-time{font-size:9px;color:#aaa;white-space:nowrap}
+.top-notif-banner .tnb-text{
+  font-size:10px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.top-notif-banner .tnb-flower{
+  width:15px;height:15px;flex-shrink:0;opacity:.4;
+  animation:tnb-spin 6s linear infinite;
+}
+@keyframes tnb-spin{to{transform:rotate(360deg)}}
+/* Call state — transparent, floating content */
+.top-notif-banner .tnb-call{
+  display:flex;align-items:center;gap:10px;width:100%;
+  animation:tnb-call-shake .4s ease-out;
+}
+@keyframes tnb-call-shake{
+  0%,100%{transform:translateX(0)}
+  25%{transform:translateX(-2px)}
+  75%{transform:translateX(2px)}
+}
+.top-notif-banner .tnb-call-av{
+  width:30px;height:30px;border-radius:50%;padding:2px;flex-shrink:0;position:relative;
+  background:conic-gradient(from 0deg,#23a55a,#7ee0a8,#23a55a);
+  box-shadow:0 2px 8px rgba(35,165,90,0.3);
+}
+.top-notif-banner .tnb-call-av::after{
+  content:'';position:absolute;inset:-3px;border-radius:50%;
+  border:2px solid #23a55a;opacity:.5;
+  animation:tnb-ring-expand 1.5s ease-out infinite;
+}
+@keyframes tnb-ring-expand{
+  0%{transform:scale(1);opacity:.6}
+  100%{transform:scale(1.5);opacity:0}
+}
+.top-notif-banner .tnb-call-av-inner{
+  width:100%;height:100%;border-radius:50%;background:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:800;color:#23a55a;overflow:hidden;
+}
+.top-notif-banner .tnb-call-av-inner img{width:100%;height:100%;object-fit:cover}
+.top-notif-banner .tnb-call-info{display:flex;flex-direction:column;flex:1;min-width:0;overflow:hidden}
+.top-notif-banner .tnb-call-label{font-size:8px;font-weight:800;color:#23a55a;letter-spacing:1.5px}
+.top-notif-banner .tnb-call-name{
+  font-size:12px;font-weight:800;color:var(--text);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+}
+.top-notif-banner .tnb-call-actions{display:flex;gap:6px;flex-shrink:0}
+.top-notif-banner .tnb-call-btn{
+  width:32px;height:32px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;color:#fff;
+  box-shadow:0 2px 8px rgba(0,0,0,0.12);
+}
+.top-notif-banner .tnb-call-btn i,.top-notif-banner .tnb-call-btn svg{
+  width:16px;height:16px;
+}
+.top-notif-banner .tnb-call-decline{
+  background:linear-gradient(135deg,#ff3040,#c9182a);
+  box-shadow:0 2px 8px rgba(255,48,64,0.3);
+}
+.top-notif-banner .tnb-call-accept{
+  background:linear-gradient(135deg,#23a55a,#1a7d42);
+  animation:tnb-glow-pulse 1.2s ease-in-out infinite;
+}
+@keyframes tnb-glow-pulse{
+  0%,100%{box-shadow:0 2px 8px rgba(35,165,90,0.3),0 0 0 0 rgba(35,165,90,0.5)}
+  50%{box-shadow:0 2px 8px rgba(35,165,90,0.3),0 0 0 6px rgba(35,165,90,0)}
+}
+/* Dark mode adjustments */
+[data-theme="dark"] .top-notif-banner .tnb-name{color:#ff7ab8}
+[data-theme="dark"] .top-notif-banner .tnb-text{color:rgba(255,255,255,0.65)}
+[data-theme="dark"] .top-notif-banner .tnb-av-inner{background:rgba(255,255,255,0.1)}
+[data-theme="dark"] .top-notif-banner .tnb-call-av-inner{background:rgba(255,255,255,0.1)}
+[data-theme="dark"] .top-notif-banner .tnb-call-name{color:var(--text)}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .top-notif-banner .tnb-name{color:#ff7ab8}
+  :root:not([data-theme="light"]) .top-notif-banner .tnb-text{color:rgba(255,255,255,0.65)}
+  :root:not([data-theme="light"]) .top-notif-banner .tnb-av-inner{background:rgba(255,255,255,0.1)}
+  :root:not([data-theme="light"]) .top-notif-banner .tnb-call-av-inner{background:rgba(255,255,255,0.1)}
+}
+
 /* IG-style cursive wordmark, centered — simplified to clean gradient text */
 .brand-wordmark{
   position:relative;
