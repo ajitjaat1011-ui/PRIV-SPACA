@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.5';
+const APP_VERSION = 'priv-spaca-v93.5.1';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -513,10 +513,11 @@ function clearStoragePreservingAuth() {
   } catch (_) {}
 }
 
-// DOM visibility helpers — null-safe (was 68+ `hide(el)`)
-function hide(el) { hide(el); }
-function show(el) { show(el); }
-function toggle(el, force) { if (el) el.classList.toggle('hidden', force); }
+// DOM visibility helpers — null-safe (was 68+ `if (el) el.classList.add('hidden')`)
+// NOTE: bodies use el.classList directly (NOT hide/show) to avoid self-recursion.
+function hide(el) { if (el && el.classList) el.classList.add('hidden'); }
+function show(el) { if (el && el.classList) el.classList.remove('hidden'); }
+function toggle(el, force) { if (el && el.classList) el.classList.toggle('hidden', force); }
 
 // Slide a bottom-sheet card up (was duplicated 8× as motionAnimate calls)
 function slideSheetUp(card) {
