@@ -1321,8 +1321,17 @@ async function requireAuth(c, next) {
   // probe response which already carries SW_VERSION.
   if (APP_MIN_VERSION) {
     const clientVer = c.req.header('x-app-version') || '';
-    // Compare version numbers: extract the numeric suffix (e.g. 'priv-spaca-v90' -> 90)
-    const parseV = (v) => { const m = v.match(/v(\d+)$/); return m ? parseInt(m[1], 10) : 0; };
+    // v93.3.1 FIX: parseV regex was /v(\d+)$/ which requires the string to
+    // END with v<number>. For versions like 'priv-spaca-v93.3' the '.3'
+    // suffix broke the match and returned 0, causing the server to 426-
+    // reject v93.3 clients as "stale" and force a logout loop.
+    // New regex extracts the full numeric version (supports decimals).
+    const parseV = (v) => {
+      const m = String(v).match(/v(\d+(?:\.\d+)*)/);
+      if (!m) return 0;
+      const parts = m[1].split('.').map(n => parseInt(n, 10) || 0);
+      return parts.reduce((acc, n, i) => acc + n * Math.pow(1000, 3 - i), 0);
+    };
     if (parseV(clientVer) < parseV(APP_MIN_VERSION)) {
       return c.json({
         error: 'App update required',
