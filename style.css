@@ -780,24 +780,25 @@ img{user-select:none;-webkit-user-drag:none}
   transition:opacity .3s ease;
 }
 .top-notif-banner:empty{display:flex}  /* keep flex space so layout doesn't jump */
-/* Message state — transparent, floating content */
+/* Message state — transparent, COMPACT floating content (v93.9: smaller) */
 .top-notif-banner .tnb-msg{
-  display:flex;align-items:center;gap:8px;width:100%;
+  display:flex;align-items:center;gap:6px;width:100%;
   animation:tnb-slide-down .4s cubic-bezier(.2,.8,.2,1);
+  padding-right:4px;
 }
 @keyframes tnb-slide-down{
   from{transform:translateY(-12px);opacity:0}
   to{transform:translateY(0);opacity:1}
 }
 .top-notif-banner .tnb-av{
-  width:30px;height:30px;border-radius:50%;padding:2px;flex-shrink:0;
+  width:24px;height:24px;border-radius:50%;padding:1.5px;flex-shrink:0;
   background:conic-gradient(from 0deg,#ff7ab8,#ffc233,#7ee0a8,#7c5cff,#ff7ab8);
-  box-shadow:0 2px 8px rgba(195,75,255,0.25);
+  box-shadow:0 1px 4px rgba(195,75,255,0.25);
 }
 .top-notif-banner .tnb-av-inner{
   width:100%;height:100%;border-radius:50%;background:#fff;
   display:flex;align-items:center;justify-content:center;
-  font-size:11px;font-weight:800;color:#c33dff;overflow:hidden;
+  font-size:9px;font-weight:800;color:#c33dff;overflow:hidden;
 }
 .top-notif-banner .tnb-av-inner img{width:100%;height:100%;object-fit:cover}
 .top-notif-banner .tnb-content{display:flex;flex-direction:column;flex:1;min-width:0;overflow:hidden}
@@ -812,10 +813,11 @@ img{user-select:none;-webkit-user-drag:none}
   animation:tnb-spin 6s linear infinite;
 }
 @keyframes tnb-spin{to{transform:rotate(360deg)}}
-/* Call state — transparent, floating content */
+/* Call state — transparent, COMPACT floating content (v93.9: smaller, no overlap) */
 .top-notif-banner .tnb-call{
-  display:flex;align-items:center;gap:10px;width:100%;
+  display:flex;align-items:center;gap:6px;width:100%;
   animation:tnb-call-shake .4s ease-out;
+  padding-right:4px;
 }
 @keyframes tnb-call-shake{
   0%,100%{transform:translateX(0)}
@@ -823,13 +825,13 @@ img{user-select:none;-webkit-user-drag:none}
   75%{transform:translateX(2px)}
 }
 .top-notif-banner .tnb-call-av{
-  width:30px;height:30px;border-radius:50%;padding:2px;flex-shrink:0;position:relative;
+  width:24px;height:24px;border-radius:50%;padding:1.5px;flex-shrink:0;position:relative;
   background:conic-gradient(from 0deg,#23a55a,#7ee0a8,#23a55a);
-  box-shadow:0 2px 8px rgba(35,165,90,0.3);
+  box-shadow:0 1px 4px rgba(35,165,90,0.3);
 }
 .top-notif-banner .tnb-call-av::after{
-  content:'';position:absolute;inset:-3px;border-radius:50%;
-  border:2px solid #23a55a;opacity:.5;
+  content:'';position:absolute;inset:-2px;border-radius:50%;
+  border:1.5px solid #23a55a;opacity:.5;
   animation:tnb-ring-expand 1.5s ease-out infinite;
 }
 @keyframes tnb-ring-expand{
@@ -839,27 +841,27 @@ img{user-select:none;-webkit-user-drag:none}
 .top-notif-banner .tnb-call-av-inner{
   width:100%;height:100%;border-radius:50%;background:#fff;
   display:flex;align-items:center;justify-content:center;
-  font-size:11px;font-weight:800;color:#23a55a;overflow:hidden;
+  font-size:9px;font-weight:800;color:#23a55a;overflow:hidden;
 }
 .top-notif-banner .tnb-call-av-inner img{width:100%;height:100%;object-fit:cover}
-.top-notif-banner .tnb-call-info{display:flex;flex-direction:column;flex:1;min-width:0;overflow:hidden}
-.top-notif-banner .tnb-call-label{font-size:8px;font-weight:800;color:#23a55a;letter-spacing:1.5px}
+.top-notif-banner .tnb-call-info{display:flex;flex-direction:column;flex:1;min-width:0;overflow:hidden;line-height:1.1}
+.top-notif-banner .tnb-call-label{font-size:7px;font-weight:800;color:#23a55a;letter-spacing:1px}
 .top-notif-banner .tnb-call-name{
-  font-size:12px;font-weight:800;color:var(--text);white-space:nowrap;
+  font-size:11px;font-weight:800;color:var(--text);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;
 }
-.top-notif-banner .tnb-call-actions{display:flex;gap:6px;flex-shrink:0}
+.top-notif-banner .tnb-call-actions{display:flex;gap:4px;flex-shrink:0}
 .top-notif-banner .tnb-call-btn{
-  width:32px;height:32px;border-radius:50%;border:none;cursor:pointer;
+  width:28px;height:28px;border-radius:50%;border:none;cursor:pointer;
   display:flex;align-items:center;justify-content:center;color:#fff;
-  box-shadow:0 2px 8px rgba(0,0,0,0.12);
+  box-shadow:0 1px 4px rgba(0,0,0,0.12);
 }
 .top-notif-banner .tnb-call-btn i,.top-notif-banner .tnb-call-btn svg{
-  width:16px;height:16px;
+  width:14px;height:14px;
 }
 .top-notif-banner .tnb-call-decline{
   background:linear-gradient(135deg,#ff3040,#c9182a);
-  box-shadow:0 2px 8px rgba(255,48,64,0.3);
+  box-shadow:0 1px 4px rgba(255,48,64,0.3);
 }
 .top-notif-banner .tnb-call-accept{
   background:linear-gradient(135deg,#23a55a,#1a7d42);
