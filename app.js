@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v92';
+const APP_VERSION = 'priv-spaca-v93';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
