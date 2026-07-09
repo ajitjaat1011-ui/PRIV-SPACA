@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.7';
+const APP_VERSION = 'priv-spaca-v93.8';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3237,6 +3237,18 @@ function handleRealtimeEvent(type, evt) {
     }
     // Bust message cache so a manual switch will reload fresh
     bustApiCache('/messages');
+    // v93.8: INSTANT banner update — don't wait for pollNotifications.
+    // If this message is from someone else and we're not on the chat tab,
+    // show it in the topbar banner immediately.
+    if (msg.userId !== (State.user && State.user.id) && State.currentTab !== 'chat') {
+      const sender = (State.members || []).find(u => u.id === msg.userId) ||
+                     (msg.authorSnapshot || msg.author) ||
+                     { displayName: 'Someone' };
+      const preview = msg.text || (msg.kind === 'voice' ? '🎤 Voice note' : (msg.imageUrl ? '📷 Photo' : 'New message'));
+      _setTopNotifMessage(sender, preview, msg.createdAt);
+      // Also bump chatUnread so updateTopNotifBanner doesn't immediately hide it
+      _lastNotif.chatUnread = Math.max(_lastNotif.chatUnread, 1);
+    }
     // Trigger notification refresh (chat dot)
     pollNotifications();
   } else if (type === 'new_post') {
@@ -3515,8 +3527,17 @@ function _showTopNotifCall(user, isVideo) {
   // Wire buttons to the existing RTC accept/reject functions
   const declineBtn = _topNotifBannerEl.querySelector('[data-tnb-action="decline"]');
   const acceptBtn = _topNotifBannerEl.querySelector('[data-tnb-action="accept"]');
-  if (declineBtn) declineBtn.addEventListener('click', (e) => { e.stopPropagation(); if (typeof rejectOrEndCall === 'function') rejectOrEndCall(); });
-  if (acceptBtn) acceptBtn.addEventListener('click', (e) => { e.stopPropagation(); if (typeof acceptIncomingCall === 'function') acceptIncomingCall(); });
+  if (declineBtn) declineBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (typeof rejectOrEndCall === 'function') rejectOrEndCall();
+  });
+  if (acceptBtn) acceptBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // v93.8: Show the fullscreen overlay NOW (with "Connecting..." status)
+    // so the user sees the call connecting, then accept.
+    if (typeof _showCallOverlayConnecting === 'function') _showCallOverlayConnecting();
+    if (typeof acceptCall === 'function') acceptCall();
+  });
   refreshIcons();
 }
 
@@ -9087,10 +9108,21 @@ function initWebRTC() {
 
 // ---- Call UI state machine ----
 function showCallUI(status, user, incoming) {
-  const overlay = $id('#callOverlay');
-  overlay.classList.remove('hidden', 'video-active');
   _callConnected = false;
   _callConnecting = !incoming;
+
+  // v93.8: For INCOMING calls, do NOT show the big fullscreen overlay.
+  // Only show the small topbar banner (accept/decline). The big overlay
+  // will appear automatically when the user accepts (onCallConnected).
+  if (incoming && user) {
+    if (typeof _showTopNotifCall === 'function') _showTopNotifCall(user, isVideoCall);
+    refreshIcons();
+    return;  // ← skip the fullscreen overlay entirely
+  }
+
+  // Outgoing call → show the big overlay as before
+  const overlay = $id('#callOverlay');
+  overlay.classList.remove('hidden', 'video-active');
 
   // Info section
   $id('#callInfo').classList.remove('minimized');
@@ -9104,20 +9136,11 @@ function showCallUI(status, user, incoming) {
   // Reset control button states
   resetCallControlBtns();
 
-  // Hide controls during incoming ring so accept/reject buttons fit cleanly on mobile screens
-  if (incoming) {
-    $id('#callActiveControls').classList.add('hidden');
-    $id('#rtcAcceptBtn').classList.remove('hidden');
-  } else {
-    $id('#callActiveControls').classList.remove('hidden');
-    $id('#rtcAcceptBtn').classList.add('hidden');
-  }
+  // Outgoing call → show active controls, hide accept button
+  $id('#callActiveControls').classList.remove('hidden');
+  $id('#rtcAcceptBtn').classList.add('hidden');
   $id('#rtcRejectBtn').classList.remove('hidden');
 
-  // v93.7: Show the smart-banner call UI for incoming calls
-  if (incoming && user) {
-    if (typeof _showTopNotifCall === 'function') _showTopNotifCall(user, isVideoCall);
-  }
   refreshIcons();
 }
 
@@ -9126,11 +9149,18 @@ function onCallConnected() {
   _callConnected = true;
   _callConnecting = false;
   _disarmCallTimeout();
-  // v93.7: Clear the smart-banner call UI once the call is connected
+  // v93.8: Clear the smart-banner call UI once the call is connected
   if (typeof _clearTopNotifCallBanner === 'function') _clearTopNotifCallBanner();
 
+  // v93.8: NOW show the big fullscreen call overlay (we skipped it during
+  // incoming ring). The user accepted the call, so show the full call UI.
+  const overlay = $id('#callOverlay');
+  if (overlay) overlay.classList.remove('hidden');
+  $id('#callInfo').classList.remove('minimized');
+  $id('#callName').textContent = (rtcCurrentPeerDisplayName() || 'Connected');
   $id('#callStatusText').textContent = 'Connected';
   $id('#callTimer').classList.remove('hidden');
+  $id('#callTimer').textContent = '00:00';
   startCallTimer();
 
   // NOW show the in-call controls
@@ -9149,6 +9179,32 @@ function onCallConnected() {
     $id('#callFlipBtn').classList.add('hidden');
   }
 
+  refreshIcons();
+}
+
+// v93.8: Helper to get the current peer's display name for the call overlay
+function rtcCurrentPeerDisplayName() {
+  try {
+    if (!rtcCurrentPeer) return '';
+    const u = (State.members || []).find(m => m.id === rtcCurrentPeer);
+    return (u && (u.displayName || u.username)) || 'User';
+  } catch (_) { return 'User'; }
+}
+
+// v93.8: Show the fullscreen call overlay with "Connecting..." status.
+// Called when the user taps Accept on the small topbar banner.
+function _showCallOverlayConnecting() {
+  const overlay = $id('#callOverlay');
+  if (overlay) overlay.classList.remove('hidden');
+  $id('#callInfo').classList.remove('minimized');
+  $id('#callName').textContent = rtcCurrentPeerDisplayName();
+  renderAvatar($id('#callAvatar'), { id: rtcCurrentPeer });
+  $id('#callStatusText').textContent = 'Connecting...';
+  $id('#callTimer').classList.add('hidden');
+  $id('#callVideos').classList.add('hidden');
+  $id('#callActiveControls').classList.add('hidden');  // hide until connected
+  $id('#rtcAcceptBtn').classList.add('hidden');
+  $id('#rtcRejectBtn').classList.remove('hidden');  // allow cancel while connecting
   refreshIcons();
 }
 
