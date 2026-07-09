@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.8';
+const APP_VERSION = 'priv-spaca-v93.9';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3237,10 +3237,11 @@ function handleRealtimeEvent(type, evt) {
     }
     // Bust message cache so a manual switch will reload fresh
     bustApiCache('/messages');
-    // v93.8: INSTANT banner update — don't wait for pollNotifications.
-    // If this message is from someone else and we're not on the chat tab,
-    // show it in the topbar banner immediately.
-    if (msg.userId !== (State.user && State.user.id) && State.currentTab !== 'chat') {
+    // v93.8/v93.9: INSTANT banner update — don't wait for pollNotifications.
+    // If this message is from someone else and we're not currently viewing
+    // that exact room (group or DM), show it in the topbar banner immediately.
+    const isViewingThisRoom = State.currentRoom && msg.roomId === State.currentRoom.id;
+    if (msg.userId !== (State.user && State.user.id) && !isViewingThisRoom) {
       const sender = (State.members || []).find(u => u.id === msg.userId) ||
                      (msg.authorSnapshot || msg.author) ||
                      { displayName: 'Someone' };
@@ -3357,7 +3358,7 @@ async function pollNotifications() {
         chatUnread++;
         // Track the latest unread message for the topbar banner
         if (!_latestUnreadMsg || m.createdAt > _latestUnreadMsg.createdAt) {
-          const sender = (State.members || []).find(u => u.id === m.userId) || {};
+          const sender = (State.members || []).find(u => u.id === m.userId) || m.authorSnapshot || m.author || {};
           _latestUnreadMsg = {
             sender,
             preview: m.text || (m.kind === 'voice' ? '🎤 Voice note' : (m.imageUrl ? '📷 Photo' : 'New message')),
@@ -3367,6 +3368,34 @@ async function pollNotifications() {
       }
     });
   } catch (_) {}
+
+  // v93.9: Also scan DM rooms for unread messages (not just general-group).
+  // For each connected member (iFollow or followsMe), check their DM room.
+  // Limit to 15 most recent DMs to avoid hammering the API.
+  try {
+    const dmMembers = (State.members || [])
+      .filter(u => u.id !== meId && (u.iFollow || u.followsMe))
+      .slice(0, 15);
+    await Promise.all(dmMembers.map(async (u) => {
+      try {
+        const dmRoom = dmRoomId(meId, u.id);
+        const r = await api('/messages?roomId=' + encodeURIComponent(dmRoom));
+        (r.messages || []).forEach(m => {
+          if (m.userId !== meId && m.createdAt > seenChat) {
+            chatUnread++;
+            if (!_latestUnreadMsg || m.createdAt > _latestUnreadMsg.createdAt) {
+              _latestUnreadMsg = {
+                sender: u,
+                preview: m.text || (m.kind === 'voice' ? '🎤 Voice note' : (m.imageUrl ? '📷 Photo' : 'New message')),
+                createdAt: m.createdAt
+              };
+            }
+          }
+        });
+      } catch (_) {}
+    }));
+  } catch (_) {}
+
   // Also scan server message notifications for a sender (covers DMs)
   try {
     (_notifData && _notifData.notifications || []).forEach(n => {
