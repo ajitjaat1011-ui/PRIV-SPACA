@@ -2830,6 +2830,108 @@ img{user-select:none;-webkit-user-drag:none}
 }
 .toast .toast-undo:hover{background:rgba(255,255,255,.1);color:#fff}
 
+/* ===== Sakura Flower Brand Animation v93.6 ===== */
+
+/* The flower SVG fills its container and gently sways like a bloom in breeze */
+.flower-logo{
+  width:100%;height:100%;
+  animation:flower-sway 5s ease-in-out infinite;
+  transform-origin:center bottom;
+}
+/* Each petal blooms open with a staggered bounce */
+.flower-logo .petal{
+  transform-origin:50px 50px;
+  animation:petal-bloom .9s cubic-bezier(0.34,1.56,0.64,1) both;
+  opacity:0;
+}
+.flower-logo .petal:nth-child(1){animation-delay:.05s}
+.flower-logo .petal:nth-child(2){animation-delay:.18s}
+.flower-logo .petal:nth-child(3){animation-delay:.31s}
+.flower-logo .petal:nth-child(4){animation-delay:.44s}
+.flower-logo .petal:nth-child(5){animation-delay:.57s}
+/* Flower center pops in last */
+.flower-logo .flower-center{
+  transform-origin:50px 50px;
+  animation:center-pop .5s cubic-bezier(0.34,1.8,0.64,1) both;
+  animation-delay:.7s;opacity:0;
+}
+@keyframes petal-bloom{
+  0%{opacity:0;transform:scale(0) rotate(-120deg)}
+  60%{opacity:1;transform:scale(1.18) rotate(8deg)}
+  100%{opacity:1;transform:scale(1) rotate(0)}
+}
+@keyframes center-pop{
+  0%{opacity:0;transform:scale(0)}
+  100%{opacity:1;transform:scale(1)}
+}
+@keyframes flower-sway{
+  0%,100%{transform:rotate(-3deg)}
+  50%{transform:rotate(3deg)}
+}
+
+/* Floating petal particles — decorative sakura petals drifting around the brand */
+.petal-particles{
+  position:absolute;inset:-20px;pointer-events:none;overflow:visible;z-index:0;
+}
+.petal-particle{
+  position:absolute;width:14px;height:14px;opacity:0;
+  animation:petal-float 7s ease-in-out infinite;
+}
+.petal-particle::before{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(135deg,#ffd0e6 0%,#ff8db8 60%,#ff5e9c 100%);
+  border-radius:100% 0 100% 0;
+  box-shadow:0 1px 4px rgba(255,94,156,0.3);
+}
+@keyframes petal-float{
+  0%{opacity:0;transform:translate(0,0) rotate(0deg) scale(0)}
+  10%{opacity:.85;transform:translate(8px,-6px) rotate(25deg) scale(1)}
+  30%{opacity:.75;transform:translate(22px,8px) rotate(90deg) scale(.95)}
+  55%{opacity:.6;transform:translate(38px,22px) rotate(200deg) scale(.85)}
+  80%{opacity:.35;transform:translate(52px,36px) rotate(310deg) scale(.7)}
+  100%{opacity:0;transform:translate(64px,52px) rotate(360deg) scale(0)}
+}
+/* Stagger particle positions + delays so they drift continuously */
+.petal-particle:nth-child(1){left:5%;top:20%;animation-delay:0s;animation-duration:6s}
+.petal-particle:nth-child(2){left:75%;top:15%;animation-delay:1.2s;animation-duration:7.5s}
+.petal-particle:nth-child(3){left:85%;top:60%;animation-delay:2.4s;animation-duration:6.5s}
+.petal-particle:nth-child(4){left:15%;top:70%;animation-delay:3.6s;animation-duration:8s}
+.petal-particle:nth-child(5){left:50%;top:85%;animation-delay:.8s;animation-duration:7s}
+.petal-particle:nth-child(6){left:90%;top:35%;animation-delay:2s;animation-duration:6.8s}
+
+/* Floral gradient text — cycles pink → magenta → purple → blue → pink */
+.brand-name{
+  background:linear-gradient(120deg,
+    #ff7ab8 0%,#ff3d77 18%,#c33dff 38%,
+    #7c5cff 58%,#ff7ab8 78%,#ff3d77 100%)!important;
+  background-size:300% 300%!important;
+  -webkit-background-clip:text!important;background-clip:text!important;
+  -webkit-text-fill-color:transparent!important;
+  animation:brandShift 5s ease-in-out infinite,text-anim .6s ease both!important;
+  filter:drop-shadow(0 2px 12px rgba(195,75,255,0.45))!important;
+}
+
+/* Splash gets the flower treatment too */
+.splash .splash-name{
+  background:linear-gradient(120deg,
+    #ff7ab8 0%,#ff3d77 20%,#c33dff 45%,
+    #7c5cff 70%,#ff7ab8 100%)!important;
+  background-size:300% 300%!important;
+  -webkit-background-clip:text!important;background-clip:text!important;
+  -webkit-text-fill-color:transparent!important;
+  animation:brandShift 5s ease-in-out infinite,text-anim .6s ease both!important;
+  filter:drop-shadow(0 2px 10px rgba(195,75,255,0.4));
+}
+/* Splash flower logo glows with a soft pink halo */
+.splash .splash-logo{
+  background:none!important;
+  box-shadow:
+    0 0 0 2px rgba(255,255,255,0.5),
+    0 12px 40px rgba(255,94,156,0.45),
+    0 0 60px rgba(195,75,255,0.35)!important;
+  animation:logo-pulse 2.4s ease-in-out infinite!important;
+}
+
 /* ===== Splash / loader ===== */
 .splash{
   position:fixed;inset:0;background:var(--bg-2);z-index:200;
