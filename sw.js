@@ -12,8 +12,8 @@ const RUNTIME_CACHE = 'priv-spaca-runtime-v92';
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=105',
-  '/app.min.js?v=105',
+  '/style.min.css?v=106',
+  '/app.min.js?v=106',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',
