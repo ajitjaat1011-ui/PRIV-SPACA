@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.3';
+const APP_VERSION = 'priv-spaca-v93.4';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -208,9 +208,25 @@ async function api(path, options = {}) {
           navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHES' });
         }
         toast('Updating to latest version...', 'info');
+        // v93.3.1 FIX: Preserve auth tokens across the version-update reload.
+        // Previously this called localStorage.clear() which wiped ps_token +
+        // ps_user, logging the user out after every deploy. The SW cache
+        // clear above is sufficient to bust stale JS/CSS; the auth state
+        // should survive so the user lands back in the app post-reload.
+        const PROTECTED_KEYS = ['ps_token', 'ps_user', 'ps_theme', 'ps_accent',
+                                'ps_sw_reload_once', 'ps_version_reload_done',
+                                'ps_heal_attempts', 'ps_close_friends',
+                                'ps_saved_posts', 'ps_secret', 'ps_story_views'];
+        try {
+          const preserved = {};
+          PROTECTED_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) preserved[k] = v; });
+          localStorage.clear();
+          Object.keys(preserved).forEach(k => { try { localStorage.setItem(k, preserved[k]); } catch (_) {} });
+        } catch (_) {}
         setTimeout(() => {
-          try { localStorage.clear(); } catch (_) {}
           try { sessionStorage.clear(); } catch (_) {}
+          // Re-set the version-reload guard so we don't loop
+          try { sessionStorage.setItem('ps_version_reload_done', '1'); } catch (_) {}
           location.replace('/?v=' + Date.now());
         }, 800);
         // Return a promise that never resolves so the caller hangs cleanly
@@ -8311,15 +8327,38 @@ function registerServiceWorker() {
       if (hRes.ok) {
         const hData = await hRes.json();
         if (hData.minVersion) {
-          const parseV = (v) => { const m = String(v).match(/v(\d+)$/); return m ? parseInt(m[1], 10) : 0; };
+          // v93.3.1 FIX: parseV regex was /v(\d+)$/ which requires the string
+          // to END with v<number>. For versions like 'priv-spaca-v93.3' the
+          // '.3' suffix broke the match and returned 0, causing the probe to
+          // think the client was stale and force a logout-reload loop.
+          // New regex extracts the full numeric version (supports decimals).
+          const parseV = (v) => {
+            const m = String(v).match(/v(\d+(?:\.\d+)*)/);
+            if (!m) return 0;
+            const parts = m[1].split('.').map(n => parseInt(n, 10) || 0);
+            // Compare as a tuple: [93, 3] > [93] > [92]
+            return parts.reduce((acc, n, i) => acc + n * Math.pow(1000, 3 - i), 0);
+          };
           if (parseV(APP_VERSION) < parseV(hData.minVersion)) {
             console.log('[update] server requires minVersion:', hData.minVersion, '(current:', APP_VERSION + ')');
             sessionStorage.setItem('ps_version_reload_done', '1');
             sessionStorage.setItem('ps_sw_reload_once', '1');
             toast('Updating to latest version...', 'info');
+            // v93.3.1 FIX: Preserve auth tokens (ps_token, ps_user) and user
+            // prefs across the version-update reload. Previously this called
+            // localStorage.clear() which logged users out on every deploy.
+            const PROTECTED_KEYS = ['ps_token', 'ps_user', 'ps_theme', 'ps_accent',
+                                    'ps_close_friends', 'ps_saved_posts',
+                                    'ps_secret', 'ps_story_views'];
             setTimeout(() => {
-              try { localStorage.clear(); } catch (_) {}
+              try {
+                const preserved = {};
+                PROTECTED_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) preserved[k] = v; });
+                localStorage.clear();
+                Object.keys(preserved).forEach(k => { try { localStorage.setItem(k, preserved[k]); } catch (_) {} });
+              } catch (_) {}
               try { sessionStorage.clear(); } catch (_) {}
+              try { sessionStorage.setItem('ps_version_reload_done', '1'); } catch (_) {}
               location.replace('/?v=' + Date.now());
             }, 800);
             return;
