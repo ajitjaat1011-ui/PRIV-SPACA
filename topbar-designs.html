@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PRIV SPACA — Topbar Design Options</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #f0f2f5;
+    padding: 20px 0;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 40px;
+  }
+  h1 { text-align: center; font-size: 22px; font-weight: 800; color: #1a1a2e; margin-bottom: 10px; }
+  .subtitle { text-align: center; font-size: 13px; color: #666; max-width: 380px; margin: -30px 0 10px; }
+  .option {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 10px;
+  }
+  .option-label {
+    font-size: 14px; font-weight: 700; color: #c33dff;
+    background: #fff; padding: 6px 16px; border-radius: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  .phone {
+    width: 390px; height: 140px;
+    background: #fff;
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+    border: 1px solid #e0e0e0;
+    position: relative;
+  }
+  /* The topbar area inside each phone mockup */
+  .topbar {
+    height: 100%;
+    display: flex; align-items: center;
+    padding: 0 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .topbar-bg-gradient {
+    background: linear-gradient(135deg, #faf5ff 0%, #fff0f6 50%, #f0f7ff 100%);
+  }
+
+  /* Shared elements */
+  .brand {
+    font-family: 'Dancing Script', cursive;
+    font-weight: 700; font-size: 28px;
+    color: #ff8da1;
+    cursor: pointer; user-select: none;
+    white-space: nowrap;
+  }
+  .icon-btn {
+    width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none; cursor: pointer;
+    color: #1a1a2e; position: relative;
+  }
+  .icon-btn:active { background: rgba(0,0,0,0.05); }
+  .notif-dot {
+    position: absolute; top: 6px; right: 6px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ff3040; border: 1.5px solid #fff;
+  }
+  svg { display: block; }
+
+  /* ===== OPTION 1: Center Flower Crest ===== */
+  .opt1 .crest {
+    display: flex; align-items: center; gap: 6px;
+    margin: 0 auto;
+  }
+  .opt1 .crest-text {
+    font-family: 'Dancing Script', cursive;
+    font-weight: 700; font-size: 15px;
+    background: linear-gradient(120deg, #ff7ab8, #c33dff, #7c5cff);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 0.5px;
+  }
+  .opt1 .crest-divider {
+    width: 1px; height: 20px; background: linear-gradient(180deg, transparent, #ddd, transparent);
+  }
+  .opt1 .crest-flower {
+    width: 22px; height: 22px;
+    animation: spin-slow 8s linear infinite;
+  }
+  @keyframes spin-slow { to { transform: rotate(360deg); } }
+
+  /* ===== OPTION 2: Inline Search Bar ===== */
+  .opt2 .search-wrap {
+    flex: 1; margin: 0 12px;
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(10px);
+    border: 1.5px solid rgba(195,75,255,0.15);
+    border-radius: 12px;
+    padding: 8px 12px;
+  }
+  .opt2 .search-wrap input {
+    flex: 1; border: none; background: transparent; outline: none;
+    font-size: 13px; color: #555;
+    font-family: inherit;
+  }
+  .opt2 .search-wrap input::placeholder { color: #aaa; }
+  .opt2 .search-flower {
+    width: 16px; height: 16px; opacity: 0.6;
+  }
+
+  /* ===== OPTION 3: Sub-tab Pills ===== */
+  .opt3 .tabs {
+    display: flex; gap: 4px; margin: 0 auto;
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(10px);
+    border-radius: 14px;
+    padding: 4px;
+    border: 1px solid rgba(195,75,255,0.1);
+  }
+  .opt3 .tab {
+    padding: 6px 16px; border-radius: 10px;
+    font-size: 12px; font-weight: 700; color: #888;
+    cursor: pointer; border: none; background: transparent;
+    transition: all 0.2s;
+  }
+  .opt3 .tab.active {
+    background: linear-gradient(135deg, #ff7ab8, #c33dff);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(195,75,255,0.3);
+  }
+
+  /* ===== OPTION 4: Greeting + Date Strip ===== */
+  .opt4 .greeting {
+    flex: 1; text-align: center;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .opt4 .greeting-hi {
+    font-size: 11px; font-weight: 600; color: #999;
+    letter-spacing: 0.3px;
+  }
+  .opt4 .greeting-name {
+    font-size: 13px; font-weight: 800;
+    background: linear-gradient(120deg, #ff7ab8, #c33dff);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .opt4 .greeting-flower {
+    display: inline-block; width: 12px; height: 12px;
+    vertical-align: middle; margin-left: 3px;
+    animation: spin-slow 6s linear infinite;
+  }
+
+  /* ===== OPTION 5: Floral Vine Divider ===== */
+  .opt5 .vine {
+    flex: 1; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .opt5 .vine-line {
+    flex: 1; height: 1.5px;
+    background: linear-gradient(90deg,
+      transparent 0%, #ffb3d9 20%, #c33dff 50%, #ffb3d9 80%, transparent 100%);
+    opacity: 0.5;
+  }
+  .opt5 .vine-flower {
+    width: 28px; height: 28px;
+    margin: 0 8px;
+    filter: drop-shadow(0 1px 3px rgba(195,75,255,0.3));
+    animation: sway 3s ease-in-out infinite;
+  }
+  @keyframes sway {
+    0%, 100% { transform: rotate(-5deg); }
+    50% { transform: rotate(5deg); }
+  }
+
+  /* ===== OPTION 6: Story Rail Preview ===== */
+  .opt6 .story-rail {
+    flex: 1; display: flex; align-items: center; gap: 10px;
+    margin: 0 12px; overflow: hidden;
+  }
+  .opt6 .story-av {
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 2px solid transparent;
+    background:
+      linear-gradient(#fff, #fff) padding-box,
+      conic-gradient(from 0deg, #ff7ab8, #c33dff, #7c5cff, #ff7ab8) border-box;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; color: #888;
+    flex-shrink: 0;
+  }
+  .opt6 .story-av.seen { border-color: #ddd; background: #f5f5f5; }
+  .opt6 .story-add {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: linear-gradient(135deg, #ff7ab8, #c33dff);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 300;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(195,75,255,0.3);
+  }
+
+  /* ===== Flower SVG (reused) ===== */
+  .flower-svg { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+
+<h1>🌸 PRIV SPACA Topbar Design Options 🌸</h1>
+<p class="subtitle">The blurred area is between "Priv Spaca" and the heart icon. Here are 6 design options — pick your favorite.</p>
+
+<!-- Reusable flower SVG -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="flower" viewBox="0 0 100 100">
+      <g>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#ffb3d9" transform="rotate(0 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#ff8db8" transform="rotate(72 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#ff5e9c" transform="rotate(144 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#c33dff" transform="rotate(216 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#7c5cff" transform="rotate(288 50 50)" opacity="0.9"/>
+      </g>
+      <circle cx="50" cy="50" r="6" fill="#ffc233"/>
+      <circle cx="50" cy="50" r="2.5" fill="#ff8c00" opacity="0.6"/>
+    </symbol>
+    <symbol id="heart" viewBox="0 0 24 24">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="none" stroke="currentColor" stroke-width="2"/>
+    </symbol>
+    <symbol id="search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="m21 21-4.35-4.35" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="message" viewBox="0 0 24 24">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- ===== OPTION 1: Center Flower Crest ===== -->
+<div class="option">
+  <div class="option-label">Option 1 — Center Flower Crest</div>
+  <div class="phone topbar-bg-gradient">
+    <div class="topbar opt1">
+      <div class="brand">Priv Spaca</div>
+      <div class="crest">
+        <div class="crest-flower"><svg class="flower-svg"><use href="#flower"/></svg></div>
+        <div class="crest-divider"></div>
+        <div class="crest-text">Private Community</div>
+        <div class="crest-divider"></div>
+        <div class="crest-flower"><svg class="flower-svg"><use href="#flower"/></svg></div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== OPTION 2: Inline Search Bar ===== -->
+<div class="option">
+  <div class="option-label">Option 2 — Inline Search Bar</div>
+  <div class="phone topbar-bg-gradient">
+    <div class="topbar opt2">
+      <div class="brand">Priv Spaca</div>
+      <div class="search-wrap">
+        <div class="search-flower"><svg><use href="#flower"/></svg></div>
+        <input placeholder="Search members, posts…" readonly>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== OPTION 3: Sub-tab Pills ===== -->
+<div class="option">
+  <div class="option-label">Option 3 — For You / Following Pills</div>
+  <div class="phone topbar-bg-gradient">
+    <div class="topbar opt3">
+      <div class="brand">Priv Spaca</div>
+      <div class="tabs">
+        <button class="tab active">For You</button>
+        <button class="tab">Following</button>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== OPTION 4: Greeting + Date Strip ===== -->
+<div class="option">
+  <div class="option-label">Option 4 — Personal Greeting</div>
+  <div class="phone topbar-bg-gradient">
+    <div class="topbar opt4">
+      <div class="brand">Priv Spaca</div>
+      <div class="greeting">
+        <div class="greeting-hi">Good afternoon</div>
+        <div class="greeting-name">Arvind <svg class="greeting-flower"><use href="#flower"/></svg></div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== OPTION 5: Floral Vine Divider ===== -->
+<div class="option">
+  <div class="option-label">Option 5 — Floral Vine Divider</div>
+  <div class="phone topbar-bg-gradient">
+    <div class="topbar opt5">
+      <div class="brand">Priv Spaca</div>
+      <div class="vine">
+        <div class="vine-line"></div>
+        <div class="vine-flower"><svg><use href="#flower"/></svg></div>
+        <div class="vine-line"></div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== OPTION 6: Story Rail Preview ===== -->
+<div class="option">
+  <div class="option-label">Option 6 — Mini Story Rail</div>
+  <div class="phone topbar-bg-gradient">
+    <div class="topbar opt6">
+      <div class="brand" style="font-size:22px">Priv Spaca</div>
+      <div class="story-rail">
+        <div class="story-add">+</div>
+        <div class="story-av">AS</div>
+        <div class="story-av">RJ</div>
+        <div class="story-av seen">MK</div>
+        <div class="story-av seen">PV</div>
+      </div>
+      <button class="icon-btn"><svg width="22" height="22"><use href="#heart"/></svg><span class="notif-dot"></span></button>
+    </div>
+  </div>
+</div>
+
+<p style="font-size:12px;color:#999;margin-top:20px;text-align:center;max-width:380px">
+  Each option keeps "Priv Spaca" on the left and the heart/notification icon on the right.<br>
+  Tell me which number you like (1-6) and I'll build it into the real app.
+</p>
+
+</body>
+</html>
