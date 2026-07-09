@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.9';
+const APP_VERSION = 'priv-spaca-v93.10';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -673,6 +673,16 @@ function showApp() {
   hideSplash();
   refreshIcons();
   hydrateMeChips();
+  // v93.10: Clear any stale call banner from a previous session.
+  // On page reload, there should be no active call — the banner must be clean.
+  _topNotifCurrent = null;
+  _clearTopNotifBanner();
+  // Also ensure the call overlay is hidden on boot (no stale call state)
+  const callOverlay = $id('#callOverlay');
+  if (callOverlay) callOverlay.classList.add('hidden');
+  _callConnected = false;
+  _callConnecting = false;
+  window._rtcPendingOffer = null;
   switchTab('feed');
   startPolls();
   loadAll();
@@ -3246,7 +3256,7 @@ function handleRealtimeEvent(type, evt) {
                      (msg.authorSnapshot || msg.author) ||
                      { displayName: 'Someone' };
       const preview = msg.text || (msg.kind === 'voice' ? '🎤 Voice note' : (msg.imageUrl ? '📷 Photo' : 'New message'));
-      _setTopNotifMessage(sender, preview, msg.createdAt);
+      _setTopNotifMessage(sender, preview, msg.createdAt, msg.roomId);
       // Also bump chatUnread so updateTopNotifBanner doesn't immediately hide it
       _lastNotif.chatUnread = Math.max(_lastNotif.chatUnread, 1);
     }
@@ -3361,6 +3371,7 @@ async function pollNotifications() {
           const sender = (State.members || []).find(u => u.id === m.userId) || m.authorSnapshot || m.author || {};
           _latestUnreadMsg = {
             sender,
+            roomId: m.roomId || 'general-group',
             preview: m.text || (m.kind === 'voice' ? '🎤 Voice note' : (m.imageUrl ? '📷 Photo' : 'New message')),
             createdAt: m.createdAt
           };
@@ -3386,6 +3397,7 @@ async function pollNotifications() {
             if (!_latestUnreadMsg || m.createdAt > _latestUnreadMsg.createdAt) {
               _latestUnreadMsg = {
                 sender: u,
+                roomId: dmRoom,
                 preview: m.text || (m.kind === 'voice' ? '🎤 Voice note' : (m.imageUrl ? '📷 Photo' : 'New message')),
                 createdAt: m.createdAt
               };
@@ -3405,13 +3417,14 @@ async function pollNotifications() {
                        { displayName: n.fromUserName, username: n.fromUsername, photoUrl: n.fromUserPhoto };
         _latestUnreadMsg = {
           sender,
+          roomId: n.roomId || 'general-group',
           preview: n.preview || n.text || 'New message',
           createdAt: n.createdAt || Date.now()
         };
       }
     });
   } catch (_) {}
-  if (_latestUnreadMsg) _setTopNotifMessage(_latestUnreadMsg.sender, _latestUnreadMsg.preview, _latestUnreadMsg.createdAt);
+  if (_latestUnreadMsg) _setTopNotifMessage(_latestUnreadMsg.sender, _latestUnreadMsg.preview, _latestUnreadMsg.createdAt, _latestUnreadMsg.roomId);
 
   // 3) Keep posts cached for stories rail + saved tab, but avoid re-fetching
   // them on every notification poll if we already refreshed recently.
@@ -3489,8 +3502,8 @@ function updateTopNotifBanner() {
 }
 
 // Track the latest unread message for banner display
-function _setTopNotifMessage(sender, preview, createdAt) {
-  _topNotifLastMsg = { sender, preview, createdAt: createdAt || Date.now() };
+function _setTopNotifMessage(sender, preview, createdAt, roomId) {
+  _topNotifLastMsg = { sender, preview, createdAt: createdAt || Date.now(), roomId };
   updateTopNotifBanner();
 }
 
@@ -3523,8 +3536,32 @@ function _renderTopNotifMessage(msg) {
         <circle cx="50" cy="50" r="6" fill="#ffc233"/>
       </svg>
     </div>`;
-  // Tap the banner → go to chat tab
-  _topNotifBannerEl.onclick = () => { switchTab('chat'); };
+  // v93.10: Tap the banner → open the conversation with the sender.
+  // If it's a DM, open the DM room. If it's a group message, open general-group.
+  _topNotifBannerEl.onclick = () => {
+    const senderId = msg.sender && msg.sender.id;
+    const roomId = msg.roomId || (senderId && senderId !== (State.user && State.user.id)
+      ? dmRoomId(State.user.id, senderId)  // DM with the sender
+      : 'general-group');                   // fallback to group
+    // Switch to chat tab first
+    switchTab('chat');
+    // Open the specific conversation
+    setTimeout(() => {
+      if (roomId && roomId.startsWith('dm:') && senderId) {
+        // Find the member and open DM
+        const member = (State.members || []).find(u => u.id === senderId);
+        if (member && typeof openDM === 'function') {
+          openDM(member);
+        }
+      } else {
+        // Group chat — click the general-group room
+        const roomItem = $('#roomsList .room-item[data-room="general-group"]');
+        if (roomItem) roomItem.click();
+      }
+    }, 200);
+    // Clear the banner after opening
+    _clearTopNotifBanner();
+  };
   _topNotifBannerEl.style.cursor = 'pointer';
 }
 
