@@ -3370,12 +3370,12 @@ async function pollNotifications() {
   } catch (_) {}
 
   // v93.9: Also scan DM rooms for unread messages (not just general-group).
-  // For each connected member (iFollow or followsMe), check their DM room.
-  // Limit to 15 most recent DMs to avoid hammering the API.
+  // Check DM rooms for ALL members (not just connected) since DMs can happen
+  // between any two users. Limit to 20 most recent to avoid hammering the API.
   try {
     const dmMembers = (State.members || [])
-      .filter(u => u.id !== meId && (u.iFollow || u.followsMe))
-      .slice(0, 15);
+      .filter(u => u.id !== meId)
+      .slice(0, 20);
     await Promise.all(dmMembers.map(async (u) => {
       try {
         const dmRoom = dmRoomId(meId, u.id);
