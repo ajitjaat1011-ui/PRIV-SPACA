@@ -39,7 +39,7 @@ const State = {
 // had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
 // and wiped Cache API + unregistered the SW — breaking offline support and
 // thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93';
+const APP_VERSION = 'priv-spaca-v93.3';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -434,10 +434,34 @@ function toast(msg, kind = '') {
   }, 3200);
 }
 
-function refreshIcons() {
-  if (window.lucide && typeof window.lucide.createIcons === 'function') {
-    try { window.lucide.createIcons(); } catch (_) {}
-  }
+// v93.3 PERF: refreshIcons() is called 67+ times across the codebase, often
+// 3-4 times in a single switchTab() (updateTopbarHeader → updateChatThreadChrome
+// → renderPosts → end of switchTab). Each call invokes lucide.createIcons()
+// which scans the ENTIRE DOM for [data-lucide] attributes — O(N) per call,
+// easily 30-80ms on a complex page. Batching via requestAnimationFrame coalesces
+// all calls within the same frame into a single createIcons() invocation.
+let _refreshIconsRaf = 0;
+let _refreshIconsPending = false;
+function refreshIcons(scopeEl) {
+  // If a refresh is already scheduled for the next frame, drop this call —
+  // lucide.createIcons() is idempotent and scans the whole DOM anyway, so a
+  // second call in the same frame would just duplicate work.
+  if (_refreshIconsPending) return;
+  _refreshIconsPending = true;
+  // Use requestAnimationFrame so the icon refresh runs AFTER the browser has
+  // painted the tab switch — the user sees the view change immediately, and
+  // any new <i data-lucide> elements get replaced with SVGs on the next frame.
+  // Falls back to setTimeout(0) if rAF is unavailable (very old browsers).
+  const schedule = window.requestAnimationFrame
+    ? window.requestAnimationFrame.bind(window)
+    : (fn) => setTimeout(fn, 0);
+  _refreshIconsRaf = schedule(() => {
+    _refreshIconsRaf = 0;
+    _refreshIconsPending = false;
+    if (window.lucide && typeof window.lucide.createIcons === 'function') {
+      try { window.lucide.createIcons(); } catch (_) {}
+    }
+  });
 }
 
 /* ====== Motion One animation helpers ====== */
@@ -995,6 +1019,9 @@ function switchTab(tab) {
     _postMusicState.artist = '';
     syncPostMusicUI();
   }
+  // ===== CRITICAL PATH (runs synchronously — user sees this immediately) =====
+  // Toggle nav button active states + hide/show views. This must complete
+  // WITHIN the same frame so the tap feels instant.
   $$('.bn-btn[data-tab]').forEach(b => {
     const active = b.dataset.tab === tab;
     b.classList.toggle('active', active);
@@ -1002,14 +1029,10 @@ function switchTab(tab) {
   });
   $$('.view').forEach(v => v.classList.remove('active'));
   let activeView = null;
-  if (tab === 'feed') { activeView = $id('#feedView'); activeView.classList.add('active'); loadMembers(); loadFeed(); markTabSeen('feed'); }
+  if (tab === 'feed') { activeView = $id('#feedView'); activeView.classList.add('active'); markTabSeen('feed'); }
   if (tab === 'search') {
     activeView = $id('#searchView');
     activeView.classList.add('active');
-    loadMembers();
-    renderSearch('');
-    if (shouldAutoFocusSearch()) setTimeout(() => $id('#searchInput').focus(), 100);
-    else suppressSearchAutofillPrompt();
   }
   if (tab === 'groups') {
     activeView = $id('#chatView');
@@ -1019,10 +1042,6 @@ function switchTab(tab) {
     if (window.innerWidth <= 820) {
       // Mobile: show the channel list; let the user pick (Instagram-style).
       $id('#chatView').classList.add('show-rooms');
-    } else {
-      // Desktop: both panes visible, so open the default channel.
-      const r = $('#roomsList .room-item[data-room="general-group"]');
-      if (r) r.click();
     }
   }
   if (tab === 'chat') {
@@ -1033,9 +1052,6 @@ function switchTab(tab) {
     setInboxSegment('primary');
     if (window.innerWidth <= 820) {
       $id('#chatView').classList.add('show-rooms');
-    } else if (State.currentRoom.kind !== 'dm') {
-      const firstMember = $('#membersList .member-item');
-      if (firstMember) firstMember.click();
     }
   }
   if (tab === 'profile') {
@@ -1043,7 +1059,6 @@ function switchTab(tab) {
     activeView.classList.add('active');
     $id('#profileEditMode').classList.add('hidden');
     $id('#profileViewMode').classList.remove('hidden');
-    renderOwnProfile();
   }
   if (tab === 'reels') {
     // Reels are coming soon — show a friendly toast and snap back to feed
@@ -1061,8 +1076,42 @@ function switchTab(tab) {
   updateChatThreadChrome();
   restoreScrollForTab(tab);
   if (activeView) springIn(activeView, { duration: 0.22 });
-  refreshIcons();
   if (typeof updateNotifDots === 'function') updateNotifDots();
+  // ===== DEFERRED PATH (runs on next tick — heavy data work) =====
+  // v93.3 PERF: loadMembers/loadFeed/renderSearch/renderOwnProfile kick off
+  // network requests + DOM rebuilds. Deferring them past the current frame
+  // lets the browser paint the view switch FIRST, then start the data work.
+  // The user perceives an instant tab change; the data populates a tick later.
+  setTimeout(() => {
+    if (State.currentTab !== tab) return; // user already switched away
+    if (tab === 'feed') { loadMembers(); loadFeed(); }
+    if (tab === 'search') {
+      loadMembers();
+      renderSearch('');
+      if (shouldAutoFocusSearch()) setTimeout(() => $id('#searchInput').focus(), 100);
+      else suppressSearchAutofillPrompt();
+    }
+    if (tab === 'groups') {
+      if (window.innerWidth > 820) {
+        // Desktop: both panes visible, so open the default channel.
+        const r = $('#roomsList .room-item[data-room="general-group"]');
+        if (r) r.click();
+      }
+    }
+    if (tab === 'chat') {
+      if (window.innerWidth > 820 && State.currentRoom.kind !== 'dm') {
+        const firstMember = $('#membersList .member-item');
+        if (firstMember) firstMember.click();
+      }
+    }
+    if (tab === 'profile') {
+      renderOwnProfile();
+    }
+    // refreshIcons is debounced internally via rAF — calling it here ensures
+    // any new <i data-lucide> elements from the freshly-shown view get
+    // converted to SVGs on the next frame.
+    refreshIcons();
+  }, 0);
 }
 
 // Show the centered app name wordmark only on the home page (feed tab).
@@ -7620,8 +7669,19 @@ function renderOwnProfileFromCache() {
   refreshIcons();
 }
 
+// v93.3 PERF: TTL cache for the own-profile network fetch
+let _lastOwnProfileFetchedAt = 0;
+
 async function renderOwnProfile() {
   if (!State.user) return;
+  // v93.3 PERF: Cache the network fetch for 5s — previously every profile tab
+  // visit triggered a fresh GET /user/{id}/profile, which on a slow network
+  // caused the profile view to feel "stuck" while the request was in flight.
+  // The instant-render below still runs from cached State.user so the view
+  // appears immediately; the network refresh only happens past TTL.
+  const OWN_PROFILE_TTL_MS = 5000;
+  const now = Date.now();
+  const cacheValid = _lastOwnProfileFetchedAt && (now - _lastOwnProfileFetchedAt) < OWN_PROFILE_TTL_MS;
   const cachedUsername = State.user.username || State.user.displayName || 'me';
   const titleU = $id('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
@@ -7637,9 +7697,11 @@ async function renderOwnProfile() {
     loadMembers().then(() => updateOwnProfileStatCounts(State.user)).catch(() => {});
     loadPosts().then(() => { if (State.currentTab === 'profile') renderOwnProfileFromCache(); }).catch(() => {});
   }
-  // Fetch fresh data (own profile uses same endpoint)
+  // Fetch fresh data (own profile uses same endpoint) — skipped when cacheValid
+  if (cacheValid) return;
   try {
     const data = await api('/user/' + encodeURIComponent(State.user.id) + '/profile');
+    _lastOwnProfileFetchedAt = Date.now();
     const u = data.user || State.user;
     if (u && u.id === State.user.id) {
       const localFollowers = Array.isArray(State.user.followers) ? State.user.followers : [];
@@ -7932,11 +7994,24 @@ function bindSearch() {
   });
 }
 
+// v93.3 PERF: signature cache so re-opening the search tab with the same
+// query + same members list doesn't rebuild the DOM from scratch.
+let _lastSearchSig = '';
+
 function renderSearch(query) {
   const list = $id('#searchResults');
   if (!list) return;
-  list.innerHTML = '';
+  // Signature: query + members snapshot (id, online, iFollow). If nothing
+  // changed since the last render and the list is already populated, bail.
   const meId = State.user && State.user.id;
+  const membersSig = (State.members || [])
+    .filter(u => u.id !== meId)
+    .map(u => u.id + ':' + (u.online?1:0) + ':' + (u.iFollow?1:0) + ':' + (u.followsMe?1:0))
+    .join(',');
+  const sig = String(query || '') + '||' + membersSig;
+  if (sig === _lastSearchSig && list.children.length > 0) return;
+  _lastSearchSig = sig;
+  list.innerHTML = '';
   const all = (State.members || []).filter(u => u.id !== meId);
   const q = String(query || '').toLowerCase().trim();
   let shown = all;
