@@ -912,6 +912,100 @@ function bindAuth() {
   }
   applySakuraLoginEditorial();
 
+  // ============================================================
+  // Sakura Editorial: PROFILE page — magazine cover layout
+  // Restructures the profile to match the design preview:
+  // - Add cover masthead text (ISSUE №47 / VOL. III / — a quiet collection —)
+  // - Hide titlebar username, keep +/settings as transparent overlay buttons
+  // - Hide mood bubble, add-note button, discover section, tabs
+  // - Add @handle below display name
+  // - Change stats labels: followers→readers, following→reading
+  // - Change button labels: Edit profile→Edit cover, Share profile→Share card
+  // - Add "POSTS · THE ARCHIVE" section title above posts grid
+  // ============================================================
+  function applySakuraProfileEditorial() {
+    const profileView = document.getElementById('profileView');
+    if (!profileView) return;
+
+    // 1. Hide titlebar username (keep + and settings buttons as transparent overlay)
+    const titlebarCenter = profileView.querySelector('.profile-titlebar-center');
+    if (titlebarCenter) titlebarCenter.style.visibility = 'hidden';
+
+    // 2. Add cover masthead text via injected elements (positioned by CSS)
+    if (!profileView.querySelector('.profile-cover-masthead')) {
+      const masthead = document.createElement('div');
+      masthead.className = 'profile-cover-masthead';
+      masthead.innerHTML =
+        '<span class="cover-issue">ISSUE №47</span>' +
+        '<span class="cover-vol">VOL. III<br>2026</span>' +
+        '<span class="cover-feat">— a quiet collection —</span>';
+      const profileWrap = profileView.querySelector('.profile-wrap') || profileView;
+      profileWrap.insertBefore(masthead, profileWrap.firstChild);
+    }
+
+    // 3. Hide mood bubble
+    const moodBubble = document.getElementById('profileMoodBubble');
+    if (moodBubble) moodBubble.style.display = 'none';
+
+    // 4. Add @handle below display name (if not already present)
+    const displayName = document.getElementById('profileDisplayName');
+    if (displayName && !document.getElementById('profileHandleDisplay')) {
+      const handle = document.createElement('div');
+      handle.id = 'profileHandleDisplay';
+      handle.className = 'profile-handle-display';
+      displayName.insertAdjacentElement('afterend', handle);
+    }
+    // Update handle text with real username
+    const handleEl = document.getElementById('profileHandleDisplay');
+    if (handleEl) {
+      const realUsername = (State.user && State.user.username) ||
+                           (document.getElementById('profileTitleUsername')?.textContent || 'user');
+      handleEl.textContent = '@' + realUsername + ' · priv.spaca';
+    }
+
+    // 5. Change stats labels: followers → readers, following → reading
+    const statFollowers = profileView.querySelector('[data-stat="followers"] span');
+    if (statFollowers) statFollowers.textContent = 'readers';
+    const statFollowing = profileView.querySelector('[data-stat="following"] span');
+    if (statFollowing) statFollowing.textContent = 'reading';
+
+    // 6. Change button labels
+    const editBtn = document.getElementById('editProfileBtn');
+    if (editBtn) editBtn.textContent = 'Edit cover';
+    const shareBtn = document.getElementById('shareProfileBtn');
+    if (shareBtn) shareBtn.textContent = 'Share card';
+
+    // 7. Hide "+ Add note / banner" button
+    const addNoteBtn = document.getElementById('profileAddNoteBtn');
+    if (addNoteBtn) addNoteBtn.style.display = 'none';
+
+    // 8. Hide "Discover people" section
+    const discoverSection = document.getElementById('profileDiscoverSection');
+    if (discoverSection) discoverSection.style.display = 'none';
+
+    // 9. Hide tabs (grid/card icons)
+    const tabs = profileView.querySelector('.ig-tabs');
+    if (tabs) tabs.style.display = 'none';
+
+    // 10. Add "POSTS · THE ARCHIVE" section title above posts grid
+    const postsGrid = document.getElementById('profilePostsGrid');
+    if (postsGrid && !profileView.querySelector('.profile-section-title-editorial')) {
+      const sectionTitle = document.createElement('div');
+      sectionTitle.className = 'profile-section-title-editorial';
+      sectionTitle.innerHTML = '<span class="lbl">posts · the archive</span><span class="line"></span>';
+      postsGrid.insertAdjacentElement('beforebegin', sectionTitle);
+    }
+  }
+
+  // Run once on load and re-run when profile data refreshes
+  applySakuraProfileEditorial();
+  // Re-apply after a delay (profile data loads async)
+  setTimeout(applySakuraProfileEditorial, 1500);
+  setTimeout(applySakuraProfileEditorial, 3000);
+
+  // Expose globally so it can be called after profile renders
+  window._applySakuraProfileEditorial = applySakuraProfileEditorial;
+
   function showAuthPanel(name) {
     authPanels.forEach(p => p.hidden = (p.dataset.authPanel !== name));
     // The bottom 'Create new account' CTA only shows on the sign-in panel
@@ -8192,6 +8286,8 @@ function updateOwnProfileStatCounts(profileUser) {
   const sp = $id('#statPosts'); if (sp) sp.textContent = String(postsCount);
   const sf = $id('#statFollowers'); if (sf) sf.textContent = String(followerCount);
   const sg = $id('#statFollowing'); if (sg) sg.textContent = String(followingCount);
+  // Sakura Editorial: re-apply profile overrides after stat update
+  if (window._applySakuraProfileEditorial) window._applySakuraProfileEditorial();
 }
 
 async function openProfileRelationSheet(kind) {

@@ -6031,6 +6031,22 @@ body{
   background:var(--paper) !important;
   position:relative;
 }
+/* Force light mode on profile page — Sakura Editorial is cream-paper */
+[data-theme="dark"] .profile-view,
+:root:not([data-theme="light"]) .profile-view{
+  background:#fbf7f2 !important;
+  --paper:#fbf7f2;
+  --paper-2:#f5efe2;
+  --paper-ink:#1a1a1a;
+  --paper-ink-2:#3d3a35;
+  --paper-muted:#7a7268;
+  --paper-hairline:#e8dfd3;
+  --paper-hairline-2:#d8cdbb;
+  --sakura:#f4a8b8;
+  --sakura-deep:#e8869c;
+  --surface:#ffffff;
+  --accent:#00a2ff;
+}
 /* Cover gradient — sits behind titlebar + top of avatar area */
 .profile-view::before{
   content:'';
@@ -6038,8 +6054,47 @@ body{
   background:linear-gradient(135deg,var(--sakura) 0%,var(--accent) 60%,#9b87ff 100%);
   pointer-events:none;z-index:0;
 }
-/* NO masthead text via ::after — it overlapped the titlebar username.
-   The titlebar already shows the username; we keep the gradient clean. */
+/* Cover masthead text — injected by JS as .profile-cover-masthead */
+.profile-cover-masthead{
+  position:absolute;
+  top:0;left:0;right:0;
+  height:180px;
+  z-index:1;
+  pointer-events:none;
+}
+.profile-cover-masthead .cover-issue{
+  position:absolute;
+  top:16px;left:16px;
+  font-family:var(--mono);
+  font-size:10px;
+  color:rgba(255,255,255,.85);
+  letter-spacing:1.5px;
+  text-transform:uppercase;
+  text-shadow:0 1px 4px rgba(0,0,0,.2);
+}
+.profile-cover-masthead .cover-vol{
+  position:absolute;
+  top:16px;right:16px;
+  font-family:var(--mono);
+  font-size:10px;
+  color:rgba(255,255,255,.85);
+  letter-spacing:1.5px;
+  text-transform:uppercase;
+  text-align:right;
+  text-shadow:0 1px 4px rgba(0,0,0,.2);
+  line-height:1.4;
+}
+.profile-cover-masthead .cover-feat{
+  position:absolute;
+  bottom:16px;left:16px;right:16px;
+  font-family:var(--serif);
+  font-style:italic;
+  font-weight:700;
+  font-size:14px;
+  color:rgba(255,255,255,.95);
+  text-align:center;
+  text-shadow:0 1px 4px rgba(0,0,0,.2);
+}
 .profile-view::after{content:none !important}
 .profile-view > *{position:relative;z-index:1}
 .profile-view > .profile-wrap{position:relative;z-index:1}
@@ -6157,6 +6212,15 @@ body{
   line-height:1.1 !important;
   text-align:center !important;
 }
+/* @handle display — mono accent blue, centered below display name */
+.profile-handle-display{
+  font-family:var(--mono) !important;
+  font-size:11px !important;
+  color:var(--accent) !important;
+  text-align:center !important;
+  letter-spacing:.5px !important;
+  margin-top:4px !important;
+}
 .ig-bio, #profileBio{
   font-family:var(--script) !important;
   font-size:17px !important;
@@ -6164,6 +6228,23 @@ body{
   line-height:1.4 !important;
   margin-top:6px !important;
   text-align:center !important;
+}
+/* "POSTS · THE ARCHIVE" section title with hairline */
+.profile-section-title-editorial{
+  padding:8px 16px 6px !important;
+  font-family:var(--mono) !important;
+  font-size:10px !important;
+  color:var(--paper-muted) !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  display:flex !important;
+  align-items:center !important;
+  gap:10px !important;
+}
+.profile-section-title-editorial .line{
+  flex:1;
+  height:1px;
+  background:var(--paper-hairline);
 }
 .profile-banners-row{
   justify-content:center !important;
