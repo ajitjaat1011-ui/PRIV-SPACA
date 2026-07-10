@@ -5711,8 +5711,11 @@ body{
   letter-spacing:-.5px;
   margin:0 0 4px;
 }
-.auth-panel[data-auth-panel="login"] .auth-form::after{
-  content:'sign in to continue';
+/* "sign in to continue" subtitle is injected by JS as a real DOM node
+   (.auth-form-sub) so it appears in the correct position (between the
+   title pseudo-element and the first input), not after the form's
+   last child. */
+.auth-panel[data-auth-panel="login"] .auth-form .auth-form-sub{
   display:block;
   font-family:var(--script);
   font-size:18px;
@@ -5721,6 +5724,7 @@ body{
   margin:0 0 18px;
   line-height:1.2;
 }
+.auth-panel[data-auth-panel="login"] .auth-form::after{content:none}
 [data-theme="dark"] .auth-panel[data-auth-panel="login"] .auth-form::before,
 :root:not([data-theme="light"]) .auth-panel[data-auth-panel="login"] .auth-form::before{
   color:var(--paper-ink);

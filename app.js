@@ -816,6 +816,18 @@ function bindAuth() {
   //  - Top back arrow reveals the splash/landing
   const authPanels = document.querySelectorAll('[data-auth-panel]');
   const authBottom = $('[data-auth-secondary]'); // .auth-bottom with 'Create new account'
+
+  // Sakura Editorial: inject "sign in to continue" subtitle as the first
+  // child of the login form so it sits between the title pseudo-element
+  // and the first input. CSS handles the script font + sakura color.
+  const loginFormEl = document.getElementById('loginForm');
+  if (loginFormEl && !loginFormEl.querySelector('.auth-form-sub')) {
+    const sub = document.createElement('div');
+    sub.className = 'auth-form-sub';
+    sub.textContent = 'sign in to continue';
+    loginFormEl.insertBefore(sub, loginFormEl.firstChild);
+  }
+
   function showAuthPanel(name) {
     authPanels.forEach(p => p.hidden = (p.dataset.authPanel !== name));
     // The bottom 'Create new account' CTA only shows on the sign-in panel
