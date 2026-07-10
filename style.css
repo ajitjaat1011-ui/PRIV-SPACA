@@ -5548,7 +5548,7 @@ body{
 }
 
 /* ============================================================
-   SAKURA EDITORIAL · SELECTIVE PAGE OVERRIDES (v94.1)
+   SAKURA EDITORIAL · SELECTIVE PAGE OVERRIDES (v95)
    Applies the Sakura Editorial look ONLY to:
      1. Auth · Login (and signup/reset by extension — same auth-shell)
      2. Profile · Magazine cover
@@ -5576,6 +5576,7 @@ body{
   --paper-hairline-2:#d8cdbb;
   --serif:'Playfair Display', Georgia, serif;
   --script:'Dancing Script', cursive;
+  --mono:ui-monospace,'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
 }
 [data-theme="dark"]{
   --sakura:#f4a8b8;
@@ -5610,7 +5611,6 @@ body{
 
 /* ============================================================
    1. AUTH · LOGIN (also covers signup + reset — same auth-shell)
-   Cream paper background + aurora glow blobs + glass card form
    ============================================================ */
 .auth-shell{
   background:linear-gradient(180deg,var(--paper) 0%,var(--paper-2) 100%) !important;
@@ -5625,8 +5625,17 @@ body{
 .auth-shell::after{
   content:'';position:absolute;bottom:120px;left:-60px;width:200px;height:200px;
   background:radial-gradient(circle,var(--accent) 0%,transparent 70%);
-  opacity:.15;pointer-events:none;
+  opacity:.18;pointer-events:none;
 }
+[data-theme="dark"] .auth-shell,
+:root:not([data-theme="light"]) .auth-shell{
+  background:linear-gradient(180deg,#0d0a08 0%,#1a1612 100%) !important;
+}
+[data-theme="dark"] .auth-shell::before,
+:root:not([data-theme="light"]) .auth-shell::before{opacity:.25}
+[data-theme="dark"] .auth-shell::after,
+:root:not([data-theme="light"]) .auth-shell::after{opacity:.12}
+
 .auth-topbar{
   background:transparent !important;
   border:0 !important;
@@ -5638,23 +5647,24 @@ body{
   border-radius:50% !important;
   color:var(--paper-ink) !important;
 }
+[data-theme="dark"] .auth-top-back,
+:root:not([data-theme="light"]) .auth-top-back{
+  background:rgba(255,255,255,.06) !important;
+  border-color:var(--paper-hairline) !important;
+  color:var(--paper-ink) !important;
+}
+
 .auth-main{
   position:relative;z-index:1;
+  padding-top:8px !important;
 }
-.auth-eyebrow{
-  font-family:var(--sans) !important;
-  font-size:11px !important;
-  letter-spacing:1.5px !important;
-  text-transform:uppercase !important;
-  color:var(--paper-muted) !important;
-}
+
 .auth-icon-wrap{
   flex-direction:column;
-  gap:18px;
-  margin-bottom:22px;
+  gap:14px;
+  margin-bottom:18px !important;
 }
 .auth-icon-wrap .logo-badge{
-  /* keep existing flower logo */
   box-shadow:0 12px 32px rgba(255,94,156,.30),0 0 60px rgba(195,75,255,.20);
 }
 .auth-icon-wrap .brand-name{
@@ -5668,9 +5678,62 @@ body{
   -webkit-text-fill-color:transparent !important;
   animation:brandShift 5s ease-in-out infinite,text-anim .6s ease both !important;
 }
+
+/* Magazine masthead — eyebrow / title / sub — injected via pseudo-elements */
 .auth-panels{
   position:relative;z-index:1;
 }
+.auth-panel[data-auth-panel="login"]{
+  position:relative;
+}
+.auth-panel[data-auth-panel="login"]::before{
+  content:'— welcome back —';
+  display:block;
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--paper-muted);
+  letter-spacing:1.5px;
+  text-transform:uppercase;
+  text-align:center;
+  margin-bottom:10px;
+}
+.auth-panel[data-auth-panel="login"] .auth-form::before{
+  content:'A quiet place\A to gather.';
+  white-space:pre;
+  display:block;
+  font-family:var(--serif);
+  font-style:italic;
+  font-weight:700;
+  font-size:30px;
+  line-height:1.05;
+  color:var(--paper-ink);
+  text-align:center;
+  letter-spacing:-.5px;
+  margin:0 0 4px;
+}
+.auth-panel[data-auth-panel="login"] .auth-form::after{
+  content:'sign in to continue';
+  display:block;
+  font-family:var(--script);
+  font-size:18px;
+  color:var(--sakura-deep);
+  text-align:center;
+  margin:0 0 18px;
+  line-height:1.2;
+}
+[data-theme="dark"] .auth-panel[data-auth-panel="login"] .auth-form::before,
+:root:not([data-theme="light"]) .auth-panel[data-auth-panel="login"] .auth-form::before{
+  color:var(--paper-ink);
+}
+
+.auth-eyebrow{
+  font-family:var(--mono) !important;
+  font-size:11px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+}
+
 .auth-form{
   background:var(--surface) !important;
   border:1px solid var(--paper-hairline) !important;
@@ -5678,6 +5741,13 @@ body{
   padding:24px 20px !important;
   box-shadow:0 8px 24px rgba(60,40,20,.10),inset 0 1px 0 rgba(255,255,255,.6) !important;
 }
+[data-theme="dark"] .auth-form,
+:root:not([data-theme="light"]) .auth-form{
+  background:var(--surface) !important;
+  border-color:var(--paper-hairline) !important;
+  box-shadow:0 8px 24px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04) !important;
+}
+
 .field.ig-pill{
   background:transparent !important;
   border:0 !important;
@@ -5689,7 +5759,7 @@ body{
   background:var(--paper-2) !important;
   border:1.5px solid var(--paper-hairline-2) !important;
   border-radius:14px !important;
-  padding:12px 14px !important;
+  padding:13px 14px !important;
   color:var(--paper-ink) !important;
   transition:border-color .2s,box-shadow .2s;
 }
@@ -5701,6 +5771,13 @@ body{
 .field.ig-pill input::placeholder{
   color:var(--paper-muted) !important;
 }
+[data-theme="dark"] .field.ig-pill input,
+:root:not([data-theme="light"]) .field.ig-pill input{
+  background:var(--paper-2) !important;
+  border-color:var(--paper-hairline-2) !important;
+  color:var(--paper-ink) !important;
+}
+
 .ig-primary{
   background:var(--paper-ink) !important;
   color:var(--paper) !important;
@@ -5711,9 +5788,19 @@ body{
   letter-spacing:.3px !important;
   padding:14px !important;
   box-shadow:0 6px 18px rgba(26,26,26,.20) !important;
-  transition:transform .1s;
+  transition:transform .1s, box-shadow .15s;
+}
+.ig-primary:hover{
+  box-shadow:0 10px 26px rgba(26,26,26,.30) !important;
 }
 .ig-primary:active{transform:scale(.98)}
+[data-theme="dark"] .ig-primary,
+:root:not([data-theme="light"]) .ig-primary{
+  background:var(--accent) !important;
+  color:#fff !important;
+  box-shadow:0 6px 18px rgba(0,162,255,.35) !important;
+}
+
 .ig-outline{
   background:transparent !important;
   border:1.5px solid var(--paper-ink) !important;
@@ -5722,6 +5809,12 @@ body{
   font-weight:600 !important;
   border-radius:14px !important;
 }
+[data-theme="dark"] .ig-outline,
+:root:not([data-theme="light"]) .ig-outline{
+  border-color:var(--paper-ink) !important;
+  color:var(--paper-ink) !important;
+}
+
 .ig-link{
   font-family:var(--sans) !important;
   color:var(--accent) !important;
@@ -5729,6 +5822,11 @@ body{
 }
 .ig-back,.ig-pin-hint,.terms-text,.terms-link{
   font-family:var(--sans) !important;
+}
+.ig-back{
+  background:var(--surface) !important;
+  border:1px solid var(--paper-hairline) !important;
+  color:var(--paper-ink) !important;
 }
 .ig-pin-block{
   background:var(--paper-2) !important;
@@ -5766,24 +5864,33 @@ body{
 
 /* ============================================================
    2. PROFILE · MAGAZINE COVER
-   Top cover banner with issue masthead + avatar overlapping +
-   Playfair italic display name + Dancing Script bio + paper stats
    ============================================================ */
 .profile-view{
   background:var(--paper) !important;
   position:relative;
 }
 .profile-view::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:220px;
+  content:'';
+  position:absolute;top:0;left:0;right:0;height:220px;
   background:linear-gradient(135deg,var(--sakura) 0%,var(--accent) 60%,#9b87ff 100%);
   pointer-events:none;z-index:0;
 }
 .profile-view::after{
-  content:'';position:absolute;top:0;left:0;right:0;height:220px;
-  background:radial-gradient(circle at 20% 30%,rgba(255,255,255,.3) 0%,transparent 50%);
-  pointer-events:none;z-index:0;
+  content:'ISSUE №47 \00B7 VOL. III \00B7 2026 \00B7 — a quiet collection —';
+  position:absolute;top:18px;left:16px;right:16px;
+  font-family:var(--mono);
+  font-size:10px;
+  letter-spacing:1.8px;
+  text-transform:uppercase;
+  color:rgba(255,255,255,.92);
+  text-align:center;
+  pointer-events:none;
+  z-index:1;
+  text-shadow:0 1px 4px rgba(0,0,0,.25);
+  line-height:1.6;
 }
 .profile-view > *{position:relative;z-index:1}
+.profile-view > .profile-wrap{position:relative;z-index:1}
 .profile-mode{
   background:transparent !important;
 }
@@ -5829,7 +5936,7 @@ body{
   font-family:var(--serif) !important;
   font-weight:700 !important;
   color:var(--paper-ink) !important;
-  font-size:20px !important;
+  font-size:22px !important;
   letter-spacing:-.5px;
 }
 .ig-profile-stats .stat-btn span{
@@ -5847,14 +5954,14 @@ body{
   font-family:var(--serif) !important;
   font-style:italic !important;
   font-weight:700 !important;
-  font-size:24px !important;
+  font-size:26px !important;
   letter-spacing:-.5px !important;
   color:var(--paper-ink) !important;
   line-height:1.1 !important;
 }
 .ig-bio, #profileBio{
   font-family:var(--script) !important;
-  font-size:17px !important;
+  font-size:18px !important;
   color:var(--paper-ink-2) !important;
   line-height:1.4 !important;
   margin-top:6px !important;
@@ -5995,6 +6102,18 @@ body{
   background:linear-gradient(135deg,var(--sakura) 0%,var(--accent) 60%,#9b87ff 100%) !important;
   border:0 !important;
   color:#fff !important;
+  position:relative;
+}
+.user-profile-sheet .up-header::after{
+  content:'ISSUE №47 \00B7 — a quiet collection —';
+  position:absolute;top:8px;left:0;right:0;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:1.5px;
+  text-transform:uppercase;
+  color:rgba(255,255,255,.85);
+  text-align:center;
+  pointer-events:none;
 }
 .user-profile-sheet .up-header-username{
   font-family:var(--serif) !important;
@@ -6067,8 +6186,6 @@ body{
 
 /* ============================================================
    3. STORY · POLAROID FRAME
-   White polaroid frame around content + handwritten caption strip
-   + mono timestamp stamp + sakura progress bars
    ============================================================ */
 .story-viewer .story-frame{
   background:#0a0a0a !important;
@@ -6091,7 +6208,7 @@ body{
   color:#fff !important;
 }
 .story-viewer .story-author .story-meta{
-  font-family:var(--sans) !important;
+  font-family:var(--mono) !important;
   font-size:10px !important;
   color:rgba(255,255,255,.7) !important;
   letter-spacing:.5px !important;
@@ -6099,7 +6216,7 @@ body{
 }
 .story-viewer .story-author .avatar{
   border:1.5px solid #fff !important;
-  box-shadow:0 4px 12px rgba(34,211,238,.30) !important;
+  box-shadow:0 4px 12px rgba(244,168,184,.30) !important;
 }
 .story-viewer .story-close,
 .story-viewer .story-manage{
@@ -6110,32 +6227,29 @@ body{
   border-radius:50% !important;
 }
 
-/* The polaroid treatment — wrap the story content visually */
 .story-viewer .story-content{
   position:relative;
   background:#fff !important;
   border-radius:6px !important;
-  padding:14px 14px 56px !important;
+  padding:14px 14px 60px !important;
   margin:80px 28px 200px !important;
   box-shadow:0 30px 80px rgba(0,0,0,.50),0 0 0 1px rgba(0,0,0,.05) !important;
   transform:rotate(-1.5deg);
   overflow:hidden;
 }
 .story-viewer .story-content > *:not(.story-caption-overlay){
-  /* inner media stays in the frame */
   border-radius:4px;
   display:block;
   margin:0 auto;
   max-width:100%;
   max-height:calc(100% - 50px);
 }
-/* add a caption strip area at the bottom of the polaroid */
 .story-viewer .story-content::after{
   content:'PRIV SPACA · polaroid';
   position:absolute;bottom:14px;left:0;right:0;
   text-align:center;
   font-family:var(--script);
-  font-size:15px;
+  font-size:16px;
   color:#1a1a1a;
   letter-spacing:.3px;
 }
@@ -6153,13 +6267,14 @@ body{
 }
 .story-viewer .story-reply-input::placeholder{
   color:rgba(255,255,255,.7) !important;
+  font-style:italic;
 }
 .story-viewer .story-reply-send{
   background:linear-gradient(135deg,var(--sakura),var(--accent)) !important;
   color:#fff !important;
   border:1.5px solid #fff !important;
   border-radius:50% !important;
-  box-shadow:0 4px 14px rgba(34,211,238,.40) !important;
+  box-shadow:0 4px 14px rgba(244,168,184,.40) !important;
 }
 .story-viewer .story-quick-reacts .story-react-emoji{
   background:rgba(255,255,255,.15) !important;
@@ -6167,7 +6282,14 @@ body{
   border:1px solid rgba(255,255,255,.25) !important;
   border-radius:50% !important;
   transition:transform .15s;
+  animation:storyBobUp 2s ease-in-out infinite;
 }
+.story-viewer .story-quick-reacts .story-react-emoji:nth-child(2){animation-delay:.15s}
+.story-viewer .story-quick-reacts .story-react-emoji:nth-child(3){animation-delay:.3s}
+.story-viewer .story-quick-reacts .story-react-emoji:nth-child(4){animation-delay:.45s}
+.story-viewer .story-quick-reacts .story-react-emoji:nth-child(5){animation-delay:.6s}
+.story-viewer .story-quick-reacts .story-react-emoji:nth-child(6){animation-delay:.75s}
+@keyframes storyBobUp{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .story-viewer .story-quick-reacts .story-react-emoji:active{
   transform:scale(.90);
   background:var(--sakura) !important;
@@ -6185,20 +6307,24 @@ body{
   border:1px solid rgba(255,255,255,.25) !important;
   color:#fff !important;
   border-radius:999px !important;
-  font-family:var(--sans) !important;
+  font-family:var(--mono) !important;
   font-size:11px !important;
 }
 
 /* ============================================================
    4. NOTIFICATIONS · TIMELINE
-   Vertical timeline with day headers in script font + sakura nodes
-   + unread nodes glow accent + filter chips
    ============================================================ */
 #notifSheet .sheet-card{
   background:var(--paper) !important;
   border:1px solid var(--paper-hairline) !important;
   border-radius:20px !important;
   box-shadow:0 22px 60px rgba(60,40,20,.18) !important;
+}
+[data-theme="dark"] #notifSheet .sheet-card,
+:root:not([data-theme="light"]) #notifSheet .sheet-card{
+  background:var(--paper) !important;
+  border-color:var(--paper-hairline) !important;
+  box-shadow:0 22px 60px rgba(0,0,0,.6) !important;
 }
 #notifSheet .sheet-head{
   border-bottom:1px solid var(--paper-hairline) !important;
@@ -6221,7 +6347,6 @@ body{
   position:relative;
   padding:14px 16px !important;
 }
-/* the vertical timeline line */
 #notifSheet .sheet-body::before{
   content:'';
   position:absolute;
@@ -6249,7 +6374,6 @@ body{
   gap:10px;
   font-family:var(--sans) !important;
 }
-/* the timeline node */
 #notifSheet .notif-list li::before{
   content:'';
   position:absolute;
@@ -6266,7 +6390,6 @@ body{
   border-color:var(--accent);
   box-shadow:0 0 10px var(--accent);
 }
-/* Day header rows inside the timeline (rendered as li with data attr or class) */
 #notifSheet .notif-list li.day-header{
   padding:14px 0 6px 56px !important;
   font-family:var(--script) !important;
@@ -6275,22 +6398,52 @@ body{
   font-weight:700 !important;
   letter-spacing:0;
   text-transform:none;
+  display:block;
 }
 #notifSheet .notif-list li.day-header::before{
   background:var(--sakura);
   border:0;
   width:9px;height:9px;
-  top:18px;
+  top:22px;
   left:32px;
   box-shadow:0 0 0 3px var(--paper);
 }
 #notifSheet .notif-list li .notif-av,
-#notifSheet .notif-list li .avatar{
+#notifSheet .notif-list li .avatar,
+#notifSheet .notif-list li .notif-avatar-wrap{
   width:36px;height:36px;
   border-radius:50%;
-  background:linear-gradient(135deg,var(--sakura),var(--accent));
   flex-shrink:0;
-  box-shadow:0 4px 12px rgba(34,211,238,.20);
+  box-shadow:0 4px 12px rgba(60,40,20,.10);
+  position:relative;
+}
+#notifSheet .notif-list li .notif-avatar-wrap{
+  display:flex;align-items:center;justify-content:center;
+}
+#notifSheet .notif-list li .notif-avatar-wrap .avatar{
+  width:36px;height:36px;
+  margin:0;
+  box-shadow:none;
+}
+#notifSheet .notif-list li .notif-kind-badge{
+  position:absolute;
+  bottom:-2px;right:-2px;
+  width:16px;height:16px;
+  border-radius:50%;
+  background:var(--accent);
+  color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  border:2px solid var(--paper);
+  font-size:9px;
+}
+#notifSheet .notif-list li .notif-kind-badge.like{background:var(--wax)}
+#notifSheet .notif-list li .notif-kind-badge.comment{background:var(--accent)}
+#notifSheet .notif-list li .notif-kind-badge.follow{background:var(--matcha)}
+#notifSheet .notif-list li .notif-kind-badge.message{background:var(--accent)}
+#notifSheet .notif-list li .notif-kind-badge.story_reply{background:var(--sakura-deep)}
+#notifSheet .notif-list li .notif-kind-badge i,
+#notifSheet .notif-list li .notif-kind-badge svg{
+  width:9px !important;height:9px !important;
 }
 #notifSheet .notif-list li .notif-body,
 #notifSheet .notif-list li .body{
@@ -6301,7 +6454,7 @@ body{
 #notifSheet .notif-list li .notif-text,
 #notifSheet .notif-list li .txt{
   font-family:var(--sans) !important;
-  font-size:12px !important;
+  font-size:12.5px !important;
   color:var(--paper-ink-2) !important;
   line-height:1.45 !important;
 }
@@ -6311,23 +6464,41 @@ body{
   color:var(--paper-ink) !important;
   font-family:var(--sans) !important;
 }
+#notifSheet .notif-list li .nm{
+  font-family:var(--mono) !important;
+  font-size:9px !important;
+  letter-spacing:.5px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+  margin-top:2px;
+}
+#notifSheet .notif-list li .preview{
+  font-family:var(--script) !important;
+  font-size:13px !important;
+  color:var(--sakura-deep) !important;
+  font-style:normal !important;
+  margin-top:2px;
+}
 #notifSheet .notif-list li .notif-meta,
 #notifSheet .notif-list li .meta{
   margin-top:2px;
 }
 #notifSheet .notif-list li .notif-ts,
 #notifSheet .notif-list li .ts{
-  font-family:var(--sans) !important;
+  font-family:var(--mono) !important;
   font-size:9px !important;
   letter-spacing:.5px !important;
   text-transform:uppercase !important;
   color:var(--paper-muted) !important;
 }
 #notifSheet .notif-list li .notif-thumb,
+#notifSheet .notif-list li .thumb,
 #notifSheet .notif-list li .post-thumb{
   width:32px;height:32px;
   border-radius:8px;
   background:linear-gradient(135deg,#fde68a,#fb923c);
+  background-size:cover;
+  background-position:center;
   flex-shrink:0;
 }
 #notifSheet .notif-list li .follow-btn,
@@ -6342,7 +6513,7 @@ body{
   border:0 !important;
   letter-spacing:.5px;
   text-transform:uppercase;
-  box-shadow:0 4px 12px rgba(34,211,238,.30);
+  box-shadow:0 4px 12px rgba(0,162,255,.30);
 }
 #notifSheet .notif-list li .follow-btn.following,
 #notifSheet .notif-list li .follow-cta.following{
@@ -6351,11 +6522,18 @@ body{
   color:var(--paper-muted) !important;
   box-shadow:none !important;
 }
+#notifSheet .notif-list li.notif-empty{
+  display:block;
+  padding:40px 16px !important;
+  text-align:center;
+  color:var(--paper-muted) !important;
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+}
+#notifSheet .notif-list li.notif-empty::before{display:none}
 
 /* ============================================================
    5. PROFILE CARD · LETTERPRESS
-   Cream card, debossed title strip, tilted -2°, ink-on-paper type,
-   mono ID strip, sakura mood badge, hard offset shadow
    ============================================================ */
 #profileCardSheet .profile-card-stage{
   background:linear-gradient(135deg,var(--paper-2),var(--paper)) !important;
@@ -6389,13 +6567,13 @@ body{
   box-shadow:0 4px 12px rgba(60,40,20,.10) !important;
   z-index:10;
 }
+
 #profileCardSheet .profile-card-stage > div:not(.profile-card-close){
-  /* the actual card — apply letterpress treatment */
   background:#fbf7f2 !important;
   border:1.5px solid var(--paper-ink) !important;
   border-radius:16px !important;
   box-shadow:6px 6px 0 var(--paper-ink),0 30px 60px rgba(60,40,20,.25) !important;
-  transform:rotate(-1.5deg);
+  transform:rotate(-2deg);
   position:relative;
   overflow:hidden;
   padding:0 !important;
@@ -6409,40 +6587,65 @@ body{
   box-shadow:6px 6px 0 #000,0 30px 60px rgba(0,0,0,.5) !important;
   color:var(--paper-ink) !important;
 }
-/* debossed title strip at top */
-#profileCardSheet .profile-card-stage > div:not(.profile-card-close)::before{
+#profileCardSheet .reflective-svg-filters{display:none !important}
+#profileCardSheet .reflective-noise,
+#profileCardSheet .reflective-sheen,
+#profileCardSheet .reflective-border{display:none !important}
+#profileCardSheet .reflective-card-photo{
+  position:absolute !important;
+  top:0;left:0;right:0;height:80px !important;
+  background:linear-gradient(135deg,var(--sakura),var(--accent)) !important;
+  opacity:.20 !important;
+  border:0 !important;
+  border-radius:0 !important;
+  filter:none !important;
+}
+#profileCardSheet .reflective-content{
+  position:relative;
+  z-index:2;
+  padding:0 !important;
+}
+#profileCardSheet .reflective-content::before{
   content:'PRIV SPACA · MEMBER ID';
   display:block;
   padding:8px 16px;
   background:var(--paper-ink);
   color:var(--paper);
-  font-family:var(--sans);
+  font-family:var(--mono);
   font-size:9px;
   letter-spacing:2.5px;
   text-transform:uppercase;
   font-weight:600;
 }
-/* Hairline divider under title strip */
-#profileCardSheet .profile-card-stage > div:not(.profile-card-close)::after{
-  content:'';
-  display:block;
-  height:1px;
-  background:linear-gradient(90deg,transparent,var(--paper-hairline-2),transparent);
-  margin:0 16px;
+[data-theme="dark"] #profileCardSheet .reflective-content::before,
+:root:not([data-theme="light"]) #profileCardSheet .reflective-content::before{
+  background:#000;
+  color:var(--paper-ink);
 }
 
-/* Typography inside the profile card */
-#profileCardSheet .profile-card-stage .avatar{
+#profileCardSheet .card-header{
+  display:none !important;
+}
+
+#profileCardSheet .reflective-user-avatar{
   border:2.5px solid var(--paper-ink) !important;
   box-shadow:0 8px 20px rgba(251,146,60,.30),inset 0 2px 4px rgba(255,255,255,.30) !important;
   margin:24px auto 12px !important;
+  display:block !important;
+  position:relative;
 }
+
+#profileCardSheet .card-body{
+  padding:0 20px 16px !important;
+  text-align:center;
+}
+
 #profileCardSheet .profile-card-stage h1,
 #profileCardSheet .profile-card-stage h2,
 #profileCardSheet .profile-card-stage h3,
 #profileCardSheet .profile-card-stage .name,
 #profileCardSheet .profile-card-stage .display-name,
-#profileCardSheet .profile-card-stage [class*="name"]:not(.avatar):not(.strip){
+#profileCardSheet .profile-card-stage .user-name{
   font-family:var(--serif) !important;
   font-style:italic !important;
   font-weight:700 !important;
@@ -6450,51 +6653,47 @@ body{
   letter-spacing:-.5px !important;
   text-align:center !important;
   text-shadow:0 1px 0 rgba(255,255,255,.6);
+  font-size:24px !important;
+  margin:0 0 4px !important;
+  background:transparent !important;
+  -webkit-text-fill-color:var(--paper-ink) !important;
 }
 [data-theme="dark"] #profileCardSheet .profile-card-stage h1,
 [data-theme="dark"] #profileCardSheet .profile-card-stage h2,
 [data-theme="dark"] #profileCardSheet .profile-card-stage h3,
 [data-theme="dark"] #profileCardSheet .profile-card-stage .name,
 [data-theme="dark"] #profileCardSheet .profile-card-stage .display-name,
-:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage [class*="name"]:not(.avatar):not(.strip){
+[data-theme="dark"] #profileCardSheet .profile-card-stage .user-name,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage h1,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage h2,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage h3,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage .user-name{
   text-shadow:none;
+  -webkit-text-fill-color:var(--paper-ink) !important;
 }
-#profileCardSheet .profile-card-stage .handle,
-#profileCardSheet .profile-card-stage [class*="handle"]{
-  font-family:var(--sans) !important;
+#profileCardSheet .user-role{
+  font-family:var(--mono) !important;
   font-size:11px !important;
   color:var(--accent) !important;
   text-align:center !important;
   letter-spacing:1px !important;
   text-transform:uppercase !important;
-  margin-top:4px !important;
+  margin:4px 0 0 !important;
 }
-#profileCardSheet .profile-card-stage .bio,
-#profileCardSheet .profile-card-stage [class*="bio"]{
-  font-family:var(--script) !important;
-  font-size:16px !important;
-  color:var(--paper-ink-2) !important;
-  text-align:center !important;
-  line-height:1.4 !important;
-  margin-top:12px !important;
-  padding:0 16px !important;
-}
-#profileCardSheet .profile-card-stage .stats,
-#profileCardSheet .profile-card-stage [class*="stats"]{
+
+#profileCardSheet .reflective-stats{
   display:flex !important;
   margin:18px 16px 0 !important;
   padding:14px 0 !important;
   border-top:1px solid var(--paper-hairline) !important;
   border-bottom:1px solid var(--paper-hairline) !important;
 }
-#profileCardSheet .profile-card-stage .stats > *,
-#profileCardSheet .profile-card-stage [class*="stats"] > *{
+#profileCardSheet .reflective-stats > div{
   flex:1;
   text-align:center;
   position:relative;
 }
-#profileCardSheet .profile-card-stage .stats > *:not(:last-child)::after,
-#profileCardSheet .profile-card-stage [class*="stats"] > *:not(:last-child)::after{
+#profileCardSheet .reflective-stats > div:not(:last-child)::after{
   content:'';
   position:absolute;
   right:0;
@@ -6502,19 +6701,15 @@ body{
   width:1px;
   background:var(--paper-hairline);
 }
-#profileCardSheet .profile-card-stage .stats strong,
-#profileCardSheet .profile-card-stage [class*="stats"] strong,
-#profileCardSheet .profile-card-stage .stats .num{
+#profileCardSheet .reflective-stats strong{
   font-family:var(--serif) !important;
   font-weight:700 !important;
   font-size:18px !important;
   color:var(--paper-ink) !important;
   display:block;
 }
-#profileCardSheet .profile-card-stage .stats span,
-#profileCardSheet .profile-card-stage [class*="stats"] span,
-#profileCardSheet .profile-card-stage .stats .lbl{
-  font-family:var(--sans) !important;
+#profileCardSheet .reflective-stats span{
+  font-family:var(--mono) !important;
   font-size:9px !important;
   letter-spacing:1px !important;
   text-transform:uppercase !important;
@@ -6522,9 +6717,43 @@ body{
   margin-top:2px;
   display:block;
 }
+
+#profileCardSheet .card-footer{
+  margin:14px 16px 16px !important;
+  padding:10px 12px !important;
+  background:var(--paper-2) !important;
+  border-top:1.5px solid var(--paper-ink) !important;
+  border-radius:8px;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:space-between !important;
+}
+#profileCardSheet .id-section{
+  font-family:var(--mono) !important;
+  font-size:9px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+}
+#profileCardSheet .id-section .label{
+  display:block;
+  color:var(--paper-muted) !important;
+  margin-bottom:2px;
+}
+#profileCardSheet .id-section .value{
+  display:block;
+  color:var(--paper-ink) !important;
+  font-weight:700 !important;
+  font-size:11px !important;
+}
+#profileCardSheet .fingerprint-icon{
+  color:var(--paper-ink) !important;
+  width:24px !important;height:24px !important;
+  opacity:.6;
+}
+
 #profileCardSheet .profile-card-stage button,
-#profileCardSheet .profile-card-stage .btn,
-#profileCardSheet .profile-card-stage [class*="action"]{
+#profileCardSheet .profile-card-stage .btn{
   font-family:var(--sans) !important;
   font-weight:600 !important;
   font-size:12px !important;
@@ -6539,14 +6768,12 @@ body{
   transition:transform .08s !important;
 }
 #profileCardSheet .profile-card-stage button:active,
-#profileCardSheet .profile-card-stage .btn:active,
-#profileCardSheet .profile-card-stage [class*="action"]:active{
+#profileCardSheet .profile-card-stage .btn:active{
   transform:translate(2px,2px) !important;
   box-shadow:1px 1px 0 var(--paper-ink) !important;
 }
 #profileCardSheet .profile-card-stage button.primary,
-#profileCardSheet .profile-card-stage .btn.primary,
-#profileCardSheet .profile-card-stage [class*="action"].primary{
+#profileCardSheet .profile-card-stage .btn.primary{
   background:var(--paper-ink) !important;
   color:var(--paper) !important;
 }
@@ -6566,42 +6793,7 @@ body{
   background:var(--paper-ink) !important;
   color:var(--paper) !important;
 }
-/* Mood badge (sakura script) */
-#profileCardSheet .profile-card-stage .mood,
-#profileCardSheet .profile-card-stage [class*="mood"]{
-  font-family:var(--script) !important;
-  font-size:12px !important;
-  color:var(--sakura-deep) !important;
-  background:#fbf7f2 !important;
-  border:1.5px solid var(--paper-ink) !important;
-  padding:3px 10px !important;
-  border-radius:0 !important;
-  box-shadow:2px 2px 0 var(--paper-ink) !important;
-  display:inline-block !important;
-}
-/* ID strip / mono labels at bottom of card */
-#profileCardSheet .profile-card-stage .id,
-#profileCardSheet .profile-card-stage .strip,
-#profileCardSheet .profile-card-stage [class*="id-strip"],
-#profileCardSheet .profile-card-stage [class*="card-strip"]{
-  font-family:var(--sans) !important;
-  font-size:9px !important;
-  letter-spacing:1.5px !important;
-  text-transform:uppercase !important;
-  color:var(--paper-muted) !important;
-  background:var(--paper-2) !important;
-  border-top:1.5px solid var(--paper-ink) !important;
-  padding:8px 16px !important;
-  display:flex !important;
-  justify-content:space-between !important;
-  margin:14px -0px 0 !important;
-}
-#profileCardSheet .profile-card-stage .id strong,
-#profileCardSheet .profile-card-stage .strip strong{
-  color:var(--paper-ink) !important;
-  font-weight:700 !important;
-}
 
 /* ============================================================
-   END Sakura Editorial Selective Page Overrides (v94.1)
+   END Sakura Editorial Selective Page Overrides (v95)
    ============================================================ */
