@@ -115,6 +115,24 @@ function isVideoFile(file) {
   if (!mime) return VIDEO_EXTENSIONS.includes(fileExt(file));
   return false;
 }
+
+function storyMediaKind(file) {
+  if (isVideoFile(file)) return 'video';
+  if (isImageFile(file)) return 'image';
+  return '';
+}
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ''));
+    r.onerror = () => reject(r.error || new Error('Could not read file'));
+    r.readAsDataURL(file);
+  });
+}
+async function uploadMediaFile(file) {
+  const dataUrl = await readFileAsDataUrl(file);
+  return await api('/upload-media', { dataUrl, mimeType: file.type || '', name: file.name || 'story-media' });
+}
 // heic2any is loaded on demand (only when a HEIC file is actually picked)
 // so users who never touch an iPhone photo never pay for the extra script.
 let _heic2anyLoadPromise = null;
