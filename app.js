@@ -827,9 +827,21 @@ function bindAuth() {
   // - Add terms checkbox text after button
   // - Change bottom CTA text to "New here?" / "Create an account"
   function applySakuraLoginEditorial() {
-    // 1. Hide logo + brand name on all auth panels
+    // 1. Hide ONLY the logo badge circle — keep the brand name text "PRIV SPACA"
     const iconWrap = document.querySelector('.auth-icon-wrap');
-    if (iconWrap) iconWrap.style.display = 'none';
+    if (iconWrap) {
+      const logoBadge = iconWrap.querySelector('.logo-badge');
+      if (logoBadge) logoBadge.style.display = 'none';
+      const petalParticles = iconWrap.querySelector('.petal-particles');
+      if (petalParticles) petalParticles.style.display = 'none';
+      // Style the brand name as a clean editorial wordmark
+      const brandName = iconWrap.querySelector('.brand-name');
+      if (brandName) {
+        brandName.style.margin = '0';
+      }
+      iconWrap.style.margin = '0 0 24px';
+      iconWrap.style.gap = '0';
+    }
 
     // 2. Inject editorial title + subtitle above the login form
     const loginPanel = document.querySelector('[data-auth-panel="login"]');
@@ -867,11 +879,19 @@ function bindAuth() {
       const submitBtn = loginForm.querySelector('button[type="submit"]');
       if (submitBtn) submitBtn.textContent = 'Enter priv →';
 
-      // 5. Hide "Forgotten password?" link
+      // 5. RESTORE "Forgotten password?" link — reposition below the button
       const resetLink = loginForm.querySelector('[data-auth-step="reset"]');
-      if (resetLink) resetLink.style.display = 'none';
+      if (resetLink) {
+        resetLink.style.display = '';
+        resetLink.textContent = 'Forgot password?';
+        resetLink.classList.add('auth-forgot-link');
+        // Move it to right after the submit button
+        if (submitBtn && submitBtn.nextSibling) {
+          loginForm.insertBefore(resetLink, submitBtn.nextSibling);
+        }
+      }
 
-      // 6. Add terms checkbox text after button (before error div)
+      // 6. Add terms checkbox text after the forgot-password link
       const terms = document.createElement('div');
       terms.className = 'auth-terms';
       terms.innerHTML =
