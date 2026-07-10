@@ -5546,3 +5546,1062 @@ body{
   .feed-view::before,.feed-view::after{animation:none}
   .post-card{animation:none !important}
 }
+
+/* ============================================================
+   SAKURA EDITORIAL · SELECTIVE PAGE OVERRIDES (v94.1)
+   Applies the Sakura Editorial look ONLY to:
+     1. Auth · Login (and signup/reset by extension — same auth-shell)
+     2. Profile · Magazine cover
+     3. Story · Polaroid frame
+     4. Notifications · Timeline
+     5. Profile Card · Letterpress
+   All other pages (splash, feed, chat, search, settings, comments,
+   notes, requests) keep the existing sky-blue look untouched.
+   Topbar + bottom-nav: NEVER touched.
+   ============================================================ */
+
+/* Sakura palette — added as new tokens (existing tokens untouched) */
+:root, [data-theme="light"]{
+  --sakura:#f4a8b8;
+  --sakura-deep:#e8869c;
+  --matcha:#7a9b76;
+  --wax:#c0392b;
+  --gold:#d4a017;
+  --paper:#fbf7f2;
+  --paper-2:#f5efe2;
+  --paper-ink:#1a1a1a;
+  --paper-ink-2:#3d3a35;
+  --paper-muted:#7a7268;
+  --paper-hairline:#e8dfd3;
+  --paper-hairline-2:#d8cdbb;
+  --serif:'Playfair Display', Georgia, serif;
+  --script:'Dancing Script', cursive;
+}
+[data-theme="dark"]{
+  --sakura:#f4a8b8;
+  --sakura-deep:#e8869c;
+  --matcha:#9bc097;
+  --wax:#e85a4a;
+  --gold:#e8b830;
+  --paper:#1a1612;
+  --paper-2:#221c16;
+  --paper-ink:#f5efe6;
+  --paper-ink-2:#d8cfc0;
+  --paper-muted:#a89e91;
+  --paper-hairline:#3a3026;
+  --paper-hairline-2:#4a3e30;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --sakura:#f4a8b8;
+    --sakura-deep:#e8869c;
+    --matcha:#9bc097;
+    --wax:#e85a4a;
+    --gold:#e8b830;
+    --paper:#1a1612;
+    --paper-2:#221c16;
+    --paper-ink:#f5efe6;
+    --paper-ink-2:#d8cfc0;
+    --paper-muted:#a89e91;
+    --paper-hairline:#3a3026;
+    --paper-hairline-2:#4a3e30;
+  }
+}
+
+/* ============================================================
+   1. AUTH · LOGIN (also covers signup + reset — same auth-shell)
+   Cream paper background + aurora glow blobs + glass card form
+   ============================================================ */
+.auth-shell{
+  background:linear-gradient(180deg,var(--paper) 0%,var(--paper-2) 100%) !important;
+  position:relative;
+  overflow:hidden;
+}
+.auth-shell::before{
+  content:'';position:absolute;top:-40px;right:-40px;width:240px;height:240px;
+  background:radial-gradient(circle,var(--sakura) 0%,transparent 70%);
+  opacity:.35;pointer-events:none;
+}
+.auth-shell::after{
+  content:'';position:absolute;bottom:120px;left:-60px;width:200px;height:200px;
+  background:radial-gradient(circle,var(--accent) 0%,transparent 70%);
+  opacity:.15;pointer-events:none;
+}
+.auth-topbar{
+  background:transparent !important;
+  border:0 !important;
+}
+.auth-top-back{
+  background:rgba(255,255,255,.6) !important;
+  backdrop-filter:blur(20px);
+  border:1px solid var(--paper-hairline) !important;
+  border-radius:50% !important;
+  color:var(--paper-ink) !important;
+}
+.auth-main{
+  position:relative;z-index:1;
+}
+.auth-eyebrow{
+  font-family:var(--sans) !important;
+  font-size:11px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+}
+.auth-icon-wrap{
+  flex-direction:column;
+  gap:18px;
+  margin-bottom:22px;
+}
+.auth-icon-wrap .logo-badge{
+  /* keep existing flower logo */
+  box-shadow:0 12px 32px rgba(255,94,156,.30),0 0 60px rgba(195,75,255,.20);
+}
+.auth-icon-wrap .brand-name{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  letter-spacing:-.5px !important;
+  background:linear-gradient(120deg,#ff7ab8 0%,#ff3d77 20%,#c33dff 45%,#7c5cff 70%,#ff7ab8 100%) !important;
+  background-size:300% 300% !important;
+  -webkit-background-clip:text !important;background-clip:text !important;
+  -webkit-text-fill-color:transparent !important;
+  animation:brandShift 5s ease-in-out infinite,text-anim .6s ease both !important;
+}
+.auth-panels{
+  position:relative;z-index:1;
+}
+.auth-form{
+  background:var(--surface) !important;
+  border:1px solid var(--paper-hairline) !important;
+  border-radius:20px !important;
+  padding:24px 20px !important;
+  box-shadow:0 8px 24px rgba(60,40,20,.10),inset 0 1px 0 rgba(255,255,255,.6) !important;
+}
+.field.ig-pill{
+  background:transparent !important;
+  border:0 !important;
+  padding:0 !important;
+  margin-bottom:14px !important;
+}
+.field.ig-pill input{
+  font-family:var(--sans) !important;
+  background:var(--paper-2) !important;
+  border:1.5px solid var(--paper-hairline-2) !important;
+  border-radius:14px !important;
+  padding:12px 14px !important;
+  color:var(--paper-ink) !important;
+  transition:border-color .2s,box-shadow .2s;
+}
+.field.ig-pill input:focus{
+  border-color:var(--accent) !important;
+  box-shadow:0 0 0 3px rgba(0,162,255,.12) !important;
+  outline:0 !important;
+}
+.field.ig-pill input::placeholder{
+  color:var(--paper-muted) !important;
+}
+.ig-primary{
+  background:var(--paper-ink) !important;
+  color:var(--paper) !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  border:0 !important;
+  border-radius:14px !important;
+  letter-spacing:.3px !important;
+  padding:14px !important;
+  box-shadow:0 6px 18px rgba(26,26,26,.20) !important;
+  transition:transform .1s;
+}
+.ig-primary:active{transform:scale(.98)}
+.ig-outline{
+  background:transparent !important;
+  border:1.5px solid var(--paper-ink) !important;
+  color:var(--paper-ink) !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  border-radius:14px !important;
+}
+.ig-link{
+  font-family:var(--sans) !important;
+  color:var(--accent) !important;
+  font-weight:600 !important;
+}
+.ig-back,.ig-pin-hint,.terms-text,.terms-link{
+  font-family:var(--sans) !important;
+}
+.ig-pin-block{
+  background:var(--paper-2) !important;
+  border:1px solid var(--paper-hairline) !important;
+  border-radius:14px !important;
+  padding:12px !important;
+}
+.ig-pin-hint{color:var(--paper-muted) !important;font-size:12px !important}
+.pin-input input{
+  background:var(--surface) !important;
+  border:1.5px solid var(--paper-hairline-2) !important;
+  border-radius:10px !important;
+  color:var(--paper-ink) !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+}
+.pin-input input:focus{border-color:var(--accent) !important}
+.auth-error{
+  font-family:var(--sans) !important;
+  color:var(--wax) !important;
+}
+.auth-bottom{
+  background:rgba(255,255,255,.7) !important;
+  backdrop-filter:blur(20px);
+  border-top:1px solid var(--paper-hairline) !important;
+}
+.auth-bottom-text{
+  font-family:var(--sans) !important;
+  color:var(--paper-muted) !important;
+}
+[data-theme="dark"] .auth-bottom,
+:root:not([data-theme="light"]) .auth-bottom{
+  background:rgba(42,34,27,.7) !important;
+}
+
+/* ============================================================
+   2. PROFILE · MAGAZINE COVER
+   Top cover banner with issue masthead + avatar overlapping +
+   Playfair italic display name + Dancing Script bio + paper stats
+   ============================================================ */
+.profile-view{
+  background:var(--paper) !important;
+  position:relative;
+}
+.profile-view::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:220px;
+  background:linear-gradient(135deg,var(--sakura) 0%,var(--accent) 60%,#9b87ff 100%);
+  pointer-events:none;z-index:0;
+}
+.profile-view::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:220px;
+  background:radial-gradient(circle at 20% 30%,rgba(255,255,255,.3) 0%,transparent 50%);
+  pointer-events:none;z-index:0;
+}
+.profile-view > *{position:relative;z-index:1}
+.profile-mode{
+  background:transparent !important;
+}
+.profile-titlebar{
+  background:transparent !important;
+  position:relative;z-index:2;
+}
+.profile-titlebar-center strong{
+  font-family:var(--sans) !important;
+  color:#fff !important;
+  font-weight:600 !important;
+  text-shadow:0 1px 4px rgba(0,0,0,.2);
+}
+.profile-titlebar .ghost-btn{
+  background:rgba(255,255,255,.25) !important;
+  backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.30) !important;
+  color:#fff !important;
+  border-radius:50% !important;
+}
+.ig-profile-head{
+  padding-top:14px !important;
+  background:transparent !important;
+}
+.profile-avatar-wrap{
+  position:relative;
+}
+.profile-avatar-wrap .avatar{
+  border:5px solid var(--paper) !important;
+  box-shadow:0 12px 32px rgba(0,0,0,.18) !important;
+}
+.profile-mood-bubble{
+  font-family:var(--script) !important;
+  background:var(--surface) !important;
+  border:1px solid var(--paper-hairline) !important;
+  color:var(--sakura-deep) !important;
+  box-shadow:var(--shadow-sm) !important;
+}
+.ig-profile-stats{
+  background:transparent !important;
+}
+.ig-profile-stats .stat-btn strong{
+  font-family:var(--serif) !important;
+  font-weight:700 !important;
+  color:var(--paper-ink) !important;
+  font-size:20px !important;
+  letter-spacing:-.5px;
+}
+.ig-profile-stats .stat-btn span{
+  font-family:var(--sans) !important;
+  font-size:10px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+}
+.ig-profile-meta{
+  background:transparent !important;
+  padding:0 16px !important;
+}
+.ig-name, #profileDisplayName{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  font-size:24px !important;
+  letter-spacing:-.5px !important;
+  color:var(--paper-ink) !important;
+  line-height:1.1 !important;
+}
+.ig-bio, #profileBio{
+  font-family:var(--script) !important;
+  font-size:17px !important;
+  color:var(--paper-ink-2) !important;
+  line-height:1.4 !important;
+  margin-top:6px !important;
+}
+.profile-banner-pill{
+  font-family:var(--sans) !important;
+  background:var(--paper-2) !important;
+  border:1px solid var(--paper-hairline) !important;
+  color:var(--paper-ink-2) !important;
+  border-radius:999px !important;
+  padding:6px 12px !important;
+  font-size:12px !important;
+}
+.ig-profile-actions{
+  background:transparent !important;
+  padding:0 16px !important;
+}
+.ig-action-btn{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  font-size:12px !important;
+  border-radius:14px !important;
+  border:1px solid var(--paper-hairline) !important;
+  background:var(--surface) !important;
+  color:var(--paper-ink) !important;
+}
+.ig-action-btn.dark-pill{
+  background:var(--paper-ink) !important;
+  color:var(--paper) !important;
+  border-color:var(--paper-ink) !important;
+}
+[data-theme="dark"] .ig-action-btn.dark-pill,
+:root:not([data-theme="light"]) .ig-action-btn.dark-pill{
+  background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;
+}
+.ig-discover-section{
+  background:var(--surface) !important;
+  margin:14px 16px !important;
+  border:1px solid var(--paper-hairline) !important;
+  border-radius:18px !important;
+  padding:14px !important;
+  box-shadow:0 2px 8px rgba(60,40,20,.06) !important;
+}
+.ig-discover-head{
+  font-family:var(--sans) !important;
+}
+.ig-discover-head span{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  color:var(--paper-ink) !important;
+  font-size:16px !important;
+}
+.ig-discover-see-all{
+  font-family:var(--sans) !important;
+  font-size:11px !important;
+  color:var(--accent) !important;
+  font-weight:600 !important;
+  letter-spacing:.5px;
+  text-transform:uppercase;
+}
+.ig-discover-carousel .ig-discover-card{
+  background:var(--paper-2) !important;
+  border:1px solid var(--paper-hairline) !important;
+  border-radius:14px !important;
+  box-shadow:0 2px 8px rgba(60,40,20,.06) !important;
+}
+.ig-tabs{
+  background:transparent !important;
+  border-top:1px solid var(--paper-hairline) !important;
+  margin:0 16px !important;
+}
+.ig-tab{
+  color:var(--paper-muted) !important;
+}
+.ig-tab.active{
+  color:var(--paper-ink) !important;
+  border-bottom:2px solid var(--paper-ink) !important;
+}
+[data-theme="dark"] .ig-tab.active,
+:root:not([data-theme="light"]) .ig-tab.active{border-bottom-color:var(--accent) !important}
+.ig-posts-grid{
+  background:var(--paper-hairline) !important;
+  border:1px solid var(--paper-hairline) !important;
+  border-radius:14px !important;
+  gap:2px !important;
+  margin:0 16px 16px !important;
+  overflow:hidden;
+}
+.ig-posts-grid > *{
+  border-radius:0 !important;
+  background:var(--surface) !important;
+}
+.profile-edit-header{
+  background:var(--surface) !important;
+  border-bottom:1px solid var(--paper-hairline) !important;
+}
+.profile-edit-header strong{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  color:var(--paper-ink) !important;
+}
+.profile-form .field span{
+  font-family:var(--sans) !important;
+  font-size:11px !important;
+  letter-spacing:1px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+}
+.profile-form .field input,
+.profile-form .field textarea{
+  font-family:var(--sans) !important;
+  background:var(--paper-2) !important;
+  border:1.5px solid var(--paper-hairline-2) !important;
+  border-radius:12px !important;
+  color:var(--paper-ink) !important;
+  padding:10px 14px !important;
+}
+.profile-form .field input:focus,
+.profile-form .field textarea:focus{border-color:var(--accent) !important}
+.profile-form .primary-btn{
+  background:var(--paper-ink) !important;
+  color:var(--paper) !important;
+  border-radius:14px !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+}
+[data-theme="dark"] .profile-form .primary-btn,
+:root:not([data-theme="light"]) .profile-form .primary-btn{
+  background:var(--accent) !important;color:#fff !important;
+}
+
+/* User profile sheet (other users) — same magazine treatment */
+.user-profile-sheet{
+  background:var(--paper) !important;
+}
+.user-profile-sheet .up-header{
+  background:linear-gradient(135deg,var(--sakura) 0%,var(--accent) 60%,#9b87ff 100%) !important;
+  border:0 !important;
+  color:#fff !important;
+}
+.user-profile-sheet .up-header-username{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  color:#fff !important;
+  text-shadow:0 1px 4px rgba(0,0,0,.2);
+}
+.user-profile-sheet .up-header .ghost-btn{
+  background:rgba(255,255,255,.25) !important;
+  backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.30) !important;
+  color:#fff !important;
+  border-radius:50% !important;
+}
+.user-profile-sheet .avatar.xxl{
+  border:5px solid var(--paper) !important;
+  box-shadow:0 12px 32px rgba(0,0,0,.18) !important;
+  margin-top:-30px !important;
+}
+.user-profile-sheet .ig-profile-stats .stat-btn strong{
+  font-family:var(--serif) !important;
+  font-weight:700 !important;
+  color:var(--paper-ink) !important;
+}
+.user-profile-sheet .ig-profile-stats .stat-btn span{
+  font-family:var(--sans) !important;
+  font-size:10px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+}
+.user-profile-sheet #upDisplayName{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  color:var(--paper-ink) !important;
+}
+.user-profile-sheet #upBio{
+  font-family:var(--script) !important;
+  font-size:17px !important;
+  color:var(--paper-ink-2) !important;
+}
+.user-profile-sheet .ig-action-btn{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  border-radius:14px !important;
+}
+.user-profile-sheet .ig-action-btn.primary{
+  background:var(--accent) !important;
+  color:#fff !important;
+  border:0 !important;
+}
+.user-profile-sheet .ig-action-btn:not(.primary){
+  background:var(--surface) !important;
+  border:1px solid var(--paper-hairline) !important;
+  color:var(--paper-ink) !important;
+}
+.user-profile-sheet .ig-posts-grid{
+  background:var(--paper-hairline) !important;
+  border:1px solid var(--paper-hairline) !important;
+  border-radius:14px !important;
+  gap:2px !important;
+  overflow:hidden;
+}
+.user-profile-sheet .ig-posts-grid > *{
+  border-radius:0 !important;
+  background:var(--surface) !important;
+}
+
+/* ============================================================
+   3. STORY · POLAROID FRAME
+   White polaroid frame around content + handwritten caption strip
+   + mono timestamp stamp + sakura progress bars
+   ============================================================ */
+.story-viewer .story-frame{
+  background:#0a0a0a !important;
+}
+.story-viewer .story-progress{
+  gap:4px !important;
+}
+.story-viewer .story-progress .seg{
+  background:rgba(255,255,255,.20) !important;
+  border-radius:2px !important;
+  overflow:hidden;
+}
+.story-viewer .story-progress .seg .fill{
+  background:linear-gradient(90deg,var(--sakura),var(--accent)) !important;
+  border-radius:2px !important;
+}
+.story-viewer .story-author .story-name{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  color:#fff !important;
+}
+.story-viewer .story-author .story-meta{
+  font-family:var(--sans) !important;
+  font-size:10px !important;
+  color:rgba(255,255,255,.7) !important;
+  letter-spacing:.5px !important;
+  text-transform:uppercase !important;
+}
+.story-viewer .story-author .avatar{
+  border:1.5px solid #fff !important;
+  box-shadow:0 4px 12px rgba(34,211,238,.30) !important;
+}
+.story-viewer .story-close,
+.story-viewer .story-manage{
+  background:rgba(255,255,255,.15) !important;
+  backdrop-filter:blur(20px) !important;
+  border:1px solid rgba(255,255,255,.25) !important;
+  color:#fff !important;
+  border-radius:50% !important;
+}
+
+/* The polaroid treatment — wrap the story content visually */
+.story-viewer .story-content{
+  position:relative;
+  background:#fff !important;
+  border-radius:6px !important;
+  padding:14px 14px 56px !important;
+  margin:80px 28px 200px !important;
+  box-shadow:0 30px 80px rgba(0,0,0,.50),0 0 0 1px rgba(0,0,0,.05) !important;
+  transform:rotate(-1.5deg);
+  overflow:hidden;
+}
+.story-viewer .story-content > *:not(.story-caption-overlay){
+  /* inner media stays in the frame */
+  border-radius:4px;
+  display:block;
+  margin:0 auto;
+  max-width:100%;
+  max-height:calc(100% - 50px);
+}
+/* add a caption strip area at the bottom of the polaroid */
+.story-viewer .story-content::after{
+  content:'PRIV SPACA · polaroid';
+  position:absolute;bottom:14px;left:0;right:0;
+  text-align:center;
+  font-family:var(--script);
+  font-size:15px;
+  color:#1a1a1a;
+  letter-spacing:.3px;
+}
+
+.story-viewer .story-reply-input{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-size:13px !important;
+  background:rgba(255,255,255,.12) !important;
+  backdrop-filter:blur(20px) !important;
+  border:1px solid rgba(255,255,255,.20) !important;
+  border-radius:999px !important;
+  color:#fff !important;
+  padding:11px 16px !important;
+}
+.story-viewer .story-reply-input::placeholder{
+  color:rgba(255,255,255,.7) !important;
+}
+.story-viewer .story-reply-send{
+  background:linear-gradient(135deg,var(--sakura),var(--accent)) !important;
+  color:#fff !important;
+  border:1.5px solid #fff !important;
+  border-radius:50% !important;
+  box-shadow:0 4px 14px rgba(34,211,238,.40) !important;
+}
+.story-viewer .story-quick-reacts .story-react-emoji{
+  background:rgba(255,255,255,.15) !important;
+  backdrop-filter:blur(20px) !important;
+  border:1px solid rgba(255,255,255,.25) !important;
+  border-radius:50% !important;
+  transition:transform .15s;
+}
+.story-viewer .story-quick-reacts .story-react-emoji:active{
+  transform:scale(.90);
+  background:var(--sakura) !important;
+}
+.story-viewer .story-action-icon{
+  background:rgba(255,255,255,.15) !important;
+  backdrop-filter:blur(20px) !important;
+  border:1px solid rgba(255,255,255,.25) !important;
+  border-radius:50% !important;
+  color:#fff !important;
+}
+.story-viewer .story-seen-by{
+  background:rgba(255,255,255,.15) !important;
+  backdrop-filter:blur(20px);
+  border:1px solid rgba(255,255,255,.25) !important;
+  color:#fff !important;
+  border-radius:999px !important;
+  font-family:var(--sans) !important;
+  font-size:11px !important;
+}
+
+/* ============================================================
+   4. NOTIFICATIONS · TIMELINE
+   Vertical timeline with day headers in script font + sakura nodes
+   + unread nodes glow accent + filter chips
+   ============================================================ */
+#notifSheet .sheet-card{
+  background:var(--paper) !important;
+  border:1px solid var(--paper-hairline) !important;
+  border-radius:20px !important;
+  box-shadow:0 22px 60px rgba(60,40,20,.18) !important;
+}
+#notifSheet .sheet-head{
+  border-bottom:1px solid var(--paper-hairline) !important;
+}
+#notifSheet .sheet-head h3{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  color:var(--paper-ink) !important;
+  font-size:22px !important;
+  letter-spacing:-.3px;
+}
+#notifSheet .sheet-head .ghost-btn{
+  background:var(--paper-2) !important;
+  border:1px solid var(--paper-hairline) !important;
+  color:var(--paper-ink) !important;
+  border-radius:50% !important;
+}
+#notifSheet .sheet-body{
+  position:relative;
+  padding:14px 16px !important;
+}
+/* the vertical timeline line */
+#notifSheet .sheet-body::before{
+  content:'';
+  position:absolute;
+  left:38px;
+  top:14px;
+  bottom:14px;
+  width:1px;
+  background:linear-gradient(180deg,transparent,var(--paper-hairline-2),transparent);
+}
+#notifSheet .notif-list{
+  list-style:none;
+  padding:0;
+  margin:0;
+  position:relative;
+}
+#notifSheet .notif-list li{
+  position:relative;
+  padding:8px 0 8px 56px !important;
+  margin:0 !important;
+  border:0 !important;
+  background:transparent !important;
+  border-radius:0 !important;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-family:var(--sans) !important;
+}
+/* the timeline node */
+#notifSheet .notif-list li::before{
+  content:'';
+  position:absolute;
+  left:34px;
+  top:14px;
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  background:var(--surface);
+  border:2px solid var(--paper-hairline-2);
+}
+#notifSheet .notif-list li.unread::before{
+  background:var(--accent);
+  border-color:var(--accent);
+  box-shadow:0 0 10px var(--accent);
+}
+/* Day header rows inside the timeline (rendered as li with data attr or class) */
+#notifSheet .notif-list li.day-header{
+  padding:14px 0 6px 56px !important;
+  font-family:var(--script) !important;
+  font-size:18px !important;
+  color:var(--sakura-deep) !important;
+  font-weight:700 !important;
+  letter-spacing:0;
+  text-transform:none;
+}
+#notifSheet .notif-list li.day-header::before{
+  background:var(--sakura);
+  border:0;
+  width:9px;height:9px;
+  top:18px;
+  left:32px;
+  box-shadow:0 0 0 3px var(--paper);
+}
+#notifSheet .notif-list li .notif-av,
+#notifSheet .notif-list li .avatar{
+  width:36px;height:36px;
+  border-radius:50%;
+  background:linear-gradient(135deg,var(--sakura),var(--accent));
+  flex-shrink:0;
+  box-shadow:0 4px 12px rgba(34,211,238,.20);
+}
+#notifSheet .notif-list li .notif-body,
+#notifSheet .notif-list li .body{
+  flex:1;
+  min-width:0;
+  line-height:1.3;
+}
+#notifSheet .notif-list li .notif-text,
+#notifSheet .notif-list li .txt{
+  font-family:var(--sans) !important;
+  font-size:12px !important;
+  color:var(--paper-ink-2) !important;
+  line-height:1.45 !important;
+}
+#notifSheet .notif-list li strong,
+#notifSheet .notif-list li .nm{
+  font-weight:600 !important;
+  color:var(--paper-ink) !important;
+  font-family:var(--sans) !important;
+}
+#notifSheet .notif-list li .notif-meta,
+#notifSheet .notif-list li .meta{
+  margin-top:2px;
+}
+#notifSheet .notif-list li .notif-ts,
+#notifSheet .notif-list li .ts{
+  font-family:var(--sans) !important;
+  font-size:9px !important;
+  letter-spacing:.5px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+}
+#notifSheet .notif-list li .notif-thumb,
+#notifSheet .notif-list li .post-thumb{
+  width:32px;height:32px;
+  border-radius:8px;
+  background:linear-gradient(135deg,#fde68a,#fb923c);
+  flex-shrink:0;
+}
+#notifSheet .notif-list li .follow-btn,
+#notifSheet .notif-list li .follow-cta{
+  padding:5px 12px !important;
+  border-radius:999px !important;
+  background:linear-gradient(135deg,var(--sakura),var(--accent)) !important;
+  color:#fff !important;
+  font-family:var(--sans) !important;
+  font-size:10px !important;
+  font-weight:600 !important;
+  border:0 !important;
+  letter-spacing:.5px;
+  text-transform:uppercase;
+  box-shadow:0 4px 12px rgba(34,211,238,.30);
+}
+#notifSheet .notif-list li .follow-btn.following,
+#notifSheet .notif-list li .follow-cta.following{
+  background:var(--paper-2) !important;
+  border:1px solid var(--paper-hairline) !important;
+  color:var(--paper-muted) !important;
+  box-shadow:none !important;
+}
+
+/* ============================================================
+   5. PROFILE CARD · LETTERPRESS
+   Cream card, debossed title strip, tilted -2°, ink-on-paper type,
+   mono ID strip, sakura mood badge, hard offset shadow
+   ============================================================ */
+#profileCardSheet .profile-card-stage{
+  background:linear-gradient(135deg,var(--paper-2),var(--paper)) !important;
+  position:relative;
+  overflow:hidden;
+  padding:30px 20px !important;
+}
+#profileCardSheet .profile-card-stage::before{
+  content:'';
+  position:absolute;
+  top:-50px;left:-50px;
+  width:200px;height:200px;
+  background:radial-gradient(circle,var(--sakura),transparent 70%);
+  opacity:.25;
+  pointer-events:none;
+}
+#profileCardSheet .profile-card-stage::after{
+  content:'';
+  position:absolute;
+  bottom:-50px;right:-50px;
+  width:200px;height:200px;
+  background:radial-gradient(circle,var(--accent),transparent 70%);
+  opacity:.15;
+  pointer-events:none;
+}
+#profileCardSheet .profile-card-close{
+  background:var(--surface) !important;
+  border:1px solid var(--paper-hairline) !important;
+  color:var(--paper-ink) !important;
+  border-radius:50% !important;
+  box-shadow:0 4px 12px rgba(60,40,20,.10) !important;
+  z-index:10;
+}
+#profileCardSheet .profile-card-stage > div:not(.profile-card-close){
+  /* the actual card — apply letterpress treatment */
+  background:#fbf7f2 !important;
+  border:1.5px solid var(--paper-ink) !important;
+  border-radius:16px !important;
+  box-shadow:6px 6px 0 var(--paper-ink),0 30px 60px rgba(60,40,20,.25) !important;
+  transform:rotate(-1.5deg);
+  position:relative;
+  overflow:hidden;
+  padding:0 !important;
+  margin:0 auto;
+  max-width:340px;
+}
+[data-theme="dark"] #profileCardSheet .profile-card-stage > div:not(.profile-card-close),
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage > div:not(.profile-card-close){
+  background:#2a221b !important;
+  border-color:var(--paper-ink) !important;
+  box-shadow:6px 6px 0 #000,0 30px 60px rgba(0,0,0,.5) !important;
+  color:var(--paper-ink) !important;
+}
+/* debossed title strip at top */
+#profileCardSheet .profile-card-stage > div:not(.profile-card-close)::before{
+  content:'PRIV SPACA · MEMBER ID';
+  display:block;
+  padding:8px 16px;
+  background:var(--paper-ink);
+  color:var(--paper);
+  font-family:var(--sans);
+  font-size:9px;
+  letter-spacing:2.5px;
+  text-transform:uppercase;
+  font-weight:600;
+}
+/* Hairline divider under title strip */
+#profileCardSheet .profile-card-stage > div:not(.profile-card-close)::after{
+  content:'';
+  display:block;
+  height:1px;
+  background:linear-gradient(90deg,transparent,var(--paper-hairline-2),transparent);
+  margin:0 16px;
+}
+
+/* Typography inside the profile card */
+#profileCardSheet .profile-card-stage .avatar{
+  border:2.5px solid var(--paper-ink) !important;
+  box-shadow:0 8px 20px rgba(251,146,60,.30),inset 0 2px 4px rgba(255,255,255,.30) !important;
+  margin:24px auto 12px !important;
+}
+#profileCardSheet .profile-card-stage h1,
+#profileCardSheet .profile-card-stage h2,
+#profileCardSheet .profile-card-stage h3,
+#profileCardSheet .profile-card-stage .name,
+#profileCardSheet .profile-card-stage .display-name,
+#profileCardSheet .profile-card-stage [class*="name"]:not(.avatar):not(.strip){
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  color:var(--paper-ink) !important;
+  letter-spacing:-.5px !important;
+  text-align:center !important;
+  text-shadow:0 1px 0 rgba(255,255,255,.6);
+}
+[data-theme="dark"] #profileCardSheet .profile-card-stage h1,
+[data-theme="dark"] #profileCardSheet .profile-card-stage h2,
+[data-theme="dark"] #profileCardSheet .profile-card-stage h3,
+[data-theme="dark"] #profileCardSheet .profile-card-stage .name,
+[data-theme="dark"] #profileCardSheet .profile-card-stage .display-name,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage [class*="name"]:not(.avatar):not(.strip){
+  text-shadow:none;
+}
+#profileCardSheet .profile-card-stage .handle,
+#profileCardSheet .profile-card-stage [class*="handle"]{
+  font-family:var(--sans) !important;
+  font-size:11px !important;
+  color:var(--accent) !important;
+  text-align:center !important;
+  letter-spacing:1px !important;
+  text-transform:uppercase !important;
+  margin-top:4px !important;
+}
+#profileCardSheet .profile-card-stage .bio,
+#profileCardSheet .profile-card-stage [class*="bio"]{
+  font-family:var(--script) !important;
+  font-size:16px !important;
+  color:var(--paper-ink-2) !important;
+  text-align:center !important;
+  line-height:1.4 !important;
+  margin-top:12px !important;
+  padding:0 16px !important;
+}
+#profileCardSheet .profile-card-stage .stats,
+#profileCardSheet .profile-card-stage [class*="stats"]{
+  display:flex !important;
+  margin:18px 16px 0 !important;
+  padding:14px 0 !important;
+  border-top:1px solid var(--paper-hairline) !important;
+  border-bottom:1px solid var(--paper-hairline) !important;
+}
+#profileCardSheet .profile-card-stage .stats > *,
+#profileCardSheet .profile-card-stage [class*="stats"] > *{
+  flex:1;
+  text-align:center;
+  position:relative;
+}
+#profileCardSheet .profile-card-stage .stats > *:not(:last-child)::after,
+#profileCardSheet .profile-card-stage [class*="stats"] > *:not(:last-child)::after{
+  content:'';
+  position:absolute;
+  right:0;
+  top:20%;bottom:20%;
+  width:1px;
+  background:var(--paper-hairline);
+}
+#profileCardSheet .profile-card-stage .stats strong,
+#profileCardSheet .profile-card-stage [class*="stats"] strong,
+#profileCardSheet .profile-card-stage .stats .num{
+  font-family:var(--serif) !important;
+  font-weight:700 !important;
+  font-size:18px !important;
+  color:var(--paper-ink) !important;
+  display:block;
+}
+#profileCardSheet .profile-card-stage .stats span,
+#profileCardSheet .profile-card-stage [class*="stats"] span,
+#profileCardSheet .profile-card-stage .stats .lbl{
+  font-family:var(--sans) !important;
+  font-size:9px !important;
+  letter-spacing:1px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+  margin-top:2px;
+  display:block;
+}
+#profileCardSheet .profile-card-stage button,
+#profileCardSheet .profile-card-stage .btn,
+#profileCardSheet .profile-card-stage [class*="action"]{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  font-size:12px !important;
+  letter-spacing:.5px !important;
+  text-transform:uppercase !important;
+  border-radius:10px !important;
+  border:1.5px solid var(--paper-ink) !important;
+  padding:11px !important;
+  background:#fbf7f2 !important;
+  color:var(--paper-ink) !important;
+  box-shadow:3px 3px 0 var(--paper-ink) !important;
+  transition:transform .08s !important;
+}
+#profileCardSheet .profile-card-stage button:active,
+#profileCardSheet .profile-card-stage .btn:active,
+#profileCardSheet .profile-card-stage [class*="action"]:active{
+  transform:translate(2px,2px) !important;
+  box-shadow:1px 1px 0 var(--paper-ink) !important;
+}
+#profileCardSheet .profile-card-stage button.primary,
+#profileCardSheet .profile-card-stage .btn.primary,
+#profileCardSheet .profile-card-stage [class*="action"].primary{
+  background:var(--paper-ink) !important;
+  color:var(--paper) !important;
+}
+[data-theme="dark"] #profileCardSheet .profile-card-stage button,
+[data-theme="dark"] #profileCardSheet .profile-card-stage .btn,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage button,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage .btn{
+  background:#2a221b !important;
+  border-color:var(--paper-ink) !important;
+  color:var(--paper-ink) !important;
+  box-shadow:3px 3px 0 #000 !important;
+}
+[data-theme="dark"] #profileCardSheet .profile-card-stage button.primary,
+[data-theme="dark"] #profileCardSheet .profile-card-stage .btn.primary,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage button.primary,
+:root:not([data-theme="light"]) #profileCardSheet .profile-card-stage .btn.primary{
+  background:var(--paper-ink) !important;
+  color:var(--paper) !important;
+}
+/* Mood badge (sakura script) */
+#profileCardSheet .profile-card-stage .mood,
+#profileCardSheet .profile-card-stage [class*="mood"]{
+  font-family:var(--script) !important;
+  font-size:12px !important;
+  color:var(--sakura-deep) !important;
+  background:#fbf7f2 !important;
+  border:1.5px solid var(--paper-ink) !important;
+  padding:3px 10px !important;
+  border-radius:0 !important;
+  box-shadow:2px 2px 0 var(--paper-ink) !important;
+  display:inline-block !important;
+}
+/* ID strip / mono labels at bottom of card */
+#profileCardSheet .profile-card-stage .id,
+#profileCardSheet .profile-card-stage .strip,
+#profileCardSheet .profile-card-stage [class*="id-strip"],
+#profileCardSheet .profile-card-stage [class*="card-strip"]{
+  font-family:var(--sans) !important;
+  font-size:9px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--paper-muted) !important;
+  background:var(--paper-2) !important;
+  border-top:1.5px solid var(--paper-ink) !important;
+  padding:8px 16px !important;
+  display:flex !important;
+  justify-content:space-between !important;
+  margin:14px -0px 0 !important;
+}
+#profileCardSheet .profile-card-stage .id strong,
+#profileCardSheet .profile-card-stage .strip strong{
+  color:var(--paper-ink) !important;
+  font-weight:700 !important;
+}
+
+/* ============================================================
+   END Sakura Editorial Selective Page Overrides (v94.1)
+   ============================================================ */
