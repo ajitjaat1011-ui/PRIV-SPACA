@@ -5627,18 +5627,32 @@ body{
   background:radial-gradient(circle,var(--accent) 0%,transparent 70%);
   opacity:.18;pointer-events:none;
 }
+/* FORCE LIGHT MODE on auth page — the Sakura Editorial design is a
+   cream-paper look. Dark mode tokens would break the design. Override
+   the dark-theme variants so the auth page always renders light. */
 [data-theme="dark"] .auth-shell,
 :root:not([data-theme="light"]) .auth-shell{
-  background:linear-gradient(180deg,#0d0a08 0%,#1a1612 100%) !important;
+  background:linear-gradient(180deg,#fbf7f2 0%,#f5efe2 100%) !important;
+  --paper:#fbf7f2;
+  --paper-2:#f5efe2;
+  --paper-ink:#1a1a1a;
+  --paper-ink-2:#3d3a35;
+  --paper-muted:#7a7268;
+  --paper-hairline:#e8dfd3;
+  --paper-hairline-2:#d8cdbb;
+  --sakura:#f4a8b8;
+  --sakura-deep:#e8869c;
+  --surface:#ffffff;
+  --accent:#00a2ff;
 }
 [data-theme="dark"] .auth-shell::before,
-:root:not([data-theme="light"]) .auth-shell::before{opacity:.25}
+:root:not([data-theme="light"]) .auth-shell::before{opacity:.35}
 [data-theme="dark"] .auth-shell::after,
-:root:not([data-theme="light"]) .auth-shell::after{opacity:.12}
+:root:not([data-theme="light"]) .auth-shell::after{opacity:.18}
 
+/* Hide the back-arrow circle — design has no top-left circular button */
 .auth-topbar{
-  background:transparent !important;
-  border:0 !important;
+  display:none !important;
 }
 .auth-top-back{
   background:rgba(255,255,255,.6) !important;
@@ -5762,7 +5776,7 @@ body{
   border-bottom:1.5px solid var(--paper-hairline-2) !important;
   border-radius:0 !important;
   padding:8px 0 !important;
-  color:var(--paper-ink) !important;
+  color:#1a1a1a !important;
   font-size:15px !important;
   transition:border-color .2s;
 }
@@ -5774,6 +5788,12 @@ body{
 .auth-panel[data-auth-panel="login"] .field.ig-pill input::placeholder{
   color:var(--paper-muted) !important;
   opacity:.6;
+}
+/* Force dark ink text even in dark mode (form card is always white) */
+[data-theme="dark"] .auth-panel[data-auth-panel="login"] .field.ig-pill input,
+:root:not([data-theme="light"]) .auth-panel[data-auth-panel="login"] .field.ig-pill input{
+  color:#1a1a1a !important;
+  border-bottom-color:var(--paper-hairline-2) !important;
 }
 
 /* Terms checkbox row (injected by JS) */
@@ -5805,17 +5825,18 @@ body{
 }
 
 .auth-form{
-  background:var(--surface) !important;
+  background:#ffffff !important;
   border:1px solid var(--paper-hairline) !important;
   border-radius:20px !important;
   padding:24px 20px !important;
   box-shadow:0 8px 24px rgba(60,40,20,.10),inset 0 1px 0 rgba(255,255,255,.6) !important;
 }
+/* Force light form card even in dark mode */
 [data-theme="dark"] .auth-form,
 :root:not([data-theme="light"]) .auth-form{
-  background:var(--surface) !important;
+  background:#ffffff !important;
   border-color:var(--paper-hairline) !important;
-  box-shadow:0 8px 24px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04) !important;
+  box-shadow:0 8px 24px rgba(60,40,20,.10),inset 0 1px 0 rgba(255,255,255,.6) !important;
 }
 
 .field.ig-pill{
@@ -5866,12 +5887,12 @@ body{
 .ig-primary:active{transform:scale(.98)}
 [data-theme="dark"] .ig-primary,
 :root:not([data-theme="light"]) .ig-primary{
-  background:var(--accent) !important;
+  background:var(--paper-ink) !important;
   color:#fff !important;
-  box-shadow:0 6px 18px rgba(0,162,255,.35) !important;
+  box-shadow:0 6px 18px rgba(26,26,26,.20) !important;
 }
 
-/* Login submit button — pill-shaped "Enter garden →" */
+/* Login submit button — pill-shaped "Enter priv →" */
 .auth-panel[data-auth-panel="login"] .ig-primary{
   border-radius:24px !important;
   padding:14px 18px !important;
@@ -5881,6 +5902,13 @@ body{
   align-items:center !important;
   justify-content:center !important;
   gap:8px !important;
+  background:#1a1a1a !important;
+  color:#fff !important;
+}
+[data-theme="dark"] .auth-panel[data-auth-panel="login"] .ig-primary,
+:root:not([data-theme="light"]) .auth-panel[data-auth-panel="login"] .ig-primary{
+  background:#1a1a1a !important;
+  color:#fff !important;
 }
 
 .ig-outline{

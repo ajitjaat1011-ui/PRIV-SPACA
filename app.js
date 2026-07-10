@@ -865,7 +865,7 @@ function bindAuth() {
 
       // 4. Change submit button text
       const submitBtn = loginForm.querySelector('button[type="submit"]');
-      if (submitBtn) submitBtn.textContent = 'Enter garden →';
+      if (submitBtn) submitBtn.textContent = 'Enter priv →';
 
       // 5. Hide "Forgotten password?" link
       const resetLink = loginForm.querySelector('[data-auth-step="reset"]');
