@@ -1873,6 +1873,69 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
  * Requires GITHUB_PAT with repo scope. Falls back to returning the data URL itself
  * (which works but bloats DB) if upload fails.
  */
+
+const MEDIA_MIME_EXT = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+};
+const MEDIA_MAX_BYTES = 24 * 1024 * 1024;
+function _mediaKindFromMime(mime) {
+  mime = String(mime || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  return '';
+}
+
+app.post('/api/upload-media', authMiddleware, async (req, res) => {
+  try {
+    const { dataUrl, mimeType, name } = req.body || {};
+    if (!dataUrl || typeof dataUrl !== 'string') return res.status(400).json({ error: 'dataUrl required' });
+    const m = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Invalid media payload' });
+    const mime = String(mimeType || m[1] || '').toLowerCase();
+    const ext = MEDIA_MIME_EXT[mime];
+    const kind = _mediaKindFromMime(mime);
+    if (!ext || !kind) return res.status(415).json({ error: 'Unsupported media type' });
+    const buf = Buffer.from(m[2], 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'Empty media' });
+    if (buf.length > MEDIA_MAX_BYTES) return res.status(413).json({ error: 'Media too large (24MB max)' });
+
+    // Primary durable host is still GitHub Contents where configured. R2/Images is the
+    // desired next hop, but this Node harness has no binding; keep the route contract
+    // generic so production can switch storage without frontend changes.
+    if (repoStorageConfigured()) {
+      const safeName = String(name || 'media').replace(/[^a-z0-9_.-]+/gi, '-').slice(-64) || ('media.' + ext);
+      const path = `media/${Date.now()}-${uid('m')}-${safeName.replace(/\.[^.]+$/, '')}.${ext}`;
+      const url = `https://api.github.com/repos/${GH_REPO}/contents/${path}`;
+      const body = { message: `upload media ${path}`, content: buf.toString('base64'), branch: GH_BRANCH };
+      const r = await fetchFn(url, {
+        method: 'PUT',
+        headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'PRIV-SPACA' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        console.error('[upload-media] GitHub write failed', r.status, txt.slice(0, 160));
+        return res.status(502).json({ error: 'Media storage failed' });
+      }
+      const rawUrl = `https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/${path}`;
+      return res.json({ url: rawUrl, mediaUrl: rawUrl, type: kind, mimeType: mime, bytes: buf.length, storage: 'github-media' });
+    }
+
+    // Local/dev fallback: return the original data URL so stories still work in
+    // the in-memory dev harness without GitHub secrets.
+    return res.json({ url: dataUrl, mediaUrl: dataUrl, type: kind, mimeType: mime, bytes: buf.length, storage: 'inline-dev' });
+  } catch (e) {
+    console.error('[upload-media]', e && e.stack || e);
+    return res.status(500).json({ error: 'Upload failed' });
+  }
+});
+
 app.post('/api/upload-photo', authMiddleware, async (req, res) => {
   try {
     const { dataUrl, kind } = req.body || {};
@@ -2962,39 +3025,6 @@ app.post('/api/posts/like', authMiddleware, async (req, res) => {
   }
   await saveDatabase(db, false);
   res.json({ liked, likeCount: post.likes.length });
-});
-
-app.get('/api/rtc/signals', authMiddleware, async (req, res) => {
-  try {
-    const since = Number(req.query.since || 0);
-    const now = nowMs();
-    if (isTursoConfigured()) {
-      const rs = await tursoClient().execute({
-        sql: `SELECT data FROM ps_events
-              WHERE user_id = ? AND kind = 'rtc_signal' AND created_at > ?
-              ORDER BY created_at ASC
-              LIMIT 100`,
-        args: [req.userId, since > 0 ? since : now - (2 * 60 * 1000)],
-      });
-      const signals = (rs.rows || []).map((r) => {
-        try {
-          const evt = typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
-          return evt && evt.data ? evt.data : null;
-        } catch (_) {
-          return null;
-        }
-      }).filter(Boolean);
-      return res.json({ signals, now });
-    }
-    const db = await fetchDatabase();
-    db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter((s) => Number(s.expiresAt || 0) > now) : [];
-    const signals = db.rtcSignals
-      .filter((s) => s.targetId === req.userId && (!since || Number(s.createdAt || 0) > since))
-      .map((s) => ({ fromId: s.fromId, author: s.author, signal: s.signal, createdAt: s.createdAt, id: s.id }));
-    return res.json({ signals, now });
-  } catch (e) {
-    return res.status(500).json({ error: 'Failed to fetch signals' });
-  }
 });
 
 app.post('/api/rtc/signal', authMiddleware, async (req, res) => {
