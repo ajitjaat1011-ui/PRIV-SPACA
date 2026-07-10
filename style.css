@@ -5670,28 +5670,40 @@ body{
 
 .auth-main{
   position:relative;z-index:1;
-  padding-top:60px !important;
-  justify-content:center;
+  padding-top:40px !important;
+  justify-content:flex-start;
 }
 
+/* Brand wordmark — clean editorial text, no rainbow gradient */
 .auth-icon-wrap{
   flex-direction:column;
-  gap:14px;
-  margin-bottom:18px !important;
+  gap:0;
+  margin:0 0 28px !important;
+  align-items:center;
 }
 .auth-icon-wrap .logo-badge{
-  box-shadow:0 12px 32px rgba(255,94,156,.30),0 0 60px rgba(195,75,255,.20);
+  display:none !important;
 }
 .auth-icon-wrap .brand-name{
   font-family:var(--serif) !important;
   font-style:italic !important;
   font-weight:700 !important;
   letter-spacing:-.5px !important;
-  background:linear-gradient(120deg,#ff7ab8 0%,#ff3d77 20%,#c33dff 45%,#7c5cff 70%,#ff7ab8 100%) !important;
-  background-size:300% 300% !important;
-  -webkit-background-clip:text !important;background-clip:text !important;
-  -webkit-text-fill-color:transparent !important;
-  animation:brandShift 5s ease-in-out infinite,text-anim .6s ease both !important;
+  font-size:28px !important;
+  background:none !important;
+  -webkit-text-fill-color:var(--paper-ink) !important;
+  color:var(--paper-ink) !important;
+  animation:none !important;
+  filter:none !important;
+  margin:0 !important;
+}
+.auth-icon-wrap .brand-name::before{
+  content:none !important;
+}
+[data-theme="dark"] .auth-icon-wrap .brand-name,
+:root:not([data-theme="light"]) .auth-icon-wrap .brand-name{
+  color:#1a1a1a !important;
+  -webkit-text-fill-color:#1a1a1a !important;
 }
 
 /* Magazine masthead — eyebrow / title / sub — injected via pseudo-elements */
@@ -5831,6 +5843,10 @@ body{
   padding:24px 20px !important;
   box-shadow:0 8px 24px rgba(60,40,20,.10),inset 0 1px 0 rgba(255,255,255,.6) !important;
 }
+/* Increase gap between form fields for the login editorial layout */
+.auth-panel[data-auth-panel="login"] .auth-form{
+  gap:0 !important;
+}
 /* Force light form card even in dark mode */
 [data-theme="dark"] .auth-form,
 :root:not([data-theme="light"]) .auth-form{
@@ -5909,6 +5925,25 @@ body{
 :root:not([data-theme="light"]) .auth-panel[data-auth-panel="login"] .ig-primary{
   background:#1a1a1a !important;
   color:#fff !important;
+}
+
+/* "Forgot password?" link — small accent-blue text below the button */
+.auth-panel[data-auth-panel="login"] .auth-forgot-link{
+  display:block !important;
+  background:transparent !important;
+  border:0 !important;
+  padding:0 !important;
+  margin:14px 0 4px !important;
+  text-align:center !important;
+  font-family:var(--sans) !important;
+  font-size:12px !important;
+  font-weight:600 !important;
+  color:var(--accent) !important;
+  text-decoration:none !important;
+  cursor:pointer !important;
+}
+.auth-panel[data-auth-panel="login"] .auth-forgot-link:hover{
+  text-decoration:underline !important;
 }
 
 .ig-outline{
