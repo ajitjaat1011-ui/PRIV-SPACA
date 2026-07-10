@@ -1,22 +1,23 @@
-/* ===== PRIV SPACA — Instagram-grade Sky Blue UI ===== */
+/* ===== PRIV SPACA — Sakura Editorial UI ===== */
+/* Cream paper + Playfair italic + sakura/matcha/wax palette · v94 */
 :root, [data-theme="light"]{
-  --bg:#f7f9fc;
+  --bg:#fbf7f2;
   --bg-2:#ffffff;
-  --bg-soft:#f1f5f9;
+  --bg-soft:#f5efe2;
   --surface:#ffffff;
-  --surface-2:#eef4f8;
-  --border:#e5edf5;
-  --line:#e9eef5;
-  --line-2:#dce5ef;
-  --text:#111827;
-  --text-2:#334155;
-  --muted:#7b8794;
-  --muted-2:#a8b3bf;
-  --shadow-xs:0 1px 2px rgba(15,23,42,.04);
-  --shadow-sm:0 2px 8px rgba(15,23,42,.06);
-  --shadow:0 8px 24px rgba(15,23,42,.08);
-  --shadow-lg:0 22px 60px rgba(15,23,42,.18);
-  --radius:18px;
+  --surface-2:#f5efe2;
+  --border:#e8dfd3;
+  --line:#e8dfd3;
+  --line-2:#d8cdbb;
+  --text:#1a1a1a;
+  --text-2:#3d3a35;
+  --muted:#7a7268;
+  --muted-2:#a89e91;
+  --shadow-xs:0 1px 2px rgba(60,40,20,.04);
+  --shadow-sm:0 2px 8px rgba(60,40,20,.06);
+  --shadow:0 8px 24px rgba(60,40,20,.10);
+  --shadow-lg:0 22px 60px rgba(60,40,20,.18);
+  --radius:20px;
   --radius-sm:14px;
   --accent:#00a2ff;
   --accent-2:#0089d9;
@@ -24,8 +25,8 @@
   --accent-grad:linear-gradient(135deg, color-mix(in srgb, var(--accent) 60%, #ffffff 0%) 0%, color-mix(in srgb, var(--accent) 100%, #003a66 25%) 100%);
   --accent-soft:rgba(var(--accent-rgb),.10);
   --accent-softer:rgba(var(--accent-rgb),.05);
-  --green:#23a55a;
-  --red:#ed4956;
+  --green:#7a9b76;
+  --red:#c0392b;
   --pink-grad:linear-gradient(45deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5);
   --radius-xs:10px;
   --bubble-radius:24px;
@@ -34,49 +35,74 @@
   --liquid-icon-bg:rgba(255,255,255,.68);
   --liquid-icon-border:rgba(255,255,255,.82);
   --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.9),0 8px 20px rgba(15,35,60,.10);
+  /* Sakura Editorial palette additions */
+  --sakura:#f4a8b8;
+  --sakura-deep:#e8869c;
+  --matcha:#7a9b76;
+  --wax:#c0392b;
+  --gold:#d4a017;
+  --ink:#1a1a1a;
+  --paper:#fbf7f2;
+  --serif:'Playfair Display', Georgia, serif;
+  --script:'Dancing Script', cursive;
 }
 [data-theme="dark"]{
-  --bg:#0c1118;
-  --bg-2:#111827;
-  --bg-soft:#182131;
-  --surface:#111827;
-  --surface-2:#1c2636;
-  --border:#243245;
-  --line:#202b3b;
-  --line-2:#2c3a4d;
-  --text:#f8fafc;
-  --text-2:#dbe4ee;
-  --muted:#98a6b6;
-  --muted-2:#657385;
+  --bg:#1a1612;
+  --bg-2:#221c16;
+  --bg-soft:#2a221b;
+  --surface:#2a221b;
+  --surface-2:#332921;
+  --border:#3a3026;
+  --line:#3a3026;
+  --line-2:#4a3e30;
+  --text:#f5efe6;
+  --text-2:#d8cfc0;
+  --muted:#a89e91;
+  --muted-2:#6f6557;
   --shadow-xs:0 1px 2px rgba(0,0,0,.4);
-  --shadow-sm:0 1px 3px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.3);
-  --shadow:0 4px 16px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
-  --shadow-lg:0 24px 60px rgba(0,0,0,.6);
+  --shadow-sm:0 2px 8px rgba(0,0,0,.5);
+  --shadow:0 8px 24px rgba(0,0,0,.55);
+  --shadow-lg:0 24px 60px rgba(0,0,0,.7);
   --liquid-icon-bg:rgba(255,255,255,.075);
   --liquid-icon-border:rgba(255,255,255,.12);
   --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.08),0 8px 20px rgba(0,0,0,.24);
+  /* Sakura Editorial dark variants */
+  --sakura:#f4a8b8;
+  --sakura-deep:#e8869c;
+  --matcha:#9bc097;
+  --wax:#e85a4a;
+  --gold:#e8b830;
+  --ink:#f5efe6;
+  --paper:#1a1612;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
-    --bg:#0c1118;
-    --bg-2:#111827;
-    --bg-soft:#182131;
-    --surface:#111827;
-    --surface-2:#1c2636;
-    --border:#243245;
-    --line:#202b3b;
-    --line-2:#2c3a4d;
-    --text:#f8fafc;
-    --text-2:#dbe4ee;
-    --muted:#98a6b6;
-    --muted-2:#657385;
+    --bg:#1a1612;
+    --bg-2:#221c16;
+    --bg-soft:#2a221b;
+    --surface:#2a221b;
+    --surface-2:#332921;
+    --border:#3a3026;
+    --line:#3a3026;
+    --line-2:#4a3e30;
+    --text:#f5efe6;
+    --text-2:#d8cfc0;
+    --muted:#a89e91;
+    --muted-2:#6f6557;
     --shadow-xs:0 1px 2px rgba(0,0,0,.4);
-    --shadow-sm:0 1px 3px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.3);
-    --shadow:0 4px 16px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
-    --shadow-lg:0 24px 60px rgba(0,0,0,.6);
+    --shadow-sm:0 2px 8px rgba(0,0,0,.5);
+    --shadow:0 8px 24px rgba(0,0,0,.55);
+    --shadow-lg:0 24px 60px rgba(0,0,0,.7);
     --liquid-icon-bg:rgba(255,255,255,.075);
     --liquid-icon-border:rgba(255,255,255,.12);
     --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.08),0 8px 20px rgba(0,0,0,.24);
+    --sakura:#f4a8b8;
+    --sakura-deep:#e8869c;
+    --matcha:#9bc097;
+    --wax:#e85a4a;
+    --gold:#e8b830;
+    --ink:#f5efe6;
+    --paper:#1a1612;
   }
 }
 
@@ -3050,13 +3076,14 @@ img{user-select:none;-webkit-user-drag:none}
 
 /* ===== Splash / loader ===== */
 .splash{
-  position:fixed;inset:0;background:var(--bg-2);z-index:200;
+  position:fixed;inset:0;background:radial-gradient(ellipse at center,#ffffff 0%,var(--bg) 60%,var(--bg-soft) 100%);z-index:200;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
   animation:fade-in .2s ease;
 }
 .splash.fade-out{animation:fade-in .3s ease reverse;pointer-events:none}
-.splash .splash-logo{width:78px;height:78px;border-radius:22px;background:var(--accent-grad);display:flex;align-items:center;justify-content:center;box-shadow:0 16px 40px rgba(0,162,255,.32);animation:logo-pulse 2s ease-in-out infinite}
-.splash .splash-name{font-size:22px;font-weight:800;letter-spacing:.3px;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:text-anim .6s ease both}
+.splash .splash-logo{width:84px;height:84px;border-radius:24px;background:var(--accent-grad);display:flex;align-items:center;justify-content:center;box-shadow:0 16px 40px rgba(0,162,255,.32),0 0 80px rgba(244,168,184,.30);animation:logo-pulse 2.4s ease-in-out infinite}
+.splash .splash-name{font-family:var(--serif);font-style:italic;font-weight:700;font-size:30px;letter-spacing:-.5px;background:linear-gradient(120deg,#ff7ab8 0%,#ff3d77 20%,#c33dff 45%,#7c5cff 70%,#ff7ab8 100%);background-size:300% 300%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:brandShift 5s ease-in-out infinite,text-anim .6s ease both}
+.splash .splash-tagline{font-family:var(--script);font-size:18px;color:var(--sakura-deep);margin-top:-8px;animation:fade-in .8s ease both;animation-delay:.3s}
 .splash .spinner{width:24px;height:24px;border:3px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;animation:spinner .8s linear infinite}
 
 /* Responsive */
@@ -5546,3 +5573,741 @@ body{
   .feed-view::before,.feed-view::after{animation:none}
   .post-card{animation:none !important}
 }
+
+/* ============================================================
+   SAKURA EDITORIAL OVERRIDES · v94
+   Adds Playfair italic headlines, Dancing Script accents,
+   paper-card styling, wax-seal avatars, letter bubbles, magazine
+   layout — applied on top of existing class names so JS keeps working.
+   Topbar + bottom-nav intentionally NOT touched.
+   ============================================================ */
+
+/* --- Brand wordmark in topbar: italic Playfair (keep brand color) --- */
+.brand-wordmark{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  letter-spacing:-.3px !important;
+}
+
+/* --- Splash: cleaner (petals already removed from HTML) --- */
+.splash .splash-name{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  font-size:32px !important;
+  letter-spacing:-.5px !important;
+  background:linear-gradient(120deg,#ff7ab8 0%,#ff3d77 20%,#c33dff 45%,#7c5cff 70%,#ff7ab8 100%) !important;
+  background-size:300% 300% !important;
+  -webkit-background-clip:text !important;background-clip:text !important;
+  -webkit-text-fill-color:transparent !important;
+  animation:brandShift 5s ease-in-out infinite,text-anim .6s ease both !important;
+}
+.splash .splash-logo{
+  background:none !important;
+  box-shadow:
+    0 0 0 2px rgba(255,255,255,0.5),
+    0 12px 40px rgba(255,94,156,0.45),
+    0 0 80px rgba(195,75,255,0.30) !important;
+  animation:logo-pulse 2.4s ease-in-out infinite !important;
+}
+.splash .splash-tagline{
+  font-family:var(--script);
+  font-size:18px;
+  color:var(--sakura-deep);
+  margin-top:-8px;
+  animation:fade-in .8s ease both;
+  animation-delay:.3s;
+}
+
+/* --- Auth screen: paper card + Playfair title + script subhead --- */
+.auth-shell{
+  background:linear-gradient(180deg,var(--bg) 0%,var(--bg-soft) 100%) !important;
+  position:relative;
+  overflow:hidden;
+}
+.auth-shell::before{
+  content:'';position:absolute;top:-40px;right:-40px;width:240px;height:240px;
+  background:radial-gradient(circle,var(--sakura) 0%,transparent 70%);
+  opacity:.30;pointer-events:none;
+}
+.auth-shell::after{
+  content:'';position:absolute;bottom:120px;left:-60px;width:200px;height:200px;
+  background:radial-gradient(circle,var(--accent) 0%,transparent 70%);
+  opacity:.12;pointer-events:none;
+}
+.auth-eyebrow{
+  font-family:var(--sans) !important;
+  font-size:11px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--muted) !important;
+  position:relative;z-index:1;
+}
+.brand-name{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  letter-spacing:-.5px !important;
+  background:linear-gradient(120deg,#ff7ab8 0%,#ff3d77 20%,#c33dff 45%,#7c5cff 70%,#ff7ab8 100%) !important;
+  background-size:300% 300% !important;
+  -webkit-background-clip:text !important;background-clip:text !important;
+  -webkit-text-fill-color:transparent !important;
+  animation:brandShift 5s ease-in-out infinite,text-anim .6s ease both !important;
+}
+.auth-form{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius) !important;
+  padding:24px 20px !important;
+  box-shadow:var(--shadow) !important;
+  position:relative;z-index:1;
+}
+.ig-pill input{
+  font-family:var(--sans) !important;
+  border-bottom:1.5px solid var(--line-2) !important;
+  background:transparent !important;
+}
+.ig-pill input:focus{border-bottom-color:var(--accent) !important}
+.ig-primary{
+  background:var(--ink) !important;
+  color:var(--paper) !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  border-radius:var(--radius-sm) !important;
+  letter-spacing:.3px !important;
+  box-shadow:0 4px 14px rgba(26,26,26,.18) !important;
+}
+.ig-outline{
+  background:transparent !important;
+  border:1px solid var(--ink) !important;
+  color:var(--ink) !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  border-radius:var(--radius-sm) !important;
+}
+.ig-link{font-family:var(--sans) !important;color:var(--accent) !important}
+.auth-bottom{background:var(--surface) !important;border-top:1px solid var(--border) !important}
+.auth-bottom-text{color:var(--muted) !important}
+
+/* --- Feed: editorial post cards --- */
+.feed-view{
+  background:var(--bg) !important;
+}
+.feed-view::before,.feed-view::after{
+  /* keep existing ambient gradient blobs but tint sakura */
+  background:radial-gradient(circle,rgba(244,168,184,.10) 0%,transparent 60%) !important;
+}
+.post-card{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius) !important;
+  box-shadow:var(--shadow-sm) !important;
+  overflow:hidden;
+}
+.post-card .post-head .name,
+.post-card .post-head strong{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  color:var(--text) !important;
+}
+.post-card .post-body,
+.post-card .body{
+  font-family:var(--sans) !important;
+  color:var(--text-2) !important;
+  line-height:1.55 !important;
+}
+.post-card .post-body .lead,
+.post-card .lead,
+.post-card .body strong:first-child{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:600 !important;
+  color:var(--text) !important;
+  letter-spacing:-.2px !important;
+  line-height:1.3 !important;
+}
+.composer-card.ig-compose-inline{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius) !important;
+  box-shadow:var(--shadow-sm) !important;
+}
+.composer-card.ig-compose-inline .composer-card-meta strong{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+}
+.composer-card.ig-compose-inline textarea::placeholder{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  color:var(--muted) !important;
+}
+.post-music-preview{
+  background:var(--surface-2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-xs) !important;
+}
+
+/* --- Stories rail: sakura conic ring --- */
+.stories-rail .story-ring,
+.stories-rail .story-avatar-wrap{
+  position:relative;
+}
+.stories-rail .story-avatar-wrap::before{
+  content:'';position:absolute;inset:-3px;border-radius:50%;
+  background:conic-gradient(from 0deg,var(--sakura),var(--accent),var(--matcha),var(--sakura));
+  z-index:-1;
+}
+.stories-rail .story-avatar-wrap.seen::before{background:var(--line-2)}
+.stories-rail .story-avatar-wrap.seen::before{display:none}
+
+/* --- Chat inbox: wax-seal style avatars --- */
+.rooms-pane, .dmsPaneSection, .members-list{
+  background:transparent !important;
+}
+.room-item, .member-item{
+  border-radius:var(--radius-sm) !important;
+  margin:4px 8px !important;
+  padding:10px 12px !important;
+  transition:background .15s;
+}
+.room-item:hover, .member-item:hover{background:var(--surface-2) !important}
+.room-item.active{background:var(--surface) !important;border:1px solid var(--border)}
+.room-item .room-icon,
+.member-item .avatar{
+  border-radius:50% !important;
+}
+.member-item.unread .avatar{
+  background:radial-gradient(circle at 30% 30%,var(--wax),#7e1f15) !important;
+  box-shadow:0 3px 8px rgba(192,57,43,.30) !important;
+}
+
+/* --- Chat thread: letter bubbles with stamps --- */
+.messages-list .message .bubble-wrap{
+  font-family:var(--sans) !important;
+}
+.messages-list .message.them .bubble,
+.messages-list .message.incoming .bubble{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:4px 18px 18px 18px !important;
+  box-shadow:var(--shadow-sm) !important;
+  color:var(--text) !important;
+}
+.messages-list .message.me .bubble,
+.messages-list .message.outgoing .bubble{
+  background:var(--ink) !important;
+  color:var(--paper) !important;
+  border-radius:18px 4px 18px 18px !important;
+}
+[data-theme="dark"] .messages-list .message.me .bubble,
+[data-theme="dark"] .messages-list .message.outgoing .bubble{
+  background:var(--accent) !important;color:#fff !important;
+}
+.chat-header .chat-title{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+}
+.chat-header .chat-subtitle{
+  font-family:var(--script) !important;
+  font-size:14px !important;
+  color:var(--matcha) !important;
+}
+.modern-composer{
+  background:var(--surface) !important;
+  border-top:1px solid var(--border) !important;
+}
+.composer-input-section textarea{
+  background:var(--surface-2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  font-family:var(--sans) !important;
+}
+.composer-input-section textarea::placeholder{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  color:var(--muted) !important;
+}
+
+/* --- Profile: magazine cover treatment --- */
+.profile-view{
+  background:var(--bg) !important;
+}
+.ig-profile-head{
+  background:transparent !important;
+}
+.ig-profile-stats .stat-btn strong{
+  font-family:var(--serif) !important;
+  font-weight:700 !important;
+  color:var(--text) !important;
+}
+.ig-profile-stats .stat-btn span{
+  font-family:var(--sans) !important;
+  letter-spacing:1px !important;
+  text-transform:uppercase !important;
+  font-size:10px !important;
+  color:var(--muted) !important;
+}
+.ig-name, #profileDisplayName, #upDisplayName{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  letter-spacing:-.3px !important;
+  color:var(--text) !important;
+}
+.ig-bio, #profileBio, #upBio{
+  font-family:var(--script) !important;
+  font-size:16px !important;
+  color:var(--text-2) !important;
+  line-height:1.4 !important;
+}
+.ig-action-btn{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  border-radius:var(--radius-sm) !important;
+  border:1px solid var(--border) !important;
+  background:var(--surface) !important;
+  color:var(--text) !important;
+}
+.ig-action-btn.dark-pill{
+  background:var(--ink) !important;
+  color:var(--paper) !important;
+  border-color:var(--ink) !important;
+}
+[data-theme="dark"] .ig-action-btn.dark-pill{
+  background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important;
+}
+.ig-profile-meta .profile-banner-pill{
+  font-family:var(--sans) !important;
+  background:var(--surface-2) !important;
+  border:1px solid var(--border) !important;
+  color:var(--text-2) !important;
+}
+
+/* --- Profile mood bubble: script font --- */
+.profile-mood-bubble{
+  font-family:var(--script) !important;
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  color:var(--sakura-deep) !important;
+}
+
+/* --- Search: squared tag cloud + curated shelves --- */
+.search-view{
+  background:var(--bg) !important;
+}
+.search-bar{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius) !important;
+  box-shadow:var(--shadow-sm) !important;
+}
+.search-bar input{
+  font-family:var(--sans) !important;
+  color:var(--text) !important;
+}
+.search-bar input::placeholder{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  color:var(--muted) !important;
+}
+.search-results li{
+  font-family:var(--sans) !important;
+}
+
+/* --- Settings sheet: paper panels --- */
+.comments-sheet .sheet-card{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius) !important;
+  box-shadow:var(--shadow-lg) !important;
+}
+.settings-section-title{
+  font-family:var(--sans) !important;
+  font-size:11px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--muted) !important;
+  font-weight:600 !important;
+}
+.settings-row{
+  font-family:var(--sans) !important;
+  color:var(--text) !important;
+  border-top:1px solid var(--border) !important;
+}
+.settings-row:first-child{border-top:0 !important}
+.settings-row .chev{color:var(--muted) !important}
+.settings-chip{
+  font-family:var(--sans) !important;
+  background:var(--surface-2) !important;
+  color:var(--muted) !important;
+}
+.settings-row.danger{color:var(--wax) !important}
+
+/* --- Notifications sheet --- */
+.notif-list li{
+  font-family:var(--sans) !important;
+  color:var(--text-2) !important;
+}
+.notif-list li strong{font-family:var(--serif) !important;font-style:italic !important;color:var(--text) !important}
+
+/* --- Comments sheet --- */
+.comments-sheet-list li{
+  font-family:var(--sans) !important;
+  background:var(--surface-2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  padding:10px 12px !important;
+  margin-bottom:8px !important;
+}
+.comments-sheet-list li .nm,
+.comments-sheet-list li strong{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  color:var(--text) !important;
+}
+.sheet-composer input{
+  font-family:var(--sans) !important;
+  background:var(--surface-2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  color:var(--text) !important;
+}
+.sheet-composer input::placeholder{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  color:var(--muted) !important;
+}
+
+/* --- Story viewer: polaroid frame --- */
+.story-viewer .story-content{
+  border-radius:6px !important;
+  box-shadow:0 30px 80px rgba(0,0,0,.5) !important;
+}
+.story-viewer .story-name{
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+}
+.story-reply-input{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  background:rgba(255,255,255,.12) !important;
+  backdrop-filter:blur(20px) !important;
+  border:1px solid rgba(255,255,255,.20) !important;
+  border-radius:999px !important;
+  color:#fff !important;
+}
+.story-reply-input::placeholder{color:rgba(255,255,255,.7) !important}
+
+/* --- Notes rail: sticky-note bubbles --- */
+.note-bubble{
+  font-family:var(--sans) !important;
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:18px 18px 18px 4px !important;
+  box-shadow:var(--shadow-sm) !important;
+  padding:10px 14px !important;
+  color:var(--text) !important;
+}
+
+/* --- Profile card (digital visiting card) --- */
+.profile-card-sheet .sheet-card{
+  background:#fbf7f2 !important;
+  border:1px solid #d8cdbb !important;
+  border-radius:16px !important;
+  box-shadow:0 30px 60px rgba(60,40,20,.25),inset 0 1px 0 rgba(255,255,255,.8) !important;
+  transform:rotate(-1.5deg);
+  padding:0 !important;
+  overflow:hidden;
+}
+[data-theme="dark"] .profile-card-sheet .sheet-card{
+  background:#2a221b !important;
+  border:1px solid #4a3e30 !important;
+  color:#f5efe6 !important;
+}
+
+/* --- Modal cards (terms, schedule, post composer) --- */
+.modal-card{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius) !important;
+  box-shadow:var(--shadow-lg) !important;
+}
+.modal-head h3{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  font-weight:700 !important;
+  color:var(--text) !important;
+}
+.modal-body, .terms-body{
+  font-family:var(--sans) !important;
+  color:var(--text-2) !important;
+  line-height:1.6 !important;
+}
+.primary-btn{
+  background:var(--ink) !important;
+  color:var(--paper) !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  border-radius:var(--radius-sm) !important;
+}
+[data-theme="dark"] .primary-btn{background:var(--accent) !important;color:#fff !important}
+.ghost-btn{
+  font-family:var(--sans) !important;
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  color:var(--text) !important;
+  border-radius:var(--radius-sm) !important;
+}
+
+/* --- Posts grid (profile + user-profile sheet) --- */
+.ig-posts-grid{
+  gap:2px !important;
+  background:var(--border) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  overflow:hidden;
+}
+.ig-posts-grid > *{
+  border-radius:0 !important;
+}
+
+/* --- Settings: VIP key row + color picker --- */
+.vip-key-row{
+  background:var(--surface-2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+}
+.vip-key-row input{
+  background:transparent !important;
+  color:var(--text) !important;
+  font-family:var(--sans) !important;
+}
+.color-swatch{
+  border:2px solid var(--border) !important;
+  border-radius:50% !important;
+}
+.color-swatch.active{border-color:var(--text) !important;transform:scale(1.1)}
+
+/* --- Inbox segment toggle --- */
+.inbox-seg-btn{
+  font-family:var(--sans) !important;
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  color:var(--muted) !important;
+  border-radius:999px !important;
+}
+.inbox-seg-btn.active{
+  background:var(--ink) !important;
+  color:var(--paper) !important;
+  border-color:var(--ink) !important;
+}
+[data-theme="dark"] .inbox-seg-btn.active{background:var(--accent) !important;color:#fff !important;border-color:var(--accent) !important}
+.seg-badge{
+  background:var(--wax) !important;
+  color:#fff !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+}
+
+/* --- Requests banner --- */
+.req-banner{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  color:var(--text) !important;
+}
+
+/* --- Close friends / story manage sheets --- */
+.cf-list li, .story-manage-list li{
+  font-family:var(--sans) !important;
+  color:var(--text) !important;
+  border-top:1px solid var(--border) !important;
+}
+
+/* --- Floating + button: keep brand blue but rounded --- */
+.floating-add-btn{
+  background:var(--ink) !important;
+  color:var(--paper) !important;
+  box-shadow:0 8px 24px rgba(26,26,26,.25) !important;
+}
+[data-theme="dark"] .floating-add-btn{background:var(--accent) !important;color:#fff !important}
+
+/* --- Typing indicator: sakura tint --- */
+.typing-bubble .dot{background:var(--sakura) !important}
+
+/* --- Scroll-to-bottom button --- */
+.scroll-bottom-btn{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  color:var(--text) !important;
+  font-family:var(--sans) !important;
+  box-shadow:var(--shadow) !important;
+}
+
+/* --- Close friends / discover carousel cards --- */
+.ig-discover-carousel .ig-discover-card{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  box-shadow:var(--shadow-sm) !important;
+}
+
+/* --- Story progress bars --- */
+.story-viewer .story-progress .seg .fill{
+  background:linear-gradient(90deg,var(--sakura),var(--accent)) !important;
+}
+
+/* --- Disable Instagram-style pink gradient ring on stories (replace with sakura conic) --- */
+/* (handled above via .story-avatar-wrap::before) */
+
+/* --- Sheet handle (the little grab bar at top of bottom sheets) --- */
+.sheet-handle{
+  background:var(--line-2) !important;
+  border-radius:2px !important;
+}
+
+/* --- Composer add menu --- */
+.composer-popup-menu{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  box-shadow:var(--shadow-lg) !important;
+}
+.popup-action-btn{
+  font-family:var(--sans) !important;
+  color:var(--text) !important;
+}
+
+/* --- Pin input (signup/reset PIN) --- */
+.pin-input input{
+  background:var(--surface-2) !important;
+  border:1.5px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  color:var(--text) !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+}
+.pin-input input:focus{border-color:var(--accent) !important}
+
+/* --- Top notification banner (in topbar slot — not touching topbar itself, just the banner inside) --- */
+.top-notif-banner{
+  font-family:var(--sans) !important;
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  box-shadow:var(--shadow) !important;
+}
+
+/* --- Date dividers in chat (postmark style) --- */
+.messages-list .day-divider,
+.messages-list .day-separator{
+  font-family:var(--sans) !important;
+  font-size:10px !important;
+  letter-spacing:1.5px !important;
+  text-transform:uppercase !important;
+  color:var(--muted) !important;
+}
+
+/* --- Schedule modal --- */
+.schedule-list li{
+  font-family:var(--sans) !important;
+  background:var(--surface-2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  padding:10px 12px !important;
+  color:var(--text-2) !important;
+  margin-bottom:6px !important;
+}
+
+/* --- Story quick-react buttons (in story viewer) --- */
+.story-quick-reacts .story-react-emoji{
+  background:rgba(255,255,255,.12) !important;
+  backdrop-filter:blur(20px) !important;
+  border:1px solid rgba(255,255,255,.20) !important;
+  border-radius:50% !important;
+}
+
+/* --- Story action icons (like / reply / share) --- */
+.story-action-icon{
+  background:rgba(255,255,255,.12) !important;
+  backdrop-filter:blur(20px) !important;
+  border:1px solid rgba(255,255,255,.20) !important;
+  border-radius:50% !important;
+  color:#fff !important;
+}
+
+/* --- Image attachment preview --- */
+.attach-preview{
+  background:var(--surface) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+}
+
+/* --- Reply banner (above composer when replying) --- */
+.reply-banner{
+  background:var(--surface) !important;
+  border-top:1px solid var(--border) !important;
+  font-family:var(--sans) !important;
+  color:var(--text-2) !important;
+}
+
+/* --- Secret chat banner --- */
+#secretBanner{
+  background:rgba(192,57,43,.10) !important;
+  border:1px solid rgba(192,57,43,.30) !important;
+  color:var(--wax) !important;
+  font-family:var(--sans) !important;
+}
+
+/* --- Misc form fields (settings, profile edit) --- */
+.field input, .field textarea, .field select{
+  font-family:var(--sans) !important;
+  background:var(--surface-2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm) !important;
+  color:var(--text) !important;
+}
+.field input:focus, .field textarea:focus{border-color:var(--accent) !important}
+.field span{color:var(--muted) !important;font-family:var(--sans) !important}
+
+/* --- Profile edit form --- */
+.profile-form{
+  background:transparent !important;
+}
+.profile-edit-header strong{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  color:var(--text) !important;
+}
+
+/* --- User profile sheet (other users) --- */
+.user-profile-sheet{
+  background:var(--bg) !important;
+}
+.up-header-username{
+  font-family:var(--serif) !important;
+  font-style:italic !important;
+  color:var(--text) !important;
+}
+
+/* --- Lightbox (image viewer) --- */
+.lightbox{
+  background:rgba(26,26,26,.92) !important;
+}
+.lightbox-inner{
+  background:transparent !important;
+}
+.lightbox-meta{
+  font-family:var(--sans) !important;
+  color:#fff !important;
+}
+
+/* --- Call overlay --- */
+.call-overlay{
+  background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460) !important;
+}
+
+/* ============================================================
+   END Sakura Editorial Overrides
+   ============================================================ */
