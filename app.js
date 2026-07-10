@@ -6892,10 +6892,29 @@ function closeNotifications() {
   $id('#notifSheet').classList.add('hidden');
 }
 
+function _notifDayBucket(ts) {
+  // Returns a label like "today" / "yesterday" / "this week" / "earlier"
+  if (!ts) return 'earlier';
+  const now = new Date();
+  const d = new Date(ts);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 86400000;
+  const startOfWeek = startOfToday - 6 * 86400000;
+  if (d.getTime() >= startOfToday) return 'today';
+  if (d.getTime() >= startOfYesterday) return 'yesterday';
+  if (d.getTime() >= startOfWeek) return 'this week';
+  return 'earlier';
+}
+function _buildNotifDayHeader(label) {
+  const li = document.createElement('li');
+  li.className = 'day-header';
+  li.textContent = label;
+  return li;
+}
 function renderNotifications() {
   const list = $id('#notifList');
   list.innerHTML = '';
-  const items = _notifData.notifications || [];
+  const items = (_notifData.notifications || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   if (items.length === 0) {
     list.innerHTML = `<li class="notif-empty">
       <div class="ico"><i data-lucide="bell"></i></div>
@@ -6904,7 +6923,15 @@ function renderNotifications() {
     refreshIcons();
     return;
   }
-  items.forEach((n, i) => list.appendChild(buildNotifRow(n, i)));
+  let lastBucket = null;
+  items.forEach((n, i) => {
+    const bucket = _notifDayBucket(n.createdAt);
+    if (bucket !== lastBucket) {
+      list.appendChild(_buildNotifDayHeader(bucket));
+      lastBucket = bucket;
+    }
+    list.appendChild(buildNotifRow(n, i));
+  });
   refreshIcons();
 }
 
@@ -6936,12 +6963,12 @@ function buildNotifRow(n, i) {
   if (n.kind === 'follow')  msg = `<strong>${escapeHtml(fromName)}</strong> started following you.`;
   if (n.kind === 'message') msg = `<strong>${escapeHtml(fromName)}</strong> sent you a message:`;
   if (n.kind === 'story_reply') msg = `<strong>${escapeHtml(fromName)}</strong> replied to your story:`;
-  body.innerHTML = msg + `<div class="nm">${escapeHtml(timeAgo(n.createdAt))}</div>`;
+  body.innerHTML = msg + `<div class="ts">${escapeHtml(timeAgo(n.createdAt))}</div>`;
   if (n.text) {
     const preview = document.createElement('div');
     preview.className = 'preview';
     preview.textContent = '"' + n.text + '"';
-    body.insertBefore(preview, body.querySelector('.nm'));
+    body.insertBefore(preview, body.querySelector('.ts'));
   }
   li.appendChild(body);
 
