@@ -5656,7 +5656,8 @@ body{
 
 .auth-main{
   position:relative;z-index:1;
-  padding-top:8px !important;
+  padding-top:60px !important;
+  justify-content:center;
 }
 
 .auth-icon-wrap{
@@ -5697,37 +5698,102 @@ body{
   text-align:center;
   margin-bottom:10px;
 }
-.auth-panel[data-auth-panel="login"] .auth-form::before{
-  content:'A quiet place\A to gather.';
-  white-space:pre;
-  display:block;
+/* Remove old pseudo-element title — now injected as real DOM node */
+.auth-panel[data-auth-panel="login"] .auth-form::before{content:none !important}
+.auth-panel[data-auth-panel="login"] .auth-form::after{content:none !important}
+
+/* Editorial title + subtitle (injected by JS as .auth-editorial-head) */
+.auth-editorial-head{
+  text-align:center;
+  margin-bottom:24px;
+}
+.auth-editorial-title{
   font-family:var(--serif);
   font-style:italic;
   font-weight:700;
-  font-size:30px;
+  font-size:32px;
   line-height:1.05;
   color:var(--paper-ink);
-  text-align:center;
   letter-spacing:-.5px;
-  margin:0 0 4px;
+  margin:0 0 6px;
 }
-/* "sign in to continue" subtitle is injected by JS as a real DOM node
-   (.auth-form-sub) so it appears in the correct position (between the
-   title pseudo-element and the first input), not after the form's
-   last child. */
-.auth-panel[data-auth-panel="login"] .auth-form .auth-form-sub{
-  display:block;
+.auth-editorial-title .accent{
+  font-family:var(--sans);
+  font-style:normal;
+  font-weight:700;
+  color:var(--accent);
+}
+[data-theme="dark"] .auth-editorial-title,
+:root:not([data-theme="light"]) .auth-editorial-title{
+  color:var(--paper-ink);
+}
+.auth-form-sub{
   font-family:var(--script);
   font-size:18px;
   color:var(--sakura-deep);
   text-align:center;
-  margin:0 0 18px;
+  margin:0;
   line-height:1.2;
 }
-.auth-panel[data-auth-panel="login"] .auth-form::after{content:none}
-[data-theme="dark"] .auth-panel[data-auth-panel="login"] .auth-form::before,
-:root:not([data-theme="light"]) .auth-panel[data-auth-panel="login"] .auth-form::before{
-  color:var(--paper-ink);
+
+/* Field labels (mono uppercase, above inputs) */
+.auth-field-label{
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--paper-muted);
+  letter-spacing:1px;
+  text-transform:uppercase;
+  margin-bottom:6px;
+  margin-top:14px;
+}
+.auth-field-label:first-child{margin-top:0}
+
+/* Override inputs — bottom-border-only, no rounded pill background */
+.auth-panel[data-auth-panel="login"] .field.ig-pill{
+  background:transparent !important;
+  border:0 !important;
+  padding:0 !important;
+  margin-bottom:0 !important;
+}
+.auth-panel[data-auth-panel="login"] .field.ig-pill input{
+  font-family:var(--sans) !important;
+  background:transparent !important;
+  border:0 !important;
+  border-bottom:1.5px solid var(--paper-hairline-2) !important;
+  border-radius:0 !important;
+  padding:8px 0 !important;
+  color:var(--paper-ink) !important;
+  font-size:15px !important;
+  transition:border-color .2s;
+}
+.auth-panel[data-auth-panel="login"] .field.ig-pill input:focus{
+  border-bottom-color:var(--accent) !important;
+  box-shadow:none !important;
+  outline:0 !important;
+}
+.auth-panel[data-auth-panel="login"] .field.ig-pill input::placeholder{
+  color:var(--paper-muted) !important;
+  opacity:.6;
+}
+
+/* Terms checkbox row (injected by JS) */
+.auth-terms{
+  margin-top:14px;
+  display:flex;
+  align-items:flex-start;
+  gap:8px;
+  font-family:var(--sans);
+  font-size:11px;
+  color:var(--paper-muted);
+  line-height:1.5;
+}
+.auth-terms .check{
+  width:14px;
+  height:14px;
+  border:1.5px solid var(--paper-hairline-2);
+  border-radius:4px;
+  flex-shrink:0;
+  margin-top:1px;
 }
 
 .auth-eyebrow{
@@ -5805,6 +5871,18 @@ body{
   box-shadow:0 6px 18px rgba(0,162,255,.35) !important;
 }
 
+/* Login submit button — pill-shaped "Enter garden →" */
+.auth-panel[data-auth-panel="login"] .ig-primary{
+  border-radius:24px !important;
+  padding:14px 18px !important;
+  margin-top:8px !important;
+  font-size:14px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+  gap:8px !important;
+}
+
 .ig-outline{
   background:transparent !important;
   border:1.5px solid var(--paper-ink) !important;
@@ -5853,17 +5931,34 @@ body{
   color:var(--wax) !important;
 }
 .auth-bottom{
-  background:rgba(255,255,255,.7) !important;
-  backdrop-filter:blur(20px);
-  border-top:1px solid var(--paper-hairline) !important;
+  background:transparent !important;
+  backdrop-filter:none;
+  border-top:0 !important;
+  flex-direction:row !important;
+  justify-content:center !important;
+  gap:6px !important;
+  padding:18px 16px 28px !important;
 }
 .auth-bottom-text{
   font-family:var(--sans) !important;
   color:var(--paper-muted) !important;
+  font-size:13px !important;
+}
+/* "Create an account" — accent blue text link style */
+.auth-bottom .ig-outline{
+  background:transparent !important;
+  border:0 !important;
+  color:var(--accent) !important;
+  font-family:var(--sans) !important;
+  font-weight:600 !important;
+  font-size:13px !important;
+  padding:0 !important;
+  text-decoration:none !important;
+  box-shadow:none !important;
 }
 [data-theme="dark"] .auth-bottom,
 :root:not([data-theme="light"]) .auth-bottom{
-  background:rgba(42,34,27,.7) !important;
+  background:transparent !important;
 }
 
 /* ============================================================

@@ -817,16 +817,80 @@ function bindAuth() {
   const authPanels = document.querySelectorAll('[data-auth-panel]');
   const authBottom = $('[data-auth-secondary]'); // .auth-bottom with 'Create new account'
 
-  // Sakura Editorial: inject "sign in to continue" subtitle as the first
-  // child of the login form so it sits between the title pseudo-element
-  // and the first input. CSS handles the script font + sakura color.
-  const loginFormEl = document.getElementById('loginForm');
-  if (loginFormEl && !loginFormEl.querySelector('.auth-form-sub')) {
-    const sub = document.createElement('div');
-    sub.className = 'auth-form-sub';
-    sub.textContent = 'sign in to continue';
-    loginFormEl.insertBefore(sub, loginFormEl.firstChild);
+  // Sakura Editorial: restructure the login form to match the design preview.
+  // - Hide the logo/brand area (design is text-only)
+  // - Inject editorial title with mixed serif + sans-blue "gather."
+  // - Inject "sign in to continue" script subtitle
+  // - Add labels above inputs ("Email or handle", "Password")
+  // - Change button text to "Enter garden →"
+  // - Hide "Forgotten password?" link
+  // - Add terms checkbox text after button
+  // - Change bottom CTA text to "New here?" / "Create an account"
+  function applySakuraLoginEditorial() {
+    // 1. Hide logo + brand name on all auth panels
+    const iconWrap = document.querySelector('.auth-icon-wrap');
+    if (iconWrap) iconWrap.style.display = 'none';
+
+    // 2. Inject editorial title + subtitle above the login form
+    const loginPanel = document.querySelector('[data-auth-panel="login"]');
+    const loginForm = document.getElementById('loginForm');
+    if (loginPanel && loginForm && !loginPanel.querySelector('.auth-editorial-head')) {
+      const head = document.createElement('div');
+      head.className = 'auth-editorial-head';
+      head.innerHTML =
+        '<div class="auth-editorial-title">A quiet place<br>to <span class="accent">gather.</span></div>' +
+        '<div class="auth-form-sub">sign in to continue</div>';
+      loginPanel.insertBefore(head, loginForm);
+    }
+
+    // 3. Add labels above inputs + set placeholders
+    if (loginForm && !loginForm.dataset.sakuraFields) {
+      loginForm.dataset.sakuraFields = '1';
+      const idInput = loginForm.querySelector('input[name="identifier"]');
+      const pwInput = loginForm.querySelector('input[name="password"]');
+      if (idInput) {
+        idInput.placeholder = 'ajit@priv.spaca';
+        const lbl = document.createElement('div');
+        lbl.className = 'auth-field-label';
+        lbl.textContent = 'Email or handle';
+        idInput.parentElement.insertBefore(lbl, idInput);
+      }
+      if (pwInput) {
+        pwInput.placeholder = '••••••••••';
+        const lbl = document.createElement('div');
+        lbl.className = 'auth-field-label';
+        lbl.textContent = 'Password';
+        pwInput.parentElement.insertBefore(lbl, pwInput);
+      }
+
+      // 4. Change submit button text
+      const submitBtn = loginForm.querySelector('button[type="submit"]');
+      if (submitBtn) submitBtn.textContent = 'Enter garden →';
+
+      // 5. Hide "Forgotten password?" link
+      const resetLink = loginForm.querySelector('[data-auth-step="reset"]');
+      if (resetLink) resetLink.style.display = 'none';
+
+      // 6. Add terms checkbox text after button (before error div)
+      const terms = document.createElement('div');
+      terms.className = 'auth-terms';
+      terms.innerHTML =
+        '<div class="check"></div>' +
+        '<span>By continuing you agree to our Terms &amp; Privacy Policy. Your conversations stay encrypted.</span>';
+      const errorDiv = loginForm.querySelector('.auth-error');
+      if (errorDiv) loginForm.insertBefore(terms, errorDiv);
+      else loginForm.appendChild(terms);
+    }
+
+    // 7. Change bottom CTA text
+    const bottomText = document.querySelector('.auth-bottom-text');
+    if (bottomText) bottomText.textContent = 'New here?';
+    const createBtn = document.querySelector('[data-auth-step="signup"]');
+    if (createBtn && createBtn.classList.contains('ig-outline')) {
+      createBtn.textContent = 'Create an account';
+    }
   }
+  applySakuraLoginEditorial();
 
   function showAuthPanel(name) {
     authPanels.forEach(p => p.hidden = (p.dataset.authPanel !== name));
