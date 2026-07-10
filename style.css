@@ -5873,40 +5873,34 @@ body{
   background:var(--paper) !important;
   position:relative;
 }
+/* Cover gradient — sits behind titlebar + top of avatar area */
 .profile-view::before{
   content:'';
-  position:absolute;top:0;left:0;right:0;height:220px;
+  position:absolute;top:0;left:0;right:0;height:180px;
   background:linear-gradient(135deg,var(--sakura) 0%,var(--accent) 60%,#9b87ff 100%);
   pointer-events:none;z-index:0;
 }
-.profile-view::after{
-  content:'ISSUE №47 \00B7 VOL. III \00B7 2026 \00B7 — a quiet collection —';
-  position:absolute;top:18px;left:16px;right:16px;
-  font-family:var(--mono);
-  font-size:10px;
-  letter-spacing:1.8px;
-  text-transform:uppercase;
-  color:rgba(255,255,255,.92);
-  text-align:center;
-  pointer-events:none;
-  z-index:1;
-  text-shadow:0 1px 4px rgba(0,0,0,.25);
-  line-height:1.6;
-}
+/* NO masthead text via ::after — it overlapped the titlebar username.
+   The titlebar already shows the username; we keep the gradient clean. */
+.profile-view::after{content:none !important}
 .profile-view > *{position:relative;z-index:1}
 .profile-view > .profile-wrap{position:relative;z-index:1}
 .profile-mode{
   background:transparent !important;
 }
+
+/* Titlebar — transparent over the gradient cover */
 .profile-titlebar{
   background:transparent !important;
+  border-bottom:0 !important;
   position:relative;z-index:2;
+  padding:10px 16px !important;
 }
 .profile-titlebar-center strong{
   font-family:var(--sans) !important;
   color:#fff !important;
   font-weight:600 !important;
-  text-shadow:0 1px 4px rgba(0,0,0,.2);
+  text-shadow:0 1px 4px rgba(0,0,0,.25);
 }
 .profile-titlebar .ghost-btn{
   background:rgba(255,255,255,.25) !important;
@@ -5915,32 +5909,70 @@ body{
   color:#fff !important;
   border-radius:50% !important;
 }
+
+/* Profile head — switch from horizontal (avatar-left stats-right)
+   to vertical centered magazine layout (avatar centered, stats below) */
 .ig-profile-head{
-  padding-top:14px !important;
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:center !important;
+  gap:14px !important;
+  padding:0 16px 6px !important;
   background:transparent !important;
+  position:relative;z-index:1;
 }
+
+/* Avatar wrap — pull up to overlap the cover */
 .profile-avatar-wrap{
   position:relative;
+  margin-top:-32px;
 }
 .profile-avatar-wrap .avatar{
   border:5px solid var(--paper) !important;
   box-shadow:0 12px 32px rgba(0,0,0,.18) !important;
 }
+
+/* Mood bubble — position below-right of avatar so it doesn't collide
+   with the cover gradient or get clipped */
 .profile-mood-bubble{
+  position:absolute !important;
+  top:auto !important;
+  bottom:-10px !important;
+  right:-20px !important;
+  left:auto !important;
   font-family:var(--script) !important;
   background:var(--surface) !important;
   border:1px solid var(--paper-hairline) !important;
   color:var(--sakura-deep) !important;
   box-shadow:var(--shadow-sm) !important;
+  white-space:nowrap !important;
+  z-index:3;
 }
+
+/* Stats — centered row below avatar with top+bottom hairlines */
 .ig-profile-stats{
+  display:flex !important;
+  justify-content:center !important;
+  align-items:center !important;
+  gap:28px !important;
+  flex:0 0 auto !important;
+  width:100% !important;
+  max-width:340px !important;
+  padding:10px 0 !important;
+  border-top:1px solid var(--paper-hairline) !important;
+  border-bottom:1px solid var(--paper-hairline) !important;
   background:transparent !important;
+  margin:4px auto 0 !important;
+}
+.ig-profile-stats .stat-btn{
+  flex:0 0 auto !important;
+  padding:4px 8px !important;
 }
 .ig-profile-stats .stat-btn strong{
   font-family:var(--serif) !important;
   font-weight:700 !important;
   color:var(--paper-ink) !important;
-  font-size:22px !important;
+  font-size:20px !important;
   letter-spacing:-.5px;
 }
 .ig-profile-stats .stat-btn span{
@@ -5950,25 +5982,33 @@ body{
   text-transform:uppercase !important;
   color:var(--paper-muted) !important;
 }
+
+/* Meta — centered display name + bio */
 .ig-profile-meta{
   background:transparent !important;
-  padding:0 16px !important;
+  padding:12px 24px 0 !important;
+  text-align:center !important;
 }
 .ig-name, #profileDisplayName{
   font-family:var(--serif) !important;
   font-style:italic !important;
   font-weight:700 !important;
-  font-size:26px !important;
+  font-size:24px !important;
   letter-spacing:-.5px !important;
   color:var(--paper-ink) !important;
   line-height:1.1 !important;
+  text-align:center !important;
 }
 .ig-bio, #profileBio{
   font-family:var(--script) !important;
-  font-size:18px !important;
+  font-size:17px !important;
   color:var(--paper-ink-2) !important;
   line-height:1.4 !important;
   margin-top:6px !important;
+  text-align:center !important;
+}
+.profile-banners-row{
+  justify-content:center !important;
 }
 .profile-banner-pill{
   font-family:var(--sans) !important;
@@ -5979,9 +6019,14 @@ body{
   padding:6px 12px !important;
   font-size:12px !important;
 }
+
+/* Actions — centered row */
 .ig-profile-actions{
   background:transparent !important;
-  padding:0 16px !important;
+  padding:10px 16px !important;
+  display:flex !important;
+  justify-content:center !important;
+  gap:8px !important;
 }
 .ig-action-btn{
   font-family:var(--sans) !important;
@@ -6108,17 +6153,8 @@ body{
   color:#fff !important;
   position:relative;
 }
-.user-profile-sheet .up-header::after{
-  content:'ISSUE №47 \00B7 — a quiet collection —';
-  position:absolute;top:8px;left:0;right:0;
-  font-family:var(--mono);
-  font-size:9px;
-  letter-spacing:1.5px;
-  text-transform:uppercase;
-  color:rgba(255,255,255,.85);
-  text-align:center;
-  pointer-events:none;
-}
+/* No masthead text — keeps the header clean and avoids overlap */
+.user-profile-sheet .up-header::after{content:none !important}
 .user-profile-sheet .up-header-username{
   font-family:var(--serif) !important;
   font-style:italic !important;
