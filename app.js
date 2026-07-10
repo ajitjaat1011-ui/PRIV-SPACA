@@ -6183,16 +6183,25 @@ window.openStoryCreator = () => {
       show(loadingEl);
       for (let f of batch) {
         if (!isImageFile(f)) { toast('Skipped a non-image file', 'error'); continue; }
+        const isGif = String((f && f.type) || '').toLowerCase() === 'image/gif';
+        if (isGif) toast('GIF selected — keeping animation intact');
         if (f.size > 20 * 1024 * 1024) { toast('Skipped a photo over 20MB', 'error'); continue; }
         if (isHeicFile(f)) f = await convertHeicIfNeeded(f);
         let url = null;
         try {
-          const previewDataUrl = await resizeImageToDataUrl(f, 1280, 0.82);
-          const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: previewDataUrl, kind: 'post' } });
-          url = res.url || previewDataUrl;
+          const uploadDataUrl = isGif
+            ? await new Promise((resolve, reject) => {
+                const r = new FileReader();
+                r.onload = () => resolve(r.result);
+                r.onerror = () => reject(new Error('gif read failed'));
+                r.readAsDataURL(f);
+              })
+            : await resizeImageToDataUrl(f, 1280, 0.82);
+          const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: uploadDataUrl, kind: 'post' } });
+          url = res.url || uploadDataUrl;
         } catch (err) {
           try {
-            const r2 = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82 });
+            const r2 = await uploadPermanentImage(f, { kind: 'post', maxDim: isGif ? null : 1200, quality: 0.82 });
             url = r2.url;
           } catch (_) {
             try { url = URL.createObjectURL(f); } catch (_) {}
@@ -6242,6 +6251,8 @@ async function handleStoryVideoPick(file, ph, prev, loadingEl) {
 
   // Clear any photo selection (a story item is video OR photos, not both).
   State.storyCreatorImages = [];
+  State.storyCreatorImgUrl = null;
+  State.storyCreatorVideoUrl = null;
   renderStoryEditorPhotoStrip();
   hide(ph);
   show(loadingEl);
@@ -6631,6 +6642,7 @@ window.publishStoryWithMusic = async (isCf = false) => {
         imageUrl,
         images: storyImages,
         videoUrl,
+        mediaType: videoUrl ? 'video' : ((imageUrl || storyImages.length) ? 'image' : 'text'),
         music,
         style,
         story: true,
@@ -6912,7 +6924,15 @@ function resizeImageToDataUrlLegacy(file, maxDim = 600, quality = 0.85) {
  */
 async function uploadPermanentImage(file, { kind = 'avatar', maxDim = 600, quality = 0.85, onProgress } = {}) {
   if (onProgress) onProgress(10);
-  const dataUrl = await resizeImageToDataUrl(file, maxDim, quality);
+  const keepOriginal = maxDim == null || (String((file && file.type) || '').toLowerCase() === 'image/gif');
+  const dataUrl = keepOriginal
+    ? await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = () => reject(new Error('file read failed'));
+        r.readAsDataURL(file);
+      })
+    : await resizeImageToDataUrl(file, maxDim, quality);
   if (onProgress) onProgress(40);
   const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind } });
   if (onProgress) onProgress(100);
