@@ -38,7 +38,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v103';
+const APP_VERSION = 'priv-spaca-v104';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -946,41 +946,57 @@ function bindAuth() {
   applySakuraLoginEditorial();
 
   // ============================================================
-  // Sakura Editorial: PROFILE page — magazine cover layout
-  // Restructures the profile to match the design preview:
-  // - Add cover masthead text (ISSUE №47 / VOL. III / — a quiet collection —)
-  // - Hide titlebar username, keep +/settings as transparent overlay buttons
-  // - Hide mood bubble, add-note button, discover section, tabs
-  // - Add @handle below display name
-  // - Change stats labels: followers→readers, following→reading
-  // - Change button labels: Edit profile→Edit cover, Share profile→Share card
-  // - Add "POSTS · THE ARCHIVE" section title above posts grid
+  // Sakura Editorial: PROFILE page — Letterpress ID Card (Design 3)
+  // Restructures the profile to match the approved Design 3 concept:
+  // - Remove cover gradient, use plain paper background with blobs
+  // - Wrap avatar + name + handle + bio + stats in a letterpress card
+  // - Add black title strip "PRIV SPACA · MEMBER ID" + serial number
+  // - Add footer strip "MEMBER №XXXX · MON YYYY" + fingerprint icon
+  // - Change "Share card" → "View card"
+  // - Stats labels: followers→readers, following→reading
+  // - "the archive" section title above posts grid
   // ============================================================
+
+  // Generate a consistent 4-digit member number from user ID
+  function _getMemberNumber(userId) {
+    if (!userId) return '0001';
+    let hash = 0;
+    for (let i = 0; i < userId.length; i++) {
+      hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+      hash = hash & hash;
+    }
+    return String(Math.abs(hash) % 10000).padStart(4, '0');
+  }
+
+  // Format join date as "MON YYYY"
+  function _formatJoinDate(ts) {
+    if (!ts) {
+      const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+      const now = new Date();
+      return months[now.getMonth()] + ' ' + now.getFullYear();
+    }
+    const d = new Date(ts);
+    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    return months[d.getMonth()] + ' ' + d.getFullYear();
+  }
+
   function applySakuraProfileEditorial() {
     const profileView = document.getElementById('profileView');
     if (!profileView) return;
+    const profileMode = profileView.querySelector('.profile-mode') || profileView;
+    const profileHead = profileView.querySelector('.ig-profile-head');
+    const profileMeta = profileView.querySelector('.ig-profile-meta');
+    if (!profileHead || !profileMeta) return;
 
-    // 1. Hide titlebar username (keep + and settings buttons as transparent overlay)
+    // 1. Hide titlebar username
     const titlebarCenter = profileView.querySelector('.profile-titlebar-center');
     if (titlebarCenter) titlebarCenter.style.visibility = 'hidden';
 
-    // 2. Add cover masthead text via injected elements (positioned by CSS)
-    if (!profileView.querySelector('.profile-cover-masthead')) {
-      const masthead = document.createElement('div');
-      masthead.className = 'profile-cover-masthead';
-      masthead.innerHTML =
-        '<span class="cover-issue">ISSUE №47</span>' +
-        '<span class="cover-vol">VOL. III<br>2026</span>' +
-        '<span class="cover-feat">— a quiet collection —</span>';
-      const profileWrap = profileView.querySelector('.profile-wrap') || profileView;
-      profileWrap.insertBefore(masthead, profileWrap.firstChild);
-    }
+    // 2. Remove old cover masthead (Design 3 has no cover)
+    const oldMasthead = profileView.querySelector('.profile-cover-masthead');
+    if (oldMasthead) oldMasthead.remove();
 
-    // 3. Hide mood bubble
-    const moodBubble = document.getElementById('profileMoodBubble');
-    if (moodBubble) moodBubble.style.display = 'none';
-
-    // 4. Add @handle below display name (if not already present)
+    // 3. Add @handle below display name
     const displayName = document.getElementById('profileDisplayName');
     if (displayName && !document.getElementById('profileHandleDisplay')) {
       const handle = document.createElement('div');
@@ -988,7 +1004,6 @@ function bindAuth() {
       handle.className = 'profile-handle-display';
       displayName.insertAdjacentElement('afterend', handle);
     }
-    // Update handle text with real username
     const handleEl = document.getElementById('profileHandleDisplay');
     if (handleEl) {
       const realUsername = (State.user && State.user.username) ||
@@ -996,43 +1011,99 @@ function bindAuth() {
       handleEl.textContent = '@' + realUsername + ' · priv.spaca';
     }
 
-    // 5. Change stats labels: followers → readers, following → reading
+    // 4. Change stats labels: followers → readers, following → reading
     const statFollowers = profileView.querySelector('[data-stat="followers"] span');
     if (statFollowers) statFollowers.textContent = 'readers';
     const statFollowing = profileView.querySelector('[data-stat="following"] span');
     if (statFollowing) statFollowing.textContent = 'reading';
 
-    // 6. Change button labels
+    // 5. Change button labels — "Edit cover" + "View card"
     const editBtn = document.getElementById('editProfileBtn');
     if (editBtn) editBtn.textContent = 'Edit cover';
     const shareBtn = document.getElementById('shareProfileBtn');
-    if (shareBtn) shareBtn.textContent = 'Share card';
+    if (shareBtn) shareBtn.textContent = 'View card';
 
-    // 7. Hide "+ Add note / banner" button
-    const addNoteBtn = document.getElementById('profileAddNoteBtn');
-    if (addNoteBtn) addNoteBtn.style.display = 'none';
+    // 6. Build the letterpress card wrapper (once)
+    if (!profileMode.querySelector('.letterpress-card')) {
+      const memberNum = _getMemberNumber(State.user && State.user.id);
+      const joinDate = _formatJoinDate(State.user && State.user.createdAt);
 
-    // 8. Hide "Discover people" section
-    const discoverSection = document.getElementById('profileDiscoverSection');
-    if (discoverSection) discoverSection.style.display = 'none';
+      // Create card container
+      const card = document.createElement('div');
+      card.className = 'letterpress-card';
 
-    // 9. Hide tabs (grid/card icons)
-    const tabs = profileView.querySelector('.ig-tabs');
-    if (tabs) tabs.style.display = 'none';
+      // Title strip
+      const strip = document.createElement('div');
+      strip.className = 'letterpress-card-strip';
+      strip.innerHTML = '<span>PRIV SPACA · MEMBER ID</span><span class="serial">№' + memberNum + '</span>';
+      card.appendChild(strip);
 
-    // 10. Add "POSTS · THE ARCHIVE" section title above posts grid
+      // Card body — move avatar-wrap, display name, handle, bio, stats into it
+      const cardBody = document.createElement('div');
+      cardBody.className = 'letterpress-card-body';
+
+      // Move avatar wrap into card body
+      const avatarWrap = profileView.querySelector('.profile-avatar-wrap');
+      if (avatarWrap) cardBody.appendChild(avatarWrap);
+
+      // Move display name (ig-name) into card body
+      const nameEl = document.getElementById('profileDisplayName');
+      if (nameEl) cardBody.appendChild(nameEl);
+
+      // Move handle into card body
+      if (handleEl) cardBody.appendChild(handleEl);
+
+      // Move bio into card body
+      const bioEl = document.getElementById('profileBio');
+      if (bioEl) cardBody.appendChild(bioEl);
+
+      // Move stats into card body
+      const statsEl = profileView.querySelector('.ig-profile-stats');
+      if (statsEl) cardBody.appendChild(statsEl);
+
+      card.appendChild(cardBody);
+
+      // Footer strip — member number + join date + fingerprint
+      const foot = document.createElement('div');
+      foot.className = 'letterpress-card-foot';
+      foot.innerHTML =
+        '<div class="id-text">MEMBER №' + memberNum + ' · <span class="val">' + joinDate + '</span></div>' +
+        '<div class="fp-icon"><i data-lucide="fingerprint"></i></div>';
+      card.appendChild(foot);
+
+      // Insert card before the actions row
+      const actionsEl = profileView.querySelector('.ig-profile-actions');
+      if (actionsEl) {
+        actionsEl.insertAdjacentElement('beforebegin', card);
+      } else {
+        profileMode.appendChild(card);
+      }
+
+      // Refresh icons for the fingerprint
+      if (typeof refreshIcons === 'function') refreshIcons();
+    } else {
+      // Card already exists — just update the member number + join date
+      const card = profileMode.querySelector('.letterpress-card');
+      const memberNum = _getMemberNumber(State.user && State.user.id);
+      const joinDate = _formatJoinDate(State.user && State.user.createdAt);
+      const serialEl = card.querySelector('.letterpress-card-strip .serial');
+      if (serialEl) serialEl.textContent = '№' + memberNum;
+      const footText = card.querySelector('.letterpress-card-foot .id-text');
+      if (footText) footText.innerHTML = 'MEMBER №' + memberNum + ' · <span class="val">' + joinDate + '</span>';
+    }
+
+    // 7. Add "the archive" section title above posts grid
     const postsGrid = document.getElementById('profilePostsGrid');
     if (postsGrid && !profileView.querySelector('.profile-section-title-editorial')) {
       const sectionTitle = document.createElement('div');
       sectionTitle.className = 'profile-section-title-editorial';
-      sectionTitle.innerHTML = '<span class="lbl">posts · the archive</span><span class="line"></span>';
+      sectionTitle.innerHTML = '<span class="lbl">the archive</span><span class="sub">— entries —</span><span class="line"></span>';
       postsGrid.insertAdjacentElement('beforebegin', sectionTitle);
     }
   }
 
   // Run once on load and re-run when profile data refreshes
   applySakuraProfileEditorial();
-  // Re-apply after a delay (profile data loads async)
   setTimeout(applySakuraProfileEditorial, 1500);
   setTimeout(applySakuraProfileEditorial, 3000);
 
@@ -8535,14 +8606,10 @@ function bindProfileView() {
     $id('#profileViewMode').classList.remove('hidden');
     springIn($id('#profileViewMode'));
   });
-  // Share
+  // "View card" — opens the profile card sheet (was "Share profile")
   const sh = $id('#shareProfileBtn');
-  if (sh) sh.addEventListener('click', async () => {
-    const url = location.origin + '/#user=' + encodeURIComponent(State.user.username);
-    try {
-      if (navigator.share) await navigator.share({ title: '@' + State.user.username, url });
-      else { await navigator.clipboard.writeText(url); toast('Link copied'); }
-    } catch (_) {}
+  if (sh) sh.addEventListener('click', () => {
+    openProfileCard(null, State.user);
   });
   // Grid / card tabs
   $$('.ig-tab').forEach(t => t.addEventListener('click', () => {
