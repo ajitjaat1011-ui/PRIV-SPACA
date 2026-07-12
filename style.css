@@ -5614,8 +5614,14 @@ body{
    ============================================================ */
 .auth-shell{
   background:linear-gradient(180deg,var(--paper) 0%,var(--paper-2) 100%) !important;
-  position:relative;
-  overflow:hidden;
+  position:fixed !important;
+  inset:0 !important;
+  display:flex !important;
+  flex-direction:column !important;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  min-height:100vh !important;
+  min-height:100dvh !important;
 }
 .auth-shell::before{
   content:'';position:absolute;top:-40px;right:-40px;width:240px;height:240px;
@@ -5671,6 +5677,8 @@ body{
 .auth-main{
   position:relative;z-index:1;
   padding-top:40px !important;
+  flex:1 1 auto !important;
+  min-height:0;
   justify-content:flex-start;
 }
 
@@ -5999,7 +6007,10 @@ body{
   border-top:0 !important;
   flex-direction:row !important;
   justify-content:center !important;
+  align-items:center !important;
   gap:6px !important;
+  margin-top:auto !important;
+  flex-shrink:0 !important;
   padding:18px 16px 28px !important;
 }
 .auth-bottom-text{
@@ -6086,11 +6097,11 @@ body{
 }
 .profile-cover-masthead .cover-feat{
   position:absolute;
-  bottom:16px;left:16px;right:16px;
+  bottom:50px;left:16px;right:16px;
   font-family:var(--serif);
   font-style:italic;
   font-weight:700;
-  font-size:14px;
+  font-size:13px;
   color:rgba(255,255,255,.95);
   text-align:center;
   text-shadow:0 1px 4px rgba(0,0,0,.2);
@@ -6129,7 +6140,7 @@ body{
   display:flex !important;
   flex-direction:column !important;
   align-items:center !important;
-  gap:14px !important;
+  gap:20px !important;
   padding:0 16px 6px !important;
   background:transparent !important;
   position:relative;z-index:1;
@@ -6139,27 +6150,19 @@ body{
 .profile-avatar-wrap{
   position:relative;
   margin-top:-32px;
+  margin-bottom:8px;
 }
 .profile-avatar-wrap .avatar{
   border:5px solid var(--paper) !important;
   box-shadow:0 12px 32px rgba(0,0,0,.18) !important;
 }
-
-/* Mood bubble — position below-right of avatar so it doesn't collide
-   with the cover gradient or get clipped */
+/* Hide the "+" (Add Story) button — not in the target design, causes overlap */
+.profile-avatar-add{
+  display:none !important;
+}
+/* Hide mood bubble — not in the target design */
 .profile-mood-bubble{
-  position:absolute !important;
-  top:auto !important;
-  bottom:-10px !important;
-  right:-20px !important;
-  left:auto !important;
-  font-family:var(--script) !important;
-  background:var(--surface) !important;
-  border:1px solid var(--paper-hairline) !important;
-  color:var(--sakura-deep) !important;
-  box-shadow:var(--shadow-sm) !important;
-  white-space:nowrap !important;
-  z-index:3;
+  display:none !important;
 }
 
 /* Stats — centered row below avatar with top+bottom hairlines */
@@ -6199,7 +6202,7 @@ body{
 /* Meta — centered display name + bio */
 .ig-profile-meta{
   background:transparent !important;
-  padding:12px 24px 0 !important;
+  padding:16px 24px 0 !important;
   text-align:center !important;
 }
 .ig-name, #profileDisplayName{
