@@ -5,15 +5,15 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v102';
+const SW_VERSION = 'priv-spaca-v103';
 const STATIC_CACHE = 'priv-spaca-static-v94';
 const RUNTIME_CACHE = 'priv-spaca-runtime-v94';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=128',
-  '/app.min.js?v=128',
+  '/style.min.css?v=129',
+  '/app.min.js?v=129',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',
@@ -57,9 +57,9 @@ self.addEventListener('fetch', (event) => {
   // and users always see the latest code. Only fall back to cache when
   // the network fails (e.g. offline).
   if (url.pathname === '/' || url.pathname === '/index.html' ||
-      /\/(app|style)\.js(\?|$)/i.test(url.pathname) ||
-      /\/style\.css(\?|$)/i.test(url.pathname) ||
-      url.pathname === '/sw.js' || /\/sw\.js(\?|$)/i.test(url.pathname)) {
+      /\/(app|style)(?:\.min)?\.js(\?|$)/i.test(url.pathname) ||
+      /\/style(?:\.min)?\.css(\?|$)/i.test(url.pathname) ||
+      /\/sw\.js(\?|$)/i.test(url.pathname)) {
     event.respondWith(
       fetch(req).then((res) => {
         if (res && res.ok) {
@@ -88,7 +88,16 @@ self.addEventListener('fetch', (event) => {
             });
           }
           return res;
-        }).catch(() => cached)
+        }).catch(() => {
+          // Cache miss + network fail (offline): return a 1x1 transparent
+          // placeholder so the browser doesn't throw "Intercepted response
+          // was undefined". Previously this returned `cached` which was
+          // undefined, causing a console error on every failed image load.
+          return new Response(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>',
+            { status: 200, headers: { 'Content-Type': 'image/svg+xml' } }
+          );
+        })
       )
     );
     return;

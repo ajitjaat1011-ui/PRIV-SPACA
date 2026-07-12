@@ -5835,6 +5835,23 @@ body{
   flex-shrink:0;
   margin-top:1px;
 }
+/* "Terms & Community Guidelines" clickable link in login terms text */
+.auth-terms-link{
+  background:transparent !important;
+  border:0 !important;
+  padding:0 !important;
+  font-family:var(--sans) !important;
+  font-size:11px !important;
+  font-weight:600 !important;
+  color:var(--accent) !important;
+  text-decoration:underline !important;
+  cursor:pointer !important;
+  display:inline !important;
+}
+.auth-terms-link:hover{
+  text-decoration:none !important;
+  opacity:.8;
+}
 
 .auth-eyebrow{
   font-family:var(--mono) !important;

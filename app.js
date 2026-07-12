@@ -35,11 +35,10 @@ const State = {
 // ====== Self-heal config ======
 // This version must match SW_VERSION in sw.js. If it doesn't, the page is
 // running stale code and needs to heal.
-// SECURITY/PWA FIX: previously APP_VERSION was 'priv-spaca-v82' while sw.js
-// had 'priv-spaca-v83'. SelfHeal.bootHeal() detected this on every page load
-// and wiped Cache API + unregistered the SW — breaking offline support and
-// thrashing the image cache forever. Bumped to v83 to match sw.js.
-const APP_VERSION = 'priv-spaca-v93.11';
+// SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
+// otherwise SelfHeal.bootHeal() detects a mismatch on every page load
+// and wipes caches + forces reload. The build script bumps both together.
+const APP_VERSION = 'priv-spaca-v103';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -234,8 +233,10 @@ async function api(path, options = {}) {
           try { sessionStorage.setItem('ps_version_reload_done', '1'); } catch (_) {}
           location.replace('/?v=' + Date.now());
         }, 800);
-        // Return a promise that never resolves so the caller hangs cleanly
-        return new Promise(() => {});
+        // Resolve with null so callers can clean up (e.g., re-enable buttons
+        // in finally blocks). Previously returned a never-resolving promise
+        // which hung the caller forever.
+        return null;
       }
       if (res.status === 401 && State.token && !path.startsWith('/auth/')) {
         logout(true);
@@ -494,7 +495,7 @@ function refreshIcons(scopeEl) {
 // latent bug where one path preserved ps_close_friends and another didn't.
 const PROTECTED_LS_KEYS = [
   'ps_token', 'ps_user', 'ps_theme', 'ps_accent',
-  'ps_close_friends', 'ps_saved_posts', 'ps_secret', 'ps_story_views',
+  'ps_closeFriends', 'ps_saved_posts', 'ps_secret', 'ps_story_views',
   'ps_sw_reload_once', 'ps_version_reload_done', 'ps_heal_attempts',
   'ps_rtcLastSignalAt'
 ];
@@ -914,10 +915,24 @@ function bindAuth() {
       terms.className = 'auth-terms';
       terms.innerHTML =
         '<div class="check"></div>' +
-        '<span>By continuing you agree to our Terms &amp; Privacy Policy. Your conversations stay encrypted.</span>';
+        '<span>By continuing you agree to our <button type="button" class="auth-terms-link">Terms &amp; Community Guidelines</button>. Your conversations stay encrypted.</span>';
       const errorDiv = loginForm.querySelector('.auth-error');
       if (errorDiv) loginForm.insertBefore(terms, errorDiv);
       else loginForm.appendChild(terms);
+      // Wire the terms link to open the terms modal
+      const termsLink = terms.querySelector('.auth-terms-link');
+      if (termsLink) {
+        termsLink.addEventListener('click', (e) => {
+          e.preventDefault();
+          const m = document.getElementById('termsModal');
+          if (m) {
+            m.classList.remove('hidden');
+            const card = m.querySelector('.modal-card');
+            if (card && typeof springIn === 'function') springIn(card, { duration: 0.28 });
+            if (typeof refreshIcons === 'function') refreshIcons();
+          }
+        });
+      }
     }
 
     // 7. Change bottom CTA text
@@ -1107,7 +1122,10 @@ function bindAuth() {
         displayName: String(fd.get('displayName') || '').trim(),
         password: String(fd.get('password') || ''),
         pin,
-        termsAccepted: true,
+        // Send the real checkbox state — previously always sent `true`
+        // even if the checkbox was missing from the DOM (e.g., ad blocker
+        // or DOM mutation), allowing terms bypass.
+        termsAccepted: !!(termsBox && termsBox.checked),
         termsVersion: '1.0',
       }});
       acceptSession(data);
@@ -3224,10 +3242,15 @@ function showAttachPreview(att) {
 }
 
 function clearAttach() {
+  // Revoke any blob URL to prevent memory leaks (each URL.createObjectURL
+  // holds the file in memory until explicitly revoked).
+  const imgEl = $id('#attachThumb');
+  if (imgEl && imgEl.src && imgEl.src.startsWith('blob:')) {
+    URL.revokeObjectURL(imgEl.src);
+  }
   State.attach = null;
   $id('#attachPreview').classList.add('hidden');
   $id('#attachPreview').classList.remove('audio-attach');
-  const imgEl = $id('#attachThumb');
   if (imgEl) {
     imgEl.src = '';
     imgEl.style.display = 'block';
@@ -3621,8 +3644,13 @@ async function pollNotifications() {
     (_notifData && _notifData.notifications || []).forEach(n => {
       if (n.seenAt || n.kind !== 'message') return;
       if (!_latestUnreadMsg || (n.createdAt || 0) > _latestUnreadMsg.createdAt) {
+        // Use fromSnapshot (the server-embedded user object) as the
+        // fallback — previously used flat fields (fromUserName etc.)
+        // that don't exist on the server response, causing "undefined"
+        // to appear in the topbar banner.
         const sender = (State.members || []).find(u => u.id === n.fromUserId) ||
-                       { displayName: n.fromUserName, username: n.fromUsername, photoUrl: n.fromUserPhoto };
+                       n.fromSnapshot ||
+                       { displayName: 'Someone', username: '', photoUrl: '' };
         _latestUnreadMsg = {
           sender,
           roomId: n.roomId || 'general-group',
@@ -5596,9 +5624,33 @@ function bindStoryReplyUI() {
     const inp = $id('#storyReplyInput'); if (inp) inp.focus();
   });
   const sb = $id('#storyShareIconBtn');
-  if (sb) sb.addEventListener('click', (e) => {
+  if (sb) sb.addEventListener('click', async (e) => {
     e.preventDefault(); e.stopPropagation();
-    toast('Story link copied to clipboard!', 'success');
+    // Actually copy/share a story link — previously this was a placebo
+    // that just showed a "copied" toast without copying anything.
+    const storyId = _currentStoryItem && _currentStoryItem.id;
+    if (!storyId) { toast('Story link not available', 'error'); return; }
+    const shareUrl = location.origin + '/?story=' + encodeURIComponent(storyId);
+    // Try Web Share API first (mobile-native), fall back to clipboard
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'PRIV SPACA story', url: shareUrl });
+        return;
+      } catch (_) { /* user cancelled — fall through to clipboard */ }
+    }
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast('Story link copied to clipboard!', 'success');
+    } catch (_) {
+      // Clipboard API failed (e.g., non-secure context) — select+copy fallback
+      const ta = document.createElement('textarea');
+      ta.value = shareUrl;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); toast('Story link copied!', 'success'); }
+      catch (_) { toast('Could not copy link', 'error'); }
+      document.body.removeChild(ta);
+    }
   });
 }
 
