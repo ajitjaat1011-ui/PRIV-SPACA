@@ -2382,6 +2382,78 @@ async function uploadToCloudinary(dataUrl, folder, publicId) {
 }
 
 // ---------- Upload photo (Cloudinary -> GitHub CDN -> inline fallback) ----------
+
+const MEDIA_MIME_EXT = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+};
+const MEDIA_MAX_BYTES = 24 * 1024 * 1024;
+function _mediaKindFromMime(mime) {
+  mime = String(mime || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  return '';
+}
+
+app.post('/api/upload-media', requireAuth, async (c) => {
+  try {
+    const me = c.get('userId');
+    const body = await c.req.json().catch(() => ({}));
+    const dataUrl = body && body.dataUrl;
+    if (!dataUrl || typeof dataUrl !== 'string') return c.json({ error: 'dataUrl required' }, 400);
+    const m = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
+    if (!m) return c.json({ error: 'Invalid media payload' }, 400);
+    const mime = String((body && body.mimeType) || m[1] || '').toLowerCase();
+    const ext = MEDIA_MIME_EXT[mime];
+    const kind = _mediaKindFromMime(mime);
+    if (!ext || !kind) return c.json({ error: 'Unsupported media type' }, 415);
+    const bin = Uint8Array.from(atob(m[2]), ch => ch.charCodeAt(0));
+    if (!bin.length) return c.json({ error: 'Empty media' }, 400);
+    if (bin.length > MEDIA_MAX_BYTES) return c.json({ error: 'Media too large (24MB max)' }, 413);
+    const safeName = String((body && body.name) || 'media').replace(/[^a-z0-9_.-]+/gi, '-').slice(-64) || ('media.' + ext);
+    const key = `media/${Date.now()}-${uid('m')}-${safeName.replace(/\.[^.]+$/, '')}.${ext}`;
+
+    // Preferred architectural path: Cloudflare R2. The current Pages project has
+    // no binding yet, but this goes live automatically once MEDIA_BUCKET is bound
+    // and MEDIA_PUBLIC_BASE_URL points at its public/custom domain.
+    if (c.env && c.env.MEDIA_BUCKET && typeof c.env.MEDIA_BUCKET.put === 'function') {
+      await c.env.MEDIA_BUCKET.put(key, bin, {
+        httpMetadata: { contentType: mime, cacheControl: 'public, max-age=31536000, immutable' },
+        customMetadata: { uploader: String(me || ''), type: kind },
+      });
+      const base = String(c.env.MEDIA_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+      const url = base ? `${base}/${key}` : `/media/${key}`;
+      return c.json({ url, mediaUrl: url, type: kind, mimeType: mime, bytes: bin.length, storage: 'cloudflare-r2' });
+    }
+
+    if (repoStorageConfigured()) {
+      const ghUrl = `https://api.github.com/repos/${GH_REPO}/contents/${key}`;
+      const r = await fetch(ghUrl, {
+        method: 'PUT',
+        headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'PRIV-SPACA' },
+        body: JSON.stringify({ message: `upload media ${key}`, content: m[2], branch: GH_BRANCH }),
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        console.error('[upload-media] GitHub write failed', r.status, txt.slice(0, 160));
+        return c.json({ error: 'Media storage failed' }, 502);
+      }
+      const rawUrl = `https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/${key}`;
+      return c.json({ url: rawUrl, mediaUrl: rawUrl, type: kind, mimeType: mime, bytes: bin.length, storage: 'github-media' });
+    }
+
+    return c.json({ error: 'Media storage not configured' }, 503);
+  } catch (e) {
+    console.error('[upload-media]', e && e.stack || e);
+    return c.json({ error: 'Upload failed' }, 500);
+  }
+});
+
 app.post('/api/upload-photo', requireAuth, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));

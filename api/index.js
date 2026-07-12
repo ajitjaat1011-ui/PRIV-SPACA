@@ -127,53 +127,63 @@ function rateLimit({ key, limit, windowMs }) {
   b.count++;
   return { allowed: b.count <= limit, remaining: Math.max(0, limit - b.count), resetAt: b.resetAt };
 }
-let _rateLimitSql = null;
-let _rateLimitNeonReady = false;
-function isRateLimitNeonConfigured() {
-  return !!DATABASE_URL;
-}
-function rateLimitSql() {
-  if (!_rateLimitSql) _rateLimitSql = neon(DATABASE_URL);
-  return _rateLimitSql;
+let _rateLimitStoreReady = false;
+function isSharedRateLimitConfigured() {
+  // Turso is the only supported durable rate-limit store in the Node/Express
+  // implementation. Older Neon-specific code was left behind after the Turso
+  // migration and could reference an undefined `neon()` helper if DATABASE_URL
+  // happened to be set. Keep the limiter durable when Turso is configured and
+  // otherwise fall back safely to the in-memory limiter.
+  return isTursoConfigured();
 }
 async function ensureRateLimitStore() {
-  if (!isRateLimitNeonConfigured()) return false;
-  if (_rateLimitNeonReady) return true;
-  await rateLimitSql()`CREATE TABLE IF NOT EXISTS priv_spaca_rate_limits (
+  if (!isSharedRateLimitConfigured()) return false;
+  if (_rateLimitStoreReady) return true;
+  await tursoEnsure();
+  await tursoClient().execute(`CREATE TABLE IF NOT EXISTS ps_rate_limits (
     key TEXT PRIMARY KEY,
     count INTEGER NOT NULL,
-    reset_at BIGINT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )`;
-  await rateLimitSql()`CREATE INDEX IF NOT EXISTS idx_rate_limits_reset_at ON priv_spaca_rate_limits (reset_at)`;
-  _rateLimitNeonReady = true;
+    reset_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
+  await tursoClient().execute('CREATE INDEX IF NOT EXISTS idx_ps_rate_limits_reset_at ON ps_rate_limits (reset_at)');
+  _rateLimitStoreReady = true;
   return true;
 }
 async function sharedRateLimit({ key, limit, windowMs }) {
-  if (!isRateLimitNeonConfigured()) return rateLimit({ key, limit, windowMs });
+  if (!isSharedRateLimitConfigured()) return rateLimit({ key, limit, windowMs });
   const now = Date.now();
   const nextResetAt = now + windowMs;
   try {
     await ensureRateLimitStore();
-    const rows = await rateLimitSql()`INSERT INTO priv_spaca_rate_limits AS rl (key, count, reset_at, updated_at)
-      VALUES (${key}, 1, ${nextResetAt}, NOW())
-      ON CONFLICT (key) DO UPDATE SET
-        count = CASE WHEN rl.reset_at <= ${now} THEN 1 ELSE rl.count + 1 END,
-        reset_at = CASE WHEN rl.reset_at <= ${now} THEN ${nextResetAt} ELSE rl.reset_at END,
-        updated_at = NOW()
-      RETURNING count, reset_at`;
+    const rs = await tursoClient().execute({
+      sql: `INSERT INTO ps_rate_limits (key, count, reset_at, updated_at)
+            VALUES (?, 1, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              count = CASE WHEN ps_rate_limits.reset_at <= ? THEN 1 ELSE ps_rate_limits.count + 1 END,
+              reset_at = CASE WHEN ps_rate_limits.reset_at <= ? THEN ? ELSE ps_rate_limits.reset_at END,
+              updated_at = ?
+            RETURNING count, reset_at`,
+      args: [key, nextResetAt, now, now, now, nextResetAt, now],
+    });
+    const row = rs && rs.rows && rs.rows[0] ? rs.rows[0] : { count: 1, reset_at: nextResetAt };
     if (Math.random() < 0.01) {
-      rateLimitSql()`DELETE FROM priv_spaca_rate_limits WHERE reset_at < ${now - (24 * 60 * 60 * 1000)}`.catch(() => {});
+      tursoClient().execute({
+        sql: 'DELETE FROM ps_rate_limits WHERE reset_at < ?',
+        args: [now - (24 * 60 * 60 * 1000)],
+      }).catch(() => {});
     }
-    const row = rows && rows[0] ? rows[0] : { count: 1, reset_at: nextResetAt };
-    const count = Number(row.count || 0);
-    const resetAt = Number(row.reset_at || nextResetAt);
-    return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetAt };
+    return {
+      allowed: Number(row.count) <= limit,
+      remaining: Math.max(0, limit - Number(row.count)),
+      resetAt: Number(row.reset_at) || nextResetAt,
+    };
   } catch (e) {
-    console.warn('[sharedRateLimit] falling back to in-memory limiter:', e && e.message);
+    console.warn('[sharedRateLimit] Falling back to in-memory limiter:', e && e.message);
     return rateLimit({ key, limit, windowMs });
   }
 }
+
 function clientIp(req) {
   // Prefer Cloudflare's authoritative header (set at the edge, unspoofable).
   // Then x-real-ip (set by trusted reverse proxies), then the LAST hop of
@@ -1863,6 +1873,69 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
  * Requires GITHUB_PAT with repo scope. Falls back to returning the data URL itself
  * (which works but bloats DB) if upload fails.
  */
+
+const MEDIA_MIME_EXT = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+};
+const MEDIA_MAX_BYTES = 24 * 1024 * 1024;
+function _mediaKindFromMime(mime) {
+  mime = String(mime || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  return '';
+}
+
+app.post('/api/upload-media', authMiddleware, async (req, res) => {
+  try {
+    const { dataUrl, mimeType, name } = req.body || {};
+    if (!dataUrl || typeof dataUrl !== 'string') return res.status(400).json({ error: 'dataUrl required' });
+    const m = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Invalid media payload' });
+    const mime = String(mimeType || m[1] || '').toLowerCase();
+    const ext = MEDIA_MIME_EXT[mime];
+    const kind = _mediaKindFromMime(mime);
+    if (!ext || !kind) return res.status(415).json({ error: 'Unsupported media type' });
+    const buf = Buffer.from(m[2], 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'Empty media' });
+    if (buf.length > MEDIA_MAX_BYTES) return res.status(413).json({ error: 'Media too large (24MB max)' });
+
+    // Primary durable host is still GitHub Contents where configured. R2/Images is the
+    // desired next hop, but this Node harness has no binding; keep the route contract
+    // generic so production can switch storage without frontend changes.
+    if (repoStorageConfigured()) {
+      const safeName = String(name || 'media').replace(/[^a-z0-9_.-]+/gi, '-').slice(-64) || ('media.' + ext);
+      const path = `media/${Date.now()}-${uid('m')}-${safeName.replace(/\.[^.]+$/, '')}.${ext}`;
+      const url = `https://api.github.com/repos/${GH_REPO}/contents/${path}`;
+      const body = { message: `upload media ${path}`, content: buf.toString('base64'), branch: GH_BRANCH };
+      const r = await fetchFn(url, {
+        method: 'PUT',
+        headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'PRIV-SPACA' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        console.error('[upload-media] GitHub write failed', r.status, txt.slice(0, 160));
+        return res.status(502).json({ error: 'Media storage failed' });
+      }
+      const rawUrl = `https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/${path}`;
+      return res.json({ url: rawUrl, mediaUrl: rawUrl, type: kind, mimeType: mime, bytes: buf.length, storage: 'github-media' });
+    }
+
+    // Local/dev fallback: return the original data URL so stories still work in
+    // the in-memory dev harness without GitHub secrets.
+    return res.json({ url: dataUrl, mediaUrl: dataUrl, type: kind, mimeType: mime, bytes: buf.length, storage: 'inline-dev' });
+  } catch (e) {
+    console.error('[upload-media]', e && e.stack || e);
+    return res.status(500).json({ error: 'Upload failed' });
+  }
+});
+
 app.post('/api/upload-photo', authMiddleware, async (req, res) => {
   try {
     const { dataUrl, kind } = req.body || {};
