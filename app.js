@@ -29,7 +29,14 @@ const State = {
   attach: null,
   postAttach: null,
   pollTimers: {},
-  rtcLastSignalAt: Math.max(Number(safeLocalGet('ps_rtcLastSignalAt', 0) || 0), Date.now() - 5000),
+  // Start at 0 on purpose. The watermark is re-derived from the SERVER clock on
+  // the very first pollRTCSignals() response (see RTC_POLL_GRACE_MS). Seeding
+  // it from the *client* clock (the old `Date.now() - 5000`) meant any device
+  // whose clock ran a few seconds fast sent a `since` in the server's future,
+  // so every incoming call offer was filtered out server-side and the callee
+  // never saw the incoming-call popup. The server already clamps history to the
+  // last 45s, so `since=0` cannot replay old calls.
+  rtcLastSignalAt: 0,
 };
 
 // ====== Self-heal config ======
@@ -38,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v104';
+const APP_VERSION = 'priv-spaca-v105';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3589,7 +3596,9 @@ function handleRealtimeEvent(type, evt) {
     loadFollowRequests(true).catch(() => {});
     loadMembers(true).catch(() => {});
   } else if (type === 'rtc_signal') {
-    handleRTCSignal(data);
+    // Pass the whole event: normalizeRtcSignal() unwraps `.data` itself and
+    // needs the top-level row id for cross-transport de-duplication.
+    handleRTCSignal(evt);
   }
 }
 
@@ -7413,16 +7422,54 @@ async function togglePushSubscription() {
 }
 
 
+// Ids of RTC signal rows we've already fed to handleRTCSignal(). Bounded.
+const _seenRtcSignalIds = new Set();
+function _rtcSignalAlreadySeen(id) {
+  if (!id) return false;
+  if (_seenRtcSignalIds.has(id)) return true;
+  _seenRtcSignalIds.add(id);
+  if (_seenRtcSignalIds.size > 200) {
+    const it = _seenRtcSignalIds.values();
+    for (let i = 0; i < 100; i++) _seenRtcSignalIds.delete(it.next().value);
+  }
+  return false;
+}
+
+/**
+ * Poll for WebRTC signalling.
+ *
+ * The watermark (`since`) is derived from the SERVER's clock (`data.now`) with a
+ * deliberate grace window, never from individual row timestamps. Two bugs came
+ * from the old per-row approach:
+ *   1. The watermark advanced even for rows handleRTCSignal() couldn't parse,
+ *      so a sibling row for the SAME call written with an equal/earlier
+ *      timestamp was then excluded by the server's `created_at > since` filter
+ *      => the offer was lost forever and user B never got the popup.
+ *   2. `rtcLastSignalAt` was seeded from the *client* clock (Date.now() - 5s).
+ *      A phone whose clock ran even 6s fast started with a `since` in the
+ *      server's future, so every incoming offer was filtered out server-side.
+ * Re-delivery inside the grace window is harmless: it's deduped by row id here
+ * and by SDP fingerprint inside handleRTCSignal().
+ */
+const RTC_POLL_GRACE_MS = 6000;
 async function pollRTCSignals() {
   if (!State.token) return;
   try {
-    const data = await api('/rtc/signals?since=' + encodeURIComponent(State.rtcLastSignalAt || 0));
-    const signals = data.signals || [];
-    signals.forEach(sig => {
-      if (sig.createdAt && sig.createdAt > State.rtcLastSignalAt) {
-        State.rtcLastSignalAt = sig.createdAt;
-        localStorage.setItem('ps_rtcLastSignalAt', String(State.rtcLastSignalAt));
+    const since = Math.max(0, Number(State.rtcLastSignalAt) || 0);
+    const data = await api('/rtc/signals?since=' + encodeURIComponent(since));
+    const serverNow = Number(data && data.now) || 0;
+    if (serverNow > 0) {
+      const nextWatermark = serverNow - RTC_POLL_GRACE_MS;
+      if (nextWatermark > (Number(State.rtcLastSignalAt) || 0)) {
+        State.rtcLastSignalAt = nextWatermark;
+        try { localStorage.setItem('ps_rtcLastSignalAt', String(nextWatermark)); } catch (_) {}
       }
+    }
+    const signals = data && Array.isArray(data.signals) ? data.signals : [];
+    signals.forEach(raw => {
+      const sig = normalizeRtcSignal(raw);
+      if (!sig) { console.warn('[pollRTC] unparseable signal row', raw && Object.keys(raw).join(',')); return; }
+      if (_rtcSignalAlreadySeen(sig.id)) return;
       handleRTCSignal(sig);
     });
   } catch (e) { console.warn('[pollRTC] failed:', e && e.message); }
@@ -9815,9 +9862,40 @@ async function startCall(video) {
   }
 }
 
+/**
+ * Normalize any realtime RTC payload shape into { id, createdAt, fromId, author, signal }.
+ *
+ * The signal can reach us three ways, historically with three shapes:
+ *   1. GET /api/rtc/signals  -> flat     { id, createdAt, fromId, author, signal }
+ *   2. SSE 'rtc_signal'      -> envelope { id, ts, kind, data: { fromId, author, signal } }
+ *   3. legacy ps_events rows -> envelope stored durably, then spread flat by the
+ *                               API, yielding { id, createdAt, ts, kind, data }
+ * Shape 3 has NO top-level `signal`, so the old `if (!data.signal) return;`
+ * dropped it silently — that is why the callee never showed the incoming-call
+ * popup while the caller sat on "Calling…". Unwrap instead of dropping.
+ */
+function normalizeRtcSignal(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  let obj = raw;
+  let guard = 0;
+  while (obj && !obj.signal && obj.data && typeof obj.data === 'object' && guard++ < 4) obj = obj.data;
+  if (!obj || !obj.signal || typeof obj.signal !== 'object') return null;
+  return {
+    id: raw.id || obj.id || '',
+    createdAt: Number(raw.createdAt || raw.ts || obj.createdAt || obj.ts || 0) || 0,
+    fromId: obj.fromId || (obj.author && obj.author.id) || '',
+    author: obj.author || null,
+    signal: obj.signal,
+  };
+}
+
 // ---- Handle incoming signals ----
-async function handleRTCSignal(data) {
-  if (!data || !data.signal) return;
+async function handleRTCSignal(rawData) {
+  const data = normalizeRtcSignal(rawData);
+  if (!data) {
+    if (rawData) console.warn('[RTC] dropped unrecognized signal payload', Object.keys(rawData).join(','));
+    return;
+  }
   const peerId = data.fromId;
   const signal = data.signal;
   const author = data.author;

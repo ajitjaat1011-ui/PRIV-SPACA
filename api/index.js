@@ -1490,7 +1490,11 @@ async function sendWebPush(db, recipientId, payload) {
 const _eventQueues = new Map();       // userId -> [{ id, ts, kind, data }]
 const _eventSubscribers = new Map();  // userId -> Set of {res, lastEventId, closed}
 
-function _pushEvent(userId, kind, data) {
+// `opts` is accepted for parity with api/cf-worker.js (`{ persist: false }`
+// skips the durable ps_events row there). This Express build has no durable
+// event table, so opts is a no-op — but the signature must match so shared
+// call-sites behave identically on both runtimes.
+function _pushEvent(userId, kind, data, opts = {}) {
   if (!userId) return;
   const evt = { id: 'evt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ts: Date.now(), kind, data };
   // Queue it
@@ -3050,18 +3054,27 @@ app.post('/api/rtc/signal', authMiddleware, async (req, res) => {
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: req.userId, displayName: 'Member', username: 'member' };
   const payload = { fromId: req.userId, author, signal };
   const now = nowMs();
-  _pushEvent(targetId, 'rtc_signal', payload);
+  // persist:false — the canonical ps_events row is written below in the ONE
+  // flat shape the client understands (parity with api/cf-worker.js).
+  _pushEvent(targetId, 'rtc_signal', payload, { persist: false });
 
   if (isTursoConfigured()) {
     const rtcId = uid('rtc');
-    const fullRow = { id: rtcId, createdAt: now, ...payload };
-    await tursoClient().execute({
+    const fullRow = { id: rtcId, createdAt: now, signalType, ...payload };
+    let wrote = await tursoClient().execute({
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?)',
       args: [rtcId, targetId, 'rtc_signal', JSON.stringify(fullRow), now]
-    }).catch(e => console.warn('[rtc] event insert failed:', e && e.message));
+    }).then(() => true).catch(e => { console.warn('[rtc] event insert failed:', e && e.message); return false; });
+    if (!wrote) {
+      wrote = await tursoClient().execute({
+        sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
+        args: [rtcId, targetId, 'rtc_signal', JSON.stringify(fullRow), now]
+      }).then(() => true).catch(e => { console.warn('[rtc] event insert retry failed:', e && e.message); return false; });
+    }
     if (Math.random() < 0.1) {
       tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ? AND kind = ?', args: [now - 60000, 'rtc_signal'] }).catch(() => {});
     }
+    if (!wrote) return res.status(503).json({ error: 'Call signal storage unavailable. Please retry.' });
     return res.json({ ok: true });
   }
 
@@ -3079,6 +3092,41 @@ app.post('/api/rtc/signal', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Normalize a ps_events / rtcSignals row into the ONE flat shape the client's
+ * handleRTCSignal() understands: { id, createdAt, fromId, author, signal }.
+ * Kept byte-for-byte in parity with api/cf-worker.js.
+ */
+function normalizeRtcSignalRow(rowId, createdAt, rawData) {
+  let obj;
+  try { obj = typeof rawData === 'string' ? JSON.parse(rawData) : (rawData || null); } catch (_) { return null; }
+  if (!obj || typeof obj !== 'object') return null;
+  let guard = 0;
+  while (obj && !obj.signal && obj.data && typeof obj.data === 'object' && guard++ < 4) obj = obj.data;
+  if (!obj || !obj.signal || typeof obj.signal !== 'object') return null;
+  return {
+    id: rowId,
+    createdAt: Number(createdAt) || nowMs(),
+    fromId: obj.fromId || (obj.author && obj.author.id) || '',
+    author: obj.author || null,
+    signal: obj.signal,
+  };
+}
+
+function dedupeRtcSignals(list) {
+  const seen = new Set();
+  const out = [];
+  for (const s of list) {
+    const sig = s.signal || {};
+    const finger = JSON.stringify(sig.offer || sig.answer || sig.candidate || sig.type || '').slice(0, 200);
+    const key = (s.fromId || '') + '|' + (sig.type || '') + '|' + finger;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
+}
+
 app.get('/api/rtc/signals', authMiddleware, async (req, res) => {
   const since = Number(req.query.since || 0) || 0;
   const myId = req.userId;
@@ -3089,22 +3137,20 @@ app.get('/api/rtc/signals', authMiddleware, async (req, res) => {
       sql: 'SELECT id, data, created_at FROM ps_events WHERE user_id = ? AND kind = ? AND created_at > ? AND created_at >= ? ORDER BY created_at ASC LIMIT 50',
       args: [myId, 'rtc_signal', since, now - 45000]
     }).catch(() => ({ rows: [] }));
-    const signals = (rs.rows || []).map(r => {
-      try {
-        const obj = JSON.parse(r.data);
-        return { id: r.id, createdAt: Number(r.created_at || now), ...obj };
-      } catch { return null; }
-    }).filter(Boolean);
+    const signals = dedupeRtcSignals(
+      (rs.rows || []).map(r => normalizeRtcSignalRow(r.id, r.created_at, r.data)).filter(Boolean)
+    );
     return res.json({ signals, now });
   }
 
   const db = await fetchDatabase();
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
-  const signals = db.rtcSignals
-    .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 20000))
+  const signals = dedupeRtcSignals(db.rtcSignals
+    .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 45000))
     .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
     .slice(-30)
-    .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
+    .map(x => normalizeRtcSignalRow(x.id, x.createdAt, x.payload))
+    .filter(Boolean));
   res.json({ signals, now });
 });
 

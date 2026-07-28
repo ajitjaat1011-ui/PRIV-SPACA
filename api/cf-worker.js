@@ -1593,7 +1593,18 @@ async function authSubjectRateLimit(c, subject, limit = 10) {
 // Bug #9 addressed in index.js for Node environments. Here, queue limits suffice.
 const _eventQueues = new Map();
 const _eventSubscribers = new Map();
-function _pushEvent(userId, kind, data) {
+// `opts.persist === false` keeps the event in-memory / SSE only and skips the
+// ps_events row. Used by POST /api/rtc/signal, which writes its OWN canonical
+// row: writing both produced TWO ps_events rows for the same WebRTC signal in
+// two different shapes (envelope `{id,ts,kind,data}` vs flat
+// `{id,createdAt,fromId,author,signal}`). GET /api/rtc/signals spread whichever
+// row it read, so the envelope row reached the client as `{id,createdAt,ts,
+// kind,data}` with NO top-level `signal`. handleRTCSignal() bails on that, and
+// the client had already advanced its `since` watermark past it — so the flat
+// sibling row (written with an equal/earlier timestamp) was then filtered out
+// by `created_at > since` and the offer was lost forever. Net effect: the
+// caller saw "Calling…" but the callee never got the incoming-call popup.
+function _pushEvent(userId, kind, data, opts = {}) {
   if (!userId) return;
   const evt = { id: 'evt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ts: Date.now(), kind, data };
   if (!_eventQueues.has(userId)) _eventQueues.set(userId, []);
@@ -1606,6 +1617,7 @@ function _pushEvent(userId, kind, data) {
     try { sub.write(`id: ${evt.id}\nevent: ${evt.kind}\ndata: ${JSON.stringify(evt)}\n\n`); }
     catch (_) { sub.closed = true; }
   }
+  if (opts.persist === false) return evt;
   if (isTursoPrimary()) {
     tursoEnsure().then(() => tursoClient().execute({
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
@@ -3449,18 +3461,30 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
   const author = me ? { id: me.id, username: me.username, displayName: me.displayName, photoUrl: me.photoUrl || '' } : { id: myId, displayName: 'Member', username: 'member' };
   const payload = { fromId: myId, author, signal };
   const now = nowMs();
-  _pushEvent(targetId, 'rtc_signal', payload);
+  // persist:false — the canonical ps_events row is written below in the ONE
+  // flat shape the client understands. See the note above _pushEvent().
+  _pushEvent(targetId, 'rtc_signal', payload, { persist: false });
 
   if (isTursoConfigured()) {
     const rtcId = uid('rtc');
-    const fullRow = { id: rtcId, createdAt: now, ...payload };
-    await tursoClient().execute({
+    const fullRow = { id: rtcId, createdAt: now, signalType, ...payload };
+    // A silently-dropped INSERT here is exactly the "caller rings forever,
+    // callee never sees the popup" failure, so retry once and then tell the
+    // caller the truth (503) instead of a fake { ok: true }.
+    let wrote = await tursoClient().execute({
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?)',
       args: [rtcId, targetId, 'rtc_signal', JSON.stringify(fullRow), now]
-    }).catch(e => console.warn('[rtc] event insert failed:', e && e.message));
+    }).then(() => true).catch(e => { console.warn('[rtc] event insert failed:', e && e.message); return false; });
+    if (!wrote) {
+      wrote = await tursoClient().execute({
+        sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
+        args: [rtcId, targetId, 'rtc_signal', JSON.stringify(fullRow), now]
+      }).then(() => true).catch(e => { console.warn('[rtc] event insert retry failed:', e && e.message); return false; });
+    }
     if (Math.random() < 0.1) {
       tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ? AND kind = ?', args: [now - 60000, 'rtc_signal'] }).catch(() => {});
     }
+    if (!wrote) return c.json({ error: 'Call signal storage unavailable. Please retry.' }, 503);
     return c.json({ ok: true });
   }
 
@@ -3476,6 +3500,50 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * Normalize a ps_events row into the ONE flat shape the client's
+ * handleRTCSignal() understands: { id, createdAt, fromId, author, signal }.
+ *
+ * Historically two shapes could land in ps_events for the same signal:
+ *   flat      -> { id, createdAt, fromId, author, signal }
+ *   envelope  -> { id, ts, kind: 'rtc_signal', data: { fromId, author, signal } }
+ * Spreading the envelope shape produced a payload with no top-level `signal`,
+ * which the client silently dropped => callee never rang. Always unwrap.
+ */
+function normalizeRtcSignalRow(rowId, createdAt, rawData) {
+  let obj;
+  try { obj = typeof rawData === 'string' ? JSON.parse(rawData) : (rawData || null); } catch { return null; }
+  if (!obj || typeof obj !== 'object') return null;
+  // Unwrap _pushEvent-style envelopes (possibly nested more than once).
+  let guard = 0;
+  while (obj && !obj.signal && obj.data && typeof obj.data === 'object' && guard++ < 4) obj = obj.data;
+  if (!obj || !obj.signal || typeof obj.signal !== 'object') return null;
+  return {
+    id: rowId,
+    createdAt: Number(createdAt) || nowMs(),
+    fromId: obj.fromId || (obj.author && obj.author.id) || '',
+    author: obj.author || null,
+    signal: obj.signal,
+  };
+}
+
+// Two rows can still describe the same signal (e.g. a client retry after a
+// 503, or legacy duplicate rows already in ps_events). Collapse them so the
+// callee doesn't process the same offer/answer twice.
+function dedupeRtcSignals(list) {
+  const seen = new Set();
+  const out = [];
+  for (const s of list) {
+    const sig = s.signal || {};
+    const finger = JSON.stringify(sig.offer || sig.answer || sig.candidate || sig.type || '').slice(0, 200);
+    const key = (s.fromId || '') + '|' + (sig.type || '') + '|' + finger;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
+}
+
 app.get('/api/rtc/signals', requireAuth, async (c) => {
   const since = Number(c.req.query('since') || 0) || 0;
   const myId = c.get('userId');
@@ -3486,22 +3554,20 @@ app.get('/api/rtc/signals', requireAuth, async (c) => {
       sql: 'SELECT id, data, created_at FROM ps_events WHERE user_id = ? AND kind = ? AND created_at > ? AND created_at >= ? ORDER BY created_at ASC LIMIT 50',
       args: [myId, 'rtc_signal', since, now - 45000]
     }).catch(() => ({ rows: [] }));
-    const signals = (rs.rows || []).map(r => {
-      try {
-        const obj = JSON.parse(r.data);
-        return { id: r.id, createdAt: Number(r.created_at || now), ...obj };
-      } catch { return null; }
-    }).filter(Boolean);
+    const signals = dedupeRtcSignals(
+      (rs.rows || []).map(r => normalizeRtcSignalRow(r.id, r.created_at, r.data)).filter(Boolean)
+    );
     return c.json({ signals, now });
   }
 
   const db = await fetchDatabase();
   db.rtcSignals = Array.isArray(db.rtcSignals) ? db.rtcSignals.filter(x => !x.expiresAt || x.expiresAt > now) : [];
-  let signals = db.rtcSignals
+  let signals = dedupeRtcSignals(db.rtcSignals
     .filter(x => x.targetId === myId && (x.createdAt || 0) > since && (now - (x.createdAt || 0) <= 45000))
     .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
     .slice(-30)
-    .map(x => ({ id: x.id, createdAt: x.createdAt, ...x.payload }));
+    .map(x => normalizeRtcSignalRow(x.id, x.createdAt, x.payload))
+    .filter(Boolean));
   return c.json({ signals, now });
 });
 

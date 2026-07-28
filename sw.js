@@ -5,7 +5,7 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v104';
+const SW_VERSION = 'priv-spaca-v105';
 const STATIC_CACHE = 'priv-spaca-static-v94';
 const RUNTIME_CACHE = 'priv-spaca-runtime-v94';
 
