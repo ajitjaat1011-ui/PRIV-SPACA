@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v105';
+const APP_VERSION = 'priv-spaca-v106';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -951,172 +951,6 @@ function bindAuth() {
     }
   }
   applySakuraLoginEditorial();
-
-  // ============================================================
-  // Sakura Editorial: PROFILE page — Letterpress ID Card (Design 3)
-  // Restructures the profile to match the approved Design 3 concept:
-  // - Remove cover gradient, use plain paper background with blobs
-  // - Wrap avatar + name + handle + bio + stats in a letterpress card
-  // - Add black title strip "PRIV SPACA · MEMBER ID" + serial number
-  // - Add footer strip "MEMBER №XXXX · MON YYYY" + fingerprint icon
-  // - Change "Share card" → "View card"
-  // - Stats labels: followers→readers, following→reading
-  // - "the archive" section title above posts grid
-  // ============================================================
-
-  // Generate a consistent 4-digit member number from user ID
-  function _getMemberNumber(userId) {
-    if (!userId) return '0001';
-    let hash = 0;
-    for (let i = 0; i < userId.length; i++) {
-      hash = ((hash << 5) - hash) + userId.charCodeAt(i);
-      hash = hash & hash;
-    }
-    return String(Math.abs(hash) % 10000).padStart(4, '0');
-  }
-
-  // Format join date as "MON YYYY"
-  function _formatJoinDate(ts) {
-    if (!ts) {
-      const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-      const now = new Date();
-      return months[now.getMonth()] + ' ' + now.getFullYear();
-    }
-    const d = new Date(ts);
-    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-    return months[d.getMonth()] + ' ' + d.getFullYear();
-  }
-
-  function applySakuraProfileEditorial() {
-    const profileView = document.getElementById('profileView');
-    if (!profileView) return;
-    const profileMode = profileView.querySelector('.profile-mode') || profileView;
-    const profileHead = profileView.querySelector('.ig-profile-head');
-    const profileMeta = profileView.querySelector('.ig-profile-meta');
-    if (!profileHead || !profileMeta) return;
-
-    // 1. Hide titlebar username
-    const titlebarCenter = profileView.querySelector('.profile-titlebar-center');
-    if (titlebarCenter) titlebarCenter.style.visibility = 'hidden';
-
-    // 2. Remove old cover masthead (Design 3 has no cover)
-    const oldMasthead = profileView.querySelector('.profile-cover-masthead');
-    if (oldMasthead) oldMasthead.remove();
-
-    // 3. Add @handle below display name
-    const displayName = document.getElementById('profileDisplayName');
-    if (displayName && !document.getElementById('profileHandleDisplay')) {
-      const handle = document.createElement('div');
-      handle.id = 'profileHandleDisplay';
-      handle.className = 'profile-handle-display';
-      displayName.insertAdjacentElement('afterend', handle);
-    }
-    const handleEl = document.getElementById('profileHandleDisplay');
-    if (handleEl) {
-      const realUsername = (State.user && State.user.username) ||
-                           (document.getElementById('profileTitleUsername')?.textContent || 'user');
-      handleEl.textContent = '@' + realUsername + ' · priv.spaca';
-    }
-
-    // 4. Change stats labels: followers → readers, following → reading
-    const statFollowers = profileView.querySelector('[data-stat="followers"] span');
-    if (statFollowers) statFollowers.textContent = 'readers';
-    const statFollowing = profileView.querySelector('[data-stat="following"] span');
-    if (statFollowing) statFollowing.textContent = 'reading';
-
-    // 5. Change button labels — "Edit cover" + "View card"
-    const editBtn = document.getElementById('editProfileBtn');
-    if (editBtn) editBtn.textContent = 'Edit cover';
-    const shareBtn = document.getElementById('shareProfileBtn');
-    if (shareBtn) shareBtn.textContent = 'View card';
-
-    // 6. Build the letterpress card wrapper (once)
-    if (!profileMode.querySelector('.letterpress-card')) {
-      const memberNum = _getMemberNumber(State.user && State.user.id);
-      const joinDate = _formatJoinDate(State.user && State.user.createdAt);
-
-      // Create card container
-      const card = document.createElement('div');
-      card.className = 'letterpress-card';
-
-      // Title strip
-      const strip = document.createElement('div');
-      strip.className = 'letterpress-card-strip';
-      strip.innerHTML = '<span>PRIV SPACA · MEMBER ID</span><span class="serial">№' + memberNum + '</span>';
-      card.appendChild(strip);
-
-      // Card body — move avatar-wrap, display name, handle, bio, stats into it
-      const cardBody = document.createElement('div');
-      cardBody.className = 'letterpress-card-body';
-
-      // Move avatar wrap into card body
-      const avatarWrap = profileView.querySelector('.profile-avatar-wrap');
-      if (avatarWrap) cardBody.appendChild(avatarWrap);
-
-      // Move display name (ig-name) into card body
-      const nameEl = document.getElementById('profileDisplayName');
-      if (nameEl) cardBody.appendChild(nameEl);
-
-      // Move handle into card body
-      if (handleEl) cardBody.appendChild(handleEl);
-
-      // Move bio into card body
-      const bioEl = document.getElementById('profileBio');
-      if (bioEl) cardBody.appendChild(bioEl);
-
-      // Move stats into card body
-      const statsEl = profileView.querySelector('.ig-profile-stats');
-      if (statsEl) cardBody.appendChild(statsEl);
-
-      card.appendChild(cardBody);
-
-      // Footer strip — member number + join date + fingerprint
-      const foot = document.createElement('div');
-      foot.className = 'letterpress-card-foot';
-      foot.innerHTML =
-        '<div class="id-text">MEMBER №' + memberNum + ' · <span class="val">' + joinDate + '</span></div>' +
-        '<div class="fp-icon"><i data-lucide="fingerprint"></i></div>';
-      card.appendChild(foot);
-
-      // Insert card before the actions row
-      const actionsEl = profileView.querySelector('.ig-profile-actions');
-      if (actionsEl) {
-        actionsEl.insertAdjacentElement('beforebegin', card);
-      } else {
-        profileMode.appendChild(card);
-      }
-
-      // Refresh icons for the fingerprint
-      if (typeof refreshIcons === 'function') refreshIcons();
-    } else {
-      // Card already exists — just update the member number + join date
-      const card = profileMode.querySelector('.letterpress-card');
-      const memberNum = _getMemberNumber(State.user && State.user.id);
-      const joinDate = _formatJoinDate(State.user && State.user.createdAt);
-      const serialEl = card.querySelector('.letterpress-card-strip .serial');
-      if (serialEl) serialEl.textContent = '№' + memberNum;
-      const footText = card.querySelector('.letterpress-card-foot .id-text');
-      if (footText) footText.innerHTML = 'MEMBER №' + memberNum + ' · <span class="val">' + joinDate + '</span>';
-    }
-
-    // 7. Add "the archive" section title above posts grid
-    const postsGrid = document.getElementById('profilePostsGrid');
-    if (postsGrid && !profileView.querySelector('.profile-section-title-editorial')) {
-      const sectionTitle = document.createElement('div');
-      sectionTitle.className = 'profile-section-title-editorial';
-      sectionTitle.innerHTML = '<span class="lbl">the archive</span><span class="sub">— entries —</span><span class="line"></span>';
-      postsGrid.insertAdjacentElement('beforebegin', sectionTitle);
-    }
-  }
-
-  // Run once on load and re-run when profile data refreshes
-  applySakuraProfileEditorial();
-  setTimeout(applySakuraProfileEditorial, 1500);
-  setTimeout(applySakuraProfileEditorial, 3000);
-
-  // Expose globally so it can be called after profile renders
-  window._applySakuraProfileEditorial = applySakuraProfileEditorial;
-
   function showAuthPanel(name) {
     authPanels.forEach(p => p.hidden = (p.dataset.authPanel !== name));
     // The bottom 'Create new account' CTA only shows on the sign-in panel
@@ -8494,8 +8328,6 @@ function updateOwnProfileStatCounts(profileUser) {
   const sp = $id('#statPosts'); if (sp) sp.textContent = String(postsCount);
   const sf = $id('#statFollowers'); if (sf) sf.textContent = String(followerCount);
   const sg = $id('#statFollowing'); if (sg) sg.textContent = String(followingCount);
-  // Sakura Editorial: re-apply profile overrides after stat update
-  if (window._applySakuraProfileEditorial) window._applySakuraProfileEditorial();
 }
 
 async function openProfileRelationSheet(kind) {
