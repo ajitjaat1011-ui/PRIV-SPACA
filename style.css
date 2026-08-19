@@ -5830,10 +5830,22 @@ body{
 .auth-terms .check{
   width:14px;
   height:14px;
-  border:1.5px solid var(--paper-hairline-2);
+  border:1.5px solid var(--accent);
   border-radius:4px;
   flex-shrink:0;
   margin-top:1px;
+  /* This is a static assurance indicator (not an interactive input) —
+     terms are already accepted at signup, so it always renders as
+     "checked" instead of an empty/ambiguous box. */
+  background:var(--accent);
+  display:flex;align-items:center;justify-content:center;
+}
+.auth-terms .check::after{
+  content:"";
+  width:8px;height:5px;
+  border-left:1.6px solid #fff;
+  border-bottom:1.6px solid #fff;
+  transform:rotate(-45deg) translate(0.5px,-1px);
 }
 /* "Terms & Community Guidelines" clickable link in login terms text */
 .auth-terms-link{
