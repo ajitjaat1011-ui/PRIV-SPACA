@@ -2066,7 +2066,16 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     const usernameLower = username.toLowerCase();
     if (db.users.some(u => u.email.toLowerCase() === emailLower)) return c.json({ error: 'Email already registered' }, 409);
     if (db.users.some(u => u.username.toLowerCase() === usernameLower)) return c.json({ error: 'Username already taken' }, 409);
-    const reserved = new Set(['admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root']);
+    // SECURITY: reserve the app's own identity strings + the owner's known
+    // handles so new signups can't squat on / impersonate them. Owner
+    // privilege itself is still gated on a hardcoded user id in the
+    // frontend (isPrivOwner) and on the ADMIN_USERS secret here, so this
+    // reservation is a defense-in-depth / anti-impersonation measure, not
+    // the actual privilege boundary.
+    const reserved = new Set([
+      'admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root',
+      'arvind_1011','arvindjaat1011','arvindjaat','ajitjaat1011','arvindjaat1012',
+    ]);
     if (reserved.has(usernameLower)) return c.json({ error: 'That username is reserved' }, 403);
 
     const [passwordHash, pinHash] = await Promise.all([
@@ -2148,8 +2157,13 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     }
     if (!user) {
+      // SECURITY: use the same 401 status (and the same generic message) as
+      // the wrong-password path below. Previously this returned 404, which
+      // let an attacker enumerate valid usernames/emails just by watching
+      // the HTTP status code, even though the JSON body was already
+      // identical on both paths.
       await authFailureDelay();
-      return c.json({ error: AUTH_GENERIC_ERROR }, 404);
+      return c.json({ error: AUTH_GENERIC_ERROR }, 401);
     }
     const lock = await checkAccountLock(user.id);
     if (lock.locked) {

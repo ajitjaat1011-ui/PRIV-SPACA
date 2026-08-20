@@ -1731,7 +1731,13 @@ app.post('/api/auth/signup', authRateLimit, async (req, res) => {
       return res.status(409).json({ error: 'Username already taken' });
     }
     // Reserve some usernames to prevent impersonation of system roles
-    const reserved = new Set(['admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root']);
+    // SECURITY: reserve the app's own identity strings + the owner's known
+    // handles so new signups can't squat on / impersonate them (mirrors
+    // api/cf-worker.js).
+    const reserved = new Set([
+      'admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root',
+      'arvind_1011','arvindjaat1011','arvindjaat','ajitjaat1011','arvindjaat1012',
+    ]);
     if (reserved.has(usernameLower)) return res.status(403).json({ error: 'That username is reserved' });
 
     const [passwordHash, pinHash] = await Promise.all([
