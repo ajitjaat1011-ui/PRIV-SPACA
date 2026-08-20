@@ -5610,10 +5610,62 @@ body{
 }
 
 /* ============================================================
-   1. AUTH · LOGIN (also covers signup + reset — same auth-shell)
+   1. AUTH · STORYBOOK (flat-illustration, Duolingo-style)
+   Replaces the earlier "Sakura Editorial" paper look. Bold flat
+   colors, big rounded shapes, playful Baloo 2 headline type, and
+   a friendly hero illustration above the form. Applies to login,
+   signup and reset (they share the same .auth-shell).
    ============================================================ */
+
+/* Storybook palette — new tokens, existing app tokens untouched */
+:root, [data-theme="light"]{
+  --sb-cream:#fff6e8;
+  --sb-cream-2:#ffedd0;
+  --sb-ink:#2b2140;
+  --sb-ink-soft:#5b5375;
+  --sb-coral:#ff6b6b;
+  --sb-coral-deep:#ee5253;
+  --sb-sky:#3fc1ff;
+  --sb-sky-deep:#12a7ee;
+  --sb-yellow:#ffc93c;
+  --sb-mint:#3ddc97;
+  --sb-card:#ffffff;
+  --sb-line:#f0d9b5;
+  --font-story:'Baloo 2', 'Nunito', 'Trebuchet MS', sans-serif;
+}
+[data-theme="dark"]{
+  --sb-cream:#241c34;
+  --sb-cream-2:#2c2242;
+  --sb-ink:#fbf3ff;
+  --sb-ink-soft:#c9bfe0;
+  --sb-coral:#ff7a7a;
+  --sb-coral-deep:#ff5a5a;
+  --sb-sky:#4fd0ff;
+  --sb-sky-deep:#28b8ff;
+  --sb-yellow:#ffd25e;
+  --sb-mint:#4de3a8;
+  --sb-card:#2f2547;
+  --sb-line:#40325c;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --sb-cream:#241c34;
+    --sb-cream-2:#2c2242;
+    --sb-ink:#fbf3ff;
+    --sb-ink-soft:#c9bfe0;
+    --sb-coral:#ff7a7a;
+    --sb-coral-deep:#ff5a5a;
+    --sb-sky:#4fd0ff;
+    --sb-sky-deep:#28b8ff;
+    --sb-yellow:#ffd25e;
+    --sb-mint:#4de3a8;
+    --sb-card:#2f2547;
+    --sb-line:#40325c;
+  }
+}
+
 .auth-shell{
-  background:linear-gradient(180deg,var(--paper) 0%,var(--paper-2) 100%) !important;
+  background:linear-gradient(180deg,var(--sb-cream) 0%,var(--sb-cream-2) 100%) !important;
   position:fixed !important;
   inset:0 !important;
   display:flex !important;
@@ -5623,166 +5675,171 @@ body{
   min-height:100vh !important;
   min-height:100dvh !important;
 }
+/* Playful floating blobs, flat/solid instead of soft glows */
 .auth-shell::before{
-  content:'';position:absolute;top:-40px;right:-40px;width:240px;height:240px;
-  background:radial-gradient(circle,var(--sakura) 0%,transparent 70%);
-  opacity:.35;pointer-events:none;
+  content:'';position:absolute;top:-30px;right:-40px;width:150px;height:150px;
+  background:var(--sb-yellow);border-radius:44% 56% 62% 38%/48% 40% 60% 52%;
+  opacity:.55;pointer-events:none;z-index:0;
+  animation:sb-blob-float 7s ease-in-out infinite;
 }
 .auth-shell::after{
-  content:'';position:absolute;bottom:120px;left:-60px;width:200px;height:200px;
-  background:radial-gradient(circle,var(--accent) 0%,transparent 70%);
-  opacity:.18;pointer-events:none;
+  content:'';position:absolute;bottom:90px;left:-50px;width:170px;height:170px;
+  background:var(--sb-mint);border-radius:56% 44% 38% 62%/44% 52% 48% 56%;
+  opacity:.4;pointer-events:none;z-index:0;
+  animation:sb-blob-float 8.5s ease-in-out infinite reverse;
 }
-/* FORCE LIGHT MODE on auth page — the Sakura Editorial design is a
-   cream-paper look. Dark mode tokens would break the design. Override
-   the dark-theme variants so the auth page always renders light. */
-[data-theme="dark"] .auth-shell,
-:root:not([data-theme="light"]) .auth-shell{
-  background:linear-gradient(180deg,#fbf7f2 0%,#f5efe2 100%) !important;
-  --paper:#fbf7f2;
-  --paper-2:#f5efe2;
-  --paper-ink:#1a1a1a;
-  --paper-ink-2:#3d3a35;
-  --paper-muted:#7a7268;
-  --paper-hairline:#e8dfd3;
-  --paper-hairline-2:#d8cdbb;
-  --sakura:#f4a8b8;
-  --sakura-deep:#e8869c;
-  --surface:#ffffff;
-  --accent:#00a2ff;
+@keyframes sb-blob-float{
+  0%,100%{ transform:translate(0,0) rotate(0deg); }
+  50%{ transform:translate(-6px,10px) rotate(8deg); }
 }
-[data-theme="dark"] .auth-shell::before,
-:root:not([data-theme="light"]) .auth-shell::before{opacity:.35}
-[data-theme="dark"] .auth-shell::after,
-:root:not([data-theme="light"]) .auth-shell::after{opacity:.18}
+@media (prefers-reduced-motion: reduce){
+  .auth-shell::before,.auth-shell::after{ animation:none !important; }
+}
+/* Force light-mode palette identity on the auth page dark variant is fine
+   here (storybook has its own light/dark tokens above), so no forced
+   override is needed like the old design required. */
 
-/* Hide the back-arrow circle — design has no top-left circular button */
-.auth-topbar{
-  display:none !important;
-}
-.auth-top-back{
-  background:rgba(255,255,255,.6) !important;
-  backdrop-filter:blur(20px);
-  border:1px solid var(--paper-hairline) !important;
-  border-radius:50% !important;
-  color:var(--paper-ink) !important;
-}
-[data-theme="dark"] .auth-top-back,
-:root:not([data-theme="light"]) .auth-top-back{
-  background:rgba(255,255,255,.06) !important;
-  border-color:var(--paper-hairline) !important;
-  color:var(--paper-ink) !important;
-}
+/* Hide the plain back-arrow circle — storybook design has its own nav */
+.auth-topbar{ display:none !important; }
 
 .auth-main{
   position:relative;z-index:1;
-  padding-top:20px !important;
+  padding-top:8px !important;
   flex:1 1 auto !important;
   min-height:0;
-  justify-content:center !important;
+  justify-content:flex-start !important;
 }
 
-/* Brand wordmark — clean editorial text, no rainbow gradient */
+/* Brand wordmark + hero illustration */
 .auth-icon-wrap{
   flex-direction:column;
   gap:0;
-  margin:0 0 28px !important;
+  margin:4px 0 6px !important;
   align-items:center;
 }
 .auth-icon-wrap .logo-badge{
-  display:none !important;
+  width:64px !important;height:64px !important;border-radius:20px !important;
+  background:linear-gradient(135deg,var(--sb-sky) 0%,var(--sb-sky-deep) 100%) !important;
+  box-shadow:0 10px 24px rgba(63,193,255,.35) !important;
+  animation:none !important;
 }
+.auth-icon-wrap .logo-badge::before,
+.auth-icon-wrap .logo-badge::after{ content:none !important; }
 .auth-icon-wrap .brand-name{
-  font-family:var(--serif) !important;
-  font-style:italic !important;
-  font-weight:700 !important;
-  letter-spacing:-.5px !important;
-  font-size:28px !important;
+  font-family:var(--font-story) !important;
+  font-weight:800 !important;
+  font-style:normal !important;
+  letter-spacing:.5px !important;
+  font-size:26px !important;
   background:none !important;
-  -webkit-text-fill-color:var(--paper-ink) !important;
-  color:var(--paper-ink) !important;
+  -webkit-text-fill-color:var(--sb-ink) !important;
+  color:var(--sb-ink) !important;
   animation:none !important;
   filter:none !important;
-  margin:0 !important;
+  margin:10px 0 0 !important;
 }
-.auth-icon-wrap .brand-name::before{
-  content:none !important;
+.auth-icon-wrap .brand-name::before{ content:none !important; }
+
+/* Hero illustration — injected as a real <img> by JS (auth-hero-illo) */
+.auth-hero-illo{
+  display:block;
+  width:min(68%,240px);
+  height:auto;
+  margin:2px auto 2px;
+  border-radius:22px;
+  -webkit-mask-image:radial-gradient(ellipse 78% 82% at 50% 50%, #000 62%, transparent 100%);
+  mask-image:radial-gradient(ellipse 78% 82% at 50% 50%, #000 62%, transparent 100%);
+  filter:drop-shadow(0 8px 14px rgba(43,33,64,.10));
 }
-[data-theme="dark"] .auth-icon-wrap .brand-name,
-:root:not([data-theme="light"]) .auth-icon-wrap .brand-name{
-  color:#1a1a1a !important;
-  -webkit-text-fill-color:#1a1a1a !important;
+[data-theme="dark"] .auth-hero-illo,
+:root:not([data-theme="light"]) .auth-hero-illo{
+  filter:drop-shadow(0 8px 14px rgba(0,0,0,.35)) brightness(.96);
 }
 
-/* Magazine masthead — eyebrow / title / sub — injected via pseudo-elements */
-.auth-panels{
-  position:relative;z-index:1;
-}
-.auth-panel[data-auth-panel="login"]{
-  position:relative;
-}
-.auth-panel[data-auth-panel="login"]::before{
-  content:'— welcome back —';
-  display:block;
-  font-family:var(--mono);
-  font-size:11px;
-  color:var(--paper-muted);
-  letter-spacing:1.5px;
-  text-transform:uppercase;
-  text-align:center;
-  margin-bottom:10px;
-}
-/* Remove old pseudo-element title — now injected as real DOM node */
-.auth-panel[data-auth-panel="login"] .auth-form::before{content:none !important}
-.auth-panel[data-auth-panel="login"] .auth-form::after{content:none !important}
+/* Panels container */
+.auth-panels{ position:relative;z-index:1; }
 
 /* Editorial title + subtitle (injected by JS as .auth-editorial-head) */
 .auth-editorial-head{
   text-align:center;
-  margin-bottom:24px;
+  margin-bottom:18px;
 }
 .auth-editorial-title{
-  font-family:var(--serif);
-  font-style:italic;
-  font-weight:700;
-  font-size:32px;
-  line-height:1.05;
-  color:var(--paper-ink);
-  letter-spacing:-.5px;
+  font-family:var(--font-story);
+  font-weight:800;
+  font-style:normal;
+  font-size:26px;
+  line-height:1.15;
+  color:var(--sb-ink);
+  letter-spacing:0;
   margin:0 0 6px;
 }
 .auth-editorial-title .accent{
-  font-family:var(--sans);
-  font-style:normal;
-  font-weight:700;
-  color:var(--accent);
-}
-[data-theme="dark"] .auth-editorial-title,
-:root:not([data-theme="light"]) .auth-editorial-title{
-  color:var(--paper-ink);
+  color:var(--sb-coral-deep);
 }
 .auth-form-sub{
-  font-family:var(--script);
-  font-size:18px;
-  color:var(--sakura-deep);
+  font-family:'Inter',sans-serif;
+  font-weight:500;
+  font-size:14.5px;
+  color:var(--sb-ink-soft);
   text-align:center;
   margin:0;
-  line-height:1.2;
+  line-height:1.3;
 }
 
-/* Field labels (mono uppercase, above inputs) */
+/* Field labels — friendly, rounded, colorful accent dot */
 .auth-field-label{
-  font-family:var(--mono);
-  font-size:10px;
-  color:var(--paper-muted);
-  letter-spacing:1px;
-  text-transform:uppercase;
+  font-family:'Inter',sans-serif;
+  font-size:12.5px;
+  font-weight:700;
+  color:var(--sb-ink-soft);
+  letter-spacing:.2px;
+  text-transform:none;
   margin-bottom:6px;
   margin-top:14px;
 }
-.auth-field-label:first-child{margin-top:0}
+.auth-field-label:first-child{ margin-top:0; }
 
-/* Override inputs — bottom-border-only, no rounded pill background */
+/* Storybook card — the white form panel */
+.auth-form{
+  background:var(--sb-card) !important;
+  border:2.5px solid var(--sb-ink) !important;
+  border-radius:28px !important;
+  padding:24px 20px !important;
+  box-shadow:0 6px 0 var(--sb-ink),0 18px 34px rgba(43,33,64,.12) !important;
+}
+.auth-panel[data-auth-panel="login"] .auth-form{ gap:0 !important; }
+
+/* Inputs — rounded pill, thick border, flat */
+.field.ig-pill{
+  background:transparent !important;
+  border:0 !important;
+  padding:0 !important;
+  margin-bottom:14px !important;
+}
+.field.ig-pill input{
+  font-family:'Inter',sans-serif !important;
+  background:var(--sb-cream) !important;
+  border:2px solid var(--sb-line) !important;
+  border-radius:16px !important;
+  padding:13px 16px !important;
+  color:var(--sb-ink) !important;
+  font-weight:500;
+  transition:border-color .15s,transform .1s;
+}
+.field.ig-pill input:focus{
+  border-color:var(--sb-sky-deep) !important;
+  box-shadow:0 0 0 3px rgba(63,193,255,.22) !important;
+  outline:0 !important;
+}
+.field.ig-pill input::placeholder{ color:var(--sb-ink-soft) !important; opacity:.65; }
+[data-theme="dark"] .field.ig-pill input,
+:root:not([data-theme="light"]) .field.ig-pill input{
+  background:var(--sb-cream) !important;
+  border-color:var(--sb-line) !important;
+  color:var(--sb-ink) !important;
+}
+/* Login-panel specific input treatment (labels sit above, same pill style) */
 .auth-panel[data-auth-panel="login"] .field.ig-pill{
   background:transparent !important;
   border:0 !important;
@@ -5790,30 +5847,7 @@ body{
   margin-bottom:0 !important;
 }
 .auth-panel[data-auth-panel="login"] .field.ig-pill input{
-  font-family:var(--sans) !important;
-  background:transparent !important;
-  border:0 !important;
-  border-bottom:1.5px solid var(--paper-hairline-2) !important;
-  border-radius:0 !important;
-  padding:8px 0 !important;
-  color:#1a1a1a !important;
-  font-size:15px !important;
-  transition:border-color .2s;
-}
-.auth-panel[data-auth-panel="login"] .field.ig-pill input:focus{
-  border-bottom-color:var(--accent) !important;
-  box-shadow:none !important;
-  outline:0 !important;
-}
-.auth-panel[data-auth-panel="login"] .field.ig-pill input::placeholder{
-  color:var(--paper-muted) !important;
-  opacity:.6;
-}
-/* Force dark ink text even in dark mode (form card is always white) */
-[data-theme="dark"] .auth-panel[data-auth-panel="login"] .field.ig-pill input,
-:root:not([data-theme="light"]) .auth-panel[data-auth-panel="login"] .field.ig-pill input{
-  color:#1a1a1a !important;
-  border-bottom-color:var(--paper-hairline-2) !important;
+  border-radius:16px !important;
 }
 
 /* Terms checkbox row (injected by JS) */
@@ -5822,149 +5856,88 @@ body{
   display:flex;
   align-items:flex-start;
   gap:8px;
-  font-family:var(--sans);
-  font-size:11px;
-  color:var(--paper-muted);
+  font-family:'Inter',sans-serif;
+  font-size:11.5px;
+  color:var(--sb-ink-soft);
   line-height:1.5;
 }
 .auth-terms .check{
-  width:14px;
-  height:14px;
-  border:1.5px solid var(--accent);
-  border-radius:4px;
+  width:16px;
+  height:16px;
+  border:2px solid var(--sb-mint);
+  border-radius:6px;
   flex-shrink:0;
   margin-top:1px;
-  /* This is a static assurance indicator (not an interactive input) —
-     terms are already accepted at signup, so it always renders as
-     "checked" instead of an empty/ambiguous box. */
-  background:var(--accent);
+  background:var(--sb-mint);
   display:flex;align-items:center;justify-content:center;
 }
 .auth-terms .check::after{
   content:"";
   width:8px;height:5px;
-  border-left:1.6px solid #fff;
-  border-bottom:1.6px solid #fff;
+  border-left:2px solid #fff;
+  border-bottom:2px solid #fff;
   transform:rotate(-45deg) translate(0.5px,-1px);
 }
-/* "Terms & Community Guidelines" clickable link in login terms text */
 .auth-terms-link{
   background:transparent !important;
   border:0 !important;
   padding:0 !important;
-  font-family:var(--sans) !important;
-  font-size:11px !important;
-  font-weight:600 !important;
-  color:var(--accent) !important;
+  font-family:'Inter',sans-serif !important;
+  font-size:11.5px !important;
+  font-weight:700 !important;
+  color:var(--sb-sky-deep) !important;
   text-decoration:underline !important;
   cursor:pointer !important;
   display:inline !important;
 }
-.auth-terms-link:hover{
-  text-decoration:none !important;
-  opacity:.8;
-}
+.auth-terms-link:hover{ text-decoration:none !important; opacity:.85; }
 
 .auth-eyebrow{
-  font-family:var(--mono) !important;
-  font-size:11px !important;
-  letter-spacing:1.5px !important;
-  text-transform:uppercase !important;
-  color:var(--paper-muted) !important;
+  font-family:'Inter',sans-serif !important;
+  font-size:14px !important;
+  font-weight:500 !important;
+  color:var(--sb-ink-soft) !important;
+  text-align:center;
+  margin-bottom:16px !important;
 }
 
-.auth-form{
-  background:#ffffff !important;
-  border:1px solid var(--paper-hairline) !important;
-  border-radius:20px !important;
-  padding:24px 20px !important;
-  box-shadow:0 8px 24px rgba(60,40,20,.10),inset 0 1px 0 rgba(255,255,255,.6) !important;
-}
-/* Increase gap between form fields for the login editorial layout */
-.auth-panel[data-auth-panel="login"] .auth-form{
-  gap:0 !important;
-}
-/* Force light form card even in dark mode */
-[data-theme="dark"] .auth-form,
-:root:not([data-theme="light"]) .auth-form{
-  background:#ffffff !important;
-  border-color:var(--paper-hairline) !important;
-  box-shadow:0 8px 24px rgba(60,40,20,.10),inset 0 1px 0 rgba(255,255,255,.6) !important;
-}
-
-.field.ig-pill{
-  background:transparent !important;
-  border:0 !important;
-  padding:0 !important;
-  margin-bottom:14px !important;
-}
-.field.ig-pill input{
-  font-family:var(--sans) !important;
-  background:var(--paper-2) !important;
-  border:1.5px solid var(--paper-hairline-2) !important;
-  border-radius:14px !important;
-  padding:13px 14px !important;
-  color:var(--paper-ink) !important;
-  transition:border-color .2s,box-shadow .2s;
-}
-.field.ig-pill input:focus{
-  border-color:var(--accent) !important;
-  box-shadow:0 0 0 3px rgba(0,162,255,.12) !important;
-  outline:0 !important;
-}
-.field.ig-pill input::placeholder{
-  color:var(--paper-muted) !important;
-}
-[data-theme="dark"] .field.ig-pill input,
-:root:not([data-theme="light"]) .field.ig-pill input{
-  background:var(--paper-2) !important;
-  border-color:var(--paper-hairline-2) !important;
-  color:var(--paper-ink) !important;
-}
-
+/* Primary button — big, chunky, flat coral with hard shadow (storybook) */
 .ig-primary{
-  background:var(--paper-ink) !important;
-  color:var(--paper) !important;
-  font-family:var(--sans) !important;
-  font-weight:600 !important;
-  border:0 !important;
-  border-radius:14px !important;
+  background:var(--sb-coral) !important;
+  color:#fff !important;
+  font-family:var(--font-story) !important;
+  font-weight:700 !important;
+  border:2.5px solid var(--sb-ink) !important;
+  border-radius:18px !important;
   letter-spacing:.3px !important;
   padding:14px !important;
-  box-shadow:0 6px 18px rgba(26,26,26,.20) !important;
-  transition:transform .1s, box-shadow .15s;
+  box-shadow:0 5px 0 var(--sb-ink) !important;
+  transition:transform .08s, box-shadow .08s;
 }
-.ig-primary:hover{
-  box-shadow:0 10px 26px rgba(26,26,26,.30) !important;
+.ig-primary:hover{ filter:brightness(1.03); }
+.ig-primary:active{
+  transform:translateY(3px) !important;
+  box-shadow:0 2px 0 var(--sb-ink) !important;
 }
-.ig-primary:active{transform:scale(.98)}
 [data-theme="dark"] .ig-primary,
 :root:not([data-theme="light"]) .ig-primary{
-  background:var(--paper-ink) !important;
+  background:var(--sb-coral) !important;
   color:#fff !important;
-  box-shadow:0 6px 18px rgba(26,26,26,.20) !important;
+  border-color:var(--sb-ink) !important;
+  box-shadow:0 5px 0 var(--sb-ink) !important;
 }
-
-/* Login submit button — pill-shaped "Enter priv →" */
 .auth-panel[data-auth-panel="login"] .ig-primary{
-  border-radius:24px !important;
+  border-radius:20px !important;
   padding:14px 18px !important;
-  margin-top:8px !important;
-  font-size:14px !important;
+  margin-top:10px !important;
+  font-size:15px !important;
   display:flex !important;
   align-items:center !important;
   justify-content:center !important;
   gap:8px !important;
-  background:#1a1a1a !important;
-  color:#fff !important;
-}
-[data-theme="dark"] .auth-panel[data-auth-panel="login"] .ig-primary,
-:root:not([data-theme="light"]) .auth-panel[data-auth-panel="login"] .ig-primary{
-  background:#1a1a1a !important;
-  color:#fff !important;
 }
 
-/* "Forgot password?" link — small accent-blue text below the button */
+/* "Forgot password?" link */
 .auth-panel[data-auth-panel="login"] .auth-forgot-link{
   display:block !important;
   background:transparent !important;
@@ -5972,63 +5945,60 @@ body{
   padding:0 !important;
   margin:14px 0 4px !important;
   text-align:center !important;
-  font-family:var(--sans) !important;
-  font-size:12px !important;
-  font-weight:600 !important;
-  color:var(--accent) !important;
+  font-family:'Inter',sans-serif !important;
+  font-size:13px !important;
+  font-weight:700 !important;
+  color:var(--sb-sky-deep) !important;
   text-decoration:none !important;
   cursor:pointer !important;
 }
-.auth-panel[data-auth-panel="login"] .auth-forgot-link:hover{
-  text-decoration:underline !important;
-}
+.auth-panel[data-auth-panel="login"] .auth-forgot-link:hover{ text-decoration:underline !important; }
 
 .ig-outline{
   background:transparent !important;
-  border:1.5px solid var(--paper-ink) !important;
-  color:var(--paper-ink) !important;
-  font-family:var(--sans) !important;
-  font-weight:600 !important;
-  border-radius:14px !important;
+  border:2.5px solid var(--sb-ink) !important;
+  color:var(--sb-ink) !important;
+  font-family:var(--font-story) !important;
+  font-weight:700 !important;
+  border-radius:16px !important;
 }
 [data-theme="dark"] .ig-outline,
 :root:not([data-theme="light"]) .ig-outline{
-  border-color:var(--paper-ink) !important;
-  color:var(--paper-ink) !important;
+  border-color:var(--sb-ink) !important;
+  color:var(--sb-ink) !important;
 }
 
 .ig-link{
-  font-family:var(--sans) !important;
-  color:var(--accent) !important;
-  font-weight:600 !important;
+  font-family:'Inter',sans-serif !important;
+  color:var(--sb-sky-deep) !important;
+  font-weight:700 !important;
 }
-.ig-back,.ig-pin-hint,.terms-text,.terms-link{
-  font-family:var(--sans) !important;
-}
+.ig-back,.ig-pin-hint,.terms-text,.terms-link{ font-family:'Inter',sans-serif !important; }
 .ig-back{
-  background:var(--surface) !important;
-  border:1px solid var(--paper-hairline) !important;
-  color:var(--paper-ink) !important;
+  background:var(--sb-card) !important;
+  border:2px solid var(--sb-ink) !important;
+  color:var(--sb-ink) !important;
 }
 .ig-pin-block{
-  background:var(--paper-2) !important;
-  border:1px solid var(--paper-hairline) !important;
-  border-radius:14px !important;
-  padding:12px !important;
+  background:var(--sb-cream) !important;
+  border:2px solid var(--sb-line) !important;
+  border-radius:18px !important;
+  padding:14px !important;
 }
-.ig-pin-hint{color:var(--paper-muted) !important;font-size:12px !important}
+.ig-pin-hint{ color:var(--sb-ink-soft) !important; font-size:12.5px !important; font-weight:600; }
 .pin-input input{
-  background:var(--surface) !important;
-  border:1.5px solid var(--paper-hairline-2) !important;
-  border-radius:10px !important;
-  color:var(--paper-ink) !important;
-  font-family:var(--sans) !important;
-  font-weight:600 !important;
+  background:var(--sb-card) !important;
+  border:2px solid var(--sb-line) !important;
+  border-radius:12px !important;
+  color:var(--sb-ink) !important;
+  font-family:var(--font-story) !important;
+  font-weight:700 !important;
 }
-.pin-input input:focus{border-color:var(--accent) !important}
+.pin-input input:focus{ border-color:var(--sb-sky-deep) !important; }
 .auth-error{
-  font-family:var(--sans) !important;
-  color:var(--wax) !important;
+  font-family:'Inter',sans-serif !important;
+  font-weight:700;
+  color:var(--sb-coral-deep) !important;
 }
 .auth-bottom{
   background:transparent !important;
@@ -6043,26 +6013,25 @@ body{
   padding:18px 16px 28px !important;
 }
 .auth-bottom-text{
-  font-family:var(--sans) !important;
-  color:var(--paper-muted) !important;
+  font-family:'Inter',sans-serif !important;
+  color:var(--sb-ink-soft) !important;
   font-size:13px !important;
+  font-weight:500;
 }
-/* "Create an account" — accent blue text link style */
 .auth-bottom .ig-outline{
   background:transparent !important;
   border:0 !important;
-  color:var(--accent) !important;
-  font-family:var(--sans) !important;
-  font-weight:600 !important;
+  color:var(--sb-sky-deep) !important;
+  font-family:'Inter',sans-serif !important;
+  font-weight:800 !important;
   font-size:13px !important;
   padding:0 !important;
   text-decoration:none !important;
   box-shadow:none !important;
+  border-radius:0 !important;
 }
 [data-theme="dark"] .auth-bottom,
-:root:not([data-theme="light"]) .auth-bottom{
-  background:transparent !important;
-}
+:root:not([data-theme="light"]) .auth-bottom{ background:transparent !important; }
 
 /* ============================================================
    3. STORY · POLAROID FRAME

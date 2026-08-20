@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v106';
+const APP_VERSION = 'priv-spaca-v107';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -853,20 +853,27 @@ function bindAuth() {
   // - Add terms checkbox text after button
   // - Change bottom CTA text to "New here?" / "Create an account"
   function applySakuraLoginEditorial() {
-    // 1. Hide ONLY the logo badge circle — keep the brand name text "PRIV SPACA"
+    // 1. Keep the logo badge (now a friendly rounded-square sky-blue icon in
+    // the storybook design) and the brand wordmark — just tidy the spacing.
     const iconWrap = document.querySelector('.auth-icon-wrap');
     if (iconWrap) {
-      const logoBadge = iconWrap.querySelector('.logo-badge');
-      if (logoBadge) logoBadge.style.display = 'none';
       const petalParticles = iconWrap.querySelector('.petal-particles');
       if (petalParticles) petalParticles.style.display = 'none';
-      // Style the brand name as a clean editorial wordmark
-      const brandName = iconWrap.querySelector('.brand-name');
-      if (brandName) {
-        brandName.style.margin = '0';
-      }
-      iconWrap.style.margin = '0 0 24px';
+      iconWrap.style.margin = '4px 0 6px';
       iconWrap.style.gap = '0';
+
+      // Hero illustration — injected once, sits between the wordmark and
+      // the login card. Swapped in as part of the "storybook" redesign.
+      if (!iconWrap.querySelector('.auth-hero-illo')) {
+        const hero = document.createElement('img');
+        hero.className = 'auth-hero-illo';
+        hero.src = '/auth-hero.webp';
+        hero.alt = '';
+        hero.setAttribute('aria-hidden', 'true');
+        hero.loading = 'eager';
+        hero.decoding = 'async';
+        iconWrap.appendChild(hero);
+      }
     }
 
     // 2. Inject editorial title + subtitle above the login form
@@ -876,8 +883,8 @@ function bindAuth() {
       const head = document.createElement('div');
       head.className = 'auth-editorial-head';
       head.innerHTML =
-        '<div class="auth-editorial-title">A quiet place<br>to <span class="accent">gather.</span></div>' +
-        '<div class="auth-form-sub">sign in to continue</div>';
+        '<div class="auth-editorial-title">Your cozy corner<br>to <span class="accent">catch up.</span></div>' +
+        '<div class="auth-form-sub">sign in to keep the conversation going</div>';
       loginPanel.insertBefore(head, loginForm);
     }
 
@@ -903,7 +910,7 @@ function bindAuth() {
 
       // 4. Change submit button text
       const submitBtn = loginForm.querySelector('button[type="submit"]');
-      if (submitBtn) submitBtn.textContent = 'Enter priv →';
+      if (submitBtn) submitBtn.textContent = "Let's go →";
 
       // 5. RESTORE "Forgotten password?" link — reposition below the button
       const resetLink = loginForm.querySelector('[data-auth-step="reset"]');
