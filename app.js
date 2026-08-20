@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v108';
+const APP_VERSION = 'priv-spaca-v109';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -853,6 +853,32 @@ function bindAuth() {
   // - Add terms checkbox text after button
   // - Change bottom CTA text to "New here?" / "Create an account"
   function applySakuraLoginEditorial() {
+    // 0. Ornate page frame + top/bottom flavor-text strips — injected once
+    // directly under .auth-shell so they sit behind/around the scrollable
+    // content, matching the reference book-cover's bordered title page.
+    const authShell = document.querySelector('.auth-shell');
+    if (authShell && !authShell.querySelector('.auth-page-frame')) {
+      const frame = document.createElement('div');
+      frame.className = 'auth-page-frame';
+      frame.setAttribute('aria-hidden', 'true');
+      frame.innerHTML =
+        '<span class="afc afc-tl"></span><span class="afc afc-tr"></span>' +
+        '<span class="afc afc-bl"></span><span class="afc afc-br"></span>';
+      authShell.appendChild(frame);
+
+      const topStrip = document.createElement('div');
+      topStrip.className = 'auth-frame-top';
+      topStrip.textContent = 'A private thread · A quiet room · Just us';
+      authShell.insertBefore(topStrip, authShell.firstChild);
+
+      const bottomStrip = document.createElement('div');
+      bottomStrip.className = 'auth-frame-bottom';
+      bottomStrip.textContent = 'Priv Spaca · Est. for the two of you';
+      const authBottomEl = authShell.querySelector('.auth-bottom');
+      if (authBottomEl) authShell.insertBefore(bottomStrip, authBottomEl.nextSibling);
+      else authShell.appendChild(bottomStrip);
+    }
+
     // 1. Keep the logo badge (now a friendly rounded-square sky-blue icon in
     // the storybook design) and the brand wordmark — just tidy the spacing.
     const iconWrap = document.querySelector('.auth-icon-wrap');
@@ -862,9 +888,12 @@ function bindAuth() {
       iconWrap.style.margin = '4px 0 6px';
       iconWrap.style.gap = '0';
 
-      // Hero illustration — injected once, sits between the wordmark and
-      // the login card. Swapped in as part of the "storybook" redesign.
+      // Hero illustration — injected once, wrapped so radiating ring
+      // linework (CSS) can sit behind it, sits between the wordmark and
+      // the login card.
       if (!iconWrap.querySelector('.auth-hero-illo')) {
+        const heroWrap = document.createElement('div');
+        heroWrap.className = 'auth-hero-wrap';
         const hero = document.createElement('img');
         hero.className = 'auth-hero-illo';
         hero.src = '/auth-hero.webp';
@@ -872,7 +901,8 @@ function bindAuth() {
         hero.setAttribute('aria-hidden', 'true');
         hero.loading = 'eager';
         hero.decoding = 'async';
-        iconWrap.appendChild(hero);
+        heroWrap.appendChild(hero);
+        iconWrap.appendChild(heroWrap);
       }
     }
 
@@ -893,6 +923,7 @@ function bindAuth() {
     // 3. Add labels above inputs + set placeholders
     if (loginForm && !loginForm.dataset.sakuraFields) {
       loginForm.dataset.sakuraFields = '1';
+
       const idInput = loginForm.querySelector('input[name="identifier"]');
       const pwInput = loginForm.querySelector('input[name="password"]');
       if (idInput) {
