@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v107';
+const APP_VERSION = 'priv-spaca-v108';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -883,8 +883,10 @@ function bindAuth() {
       const head = document.createElement('div');
       head.className = 'auth-editorial-head';
       head.innerHTML =
-        '<div class="auth-editorial-title">Your cozy corner<br>to <span class="accent">catch up.</span></div>' +
-        '<div class="auth-form-sub">sign in to keep the conversation going</div>';
+        '<div class="auth-editorial-eyebrow">A quiet place · A private line</div>' +
+        '<div class="auth-editorial-rule"></div>' +
+        '<div class="auth-editorial-title">Priv <span class="accent">Spaca</span></div>' +
+        '<div class="auth-form-sub">Some things are meant for just the two of you.</div>';
       loginPanel.insertBefore(head, loginForm);
     }
 
@@ -910,7 +912,7 @@ function bindAuth() {
 
       // 4. Change submit button text
       const submitBtn = loginForm.querySelector('button[type="submit"]');
-      if (submitBtn) submitBtn.textContent = "Let's go →";
+      if (submitBtn) submitBtn.textContent = 'Enter';
 
       // 5. RESTORE "Forgotten password?" link — reposition below the button
       const resetLink = loginForm.querySelector('[data-auth-step="reset"]');
