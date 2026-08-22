@@ -1,7 +1,19 @@
 name: Daily DB Backup
 
-# Snapshots /db.json (data branch) into /backups/YYYY-MM-DD.json on main.
-# Keeps the last 30 daily snapshots; older ones are auto-pruned.
+# Snapshots the live Turso database into the PRIVATE
+# ajitjaat1011-ui/priv-spaca-backups repo (NOT this public repo).
+#
+# SECURITY: this workflow used to fetch a legacy db.json file from the
+# "data" branch of THIS (public) repo and commit it under backups/ here.
+# That legacy file contained real bcrypt password/PIN hashes and its
+# presence in a public repo was a genuine data exposure, remediated by
+# purging it from history. Turso has been the sole primary datastore for
+# a long time, so that fetch permanently 404s now (expected).
+#
+# This replacement backs up Turso directly and writes ONLY into a
+# separate PRIVATE repo, never into this public one. Do not change the
+# destination repo to a public one, and do not remove the .gitignore
+# guard in that repo.
 
 on:
   schedule:
@@ -9,53 +21,73 @@ on:
   workflow_dispatch:       # manual trigger from GitHub UI
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
+      - name: Checkout main (for the backup script only)
         uses: actions/checkout@v4
         with:
           ref: main
+          sparse-checkout: |
+            scripts/backup-and-wipe.js
+            package.json
+          sparse-checkout-cone-mode: false
 
-      - name: Fetch latest db.json from data branch
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm install --no-audit --no-fund @libsql/client
+
+      - name: Snapshot Turso DB to JSON (backup-only, no wipe)
+        env:
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
         run: |
-          mkdir -p backups
+          mkdir -p /tmp/backup-out
           today=$(date -u +%F)
-          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://raw.githubusercontent.com/${{ github.repository }}/data/db.json" \
-            -o "backups/${today}.json"
-          if [ ! -s "backups/${today}.json" ]; then
-            echo "Empty or failed download — aborting."
-            exit 1
-          fi
-          # Pretty-print + strip secrets (sanity: shouldn't be any, but be safe)
-          python3 -c "
-          import json
-          with open('backups/${today}.json') as f: d=json.load(f)
-          # Defensive: remove any fields that look sensitive (none should be at this layer)
-          for u in d.get('users', []):
-            # Hashes stay (already bcrypt) but truncate display to first 6 chars for visibility audit
-            pass
-          with open('backups/${today}.json','w') as f: json.dump(d, f, indent=2)
-          print(f'Backup size: {len(open(\"backups/${today}.json\").read())} bytes, {len(d.get(\"users\",[]))} users')
+          node -e "
+          const { createClient } = require('@libsql/client');
+          const fs = require('fs');
+          (async () => {
+            const c = createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN });
+            const tables = ['ps_users','ps_posts','ps_messages','ps_notifications','ps_dm_index','ps_user_feeds','ps_events','ps_kv'];
+            const dump = {};
+            for (const t of tables) {
+              try {
+                const rs = await c.execute('SELECT * FROM ' + t);
+                dump[t] = rs.rows.map(r => Object.fromEntries(Object.entries(r)));
+              } catch (e) {
+                dump[t] = { _error: String(e.message || e) };
+              }
+            }
+            fs.writeFileSync('/tmp/backup-out/${today}.json', JSON.stringify(dump));
+            console.log('Wrote backup, tables:', Object.keys(dump).join(', '));
+          })().catch(e => { console.error(e); process.exit(1); });
           "
 
-      - name: Prune backups older than 30 days
+      - name: Push snapshot to PRIVATE backups repo
+        env:
+          BACKUP_PUSH_TOKEN: ${{ secrets.BACKUP_PUSH_TOKEN }}
         run: |
+          today=$(date -u +%F)
+          rm -rf /tmp/backups-repo
+          git clone --depth 1 "https://${BACKUP_PUSH_TOKEN}@github.com/ajitjaat1011-ui/priv-spaca-backups.git" /tmp/backups-repo
+          mkdir -p /tmp/backups-repo/backups
+          cp "/tmp/backup-out/${today}.json" "/tmp/backups-repo/backups/${today}.json"
+          cd /tmp/backups-repo
           find backups -name '*.json' -type f -mtime +30 -print -delete || true
-          ls -la backups | head -40
-
-      - name: Commit + push if changed
-        run: |
           git config user.name  "priv-spaca-bot"
           git config user.email "bot@priv-spaca.app"
           git add backups/
           if git diff --cached --quiet; then
             echo "No changes; nothing to commit."
           else
-            git commit -m "🗄 Daily DB backup $(date -u +%F)"
+            git commit -m "Daily DB backup ${today}"
             git push
           fi
