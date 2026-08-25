@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v110';
+const APP_VERSION = 'priv-spaca-v111';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3685,11 +3685,11 @@ function _renderTopNotifMessage(msg) {
         <div class="tnb-text">${preview}</div>
       </div>
       <svg class="tnb-flower" viewBox="0 0 100 100" aria-hidden="true">
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F9CFE3" transform="rotate(0 50 50)" opacity="0.9"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F4A8CC" transform="rotate(72 50 50)" opacity="0.9"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#FBDCEC" transform="rotate(144 50 50)" opacity="0.9"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F9CFE3" transform="rotate(216 50 50)" opacity="0.9"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F4A8CC" transform="rotate(288 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F9CFE3" transform="rotate(0 50 50)"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F4A8CC" transform="rotate(72 50 50)"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#FBDCEC" transform="rotate(144 50 50)"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F9CFE3" transform="rotate(216 50 50)"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F4A8CC" transform="rotate(288 50 50)"/>
         <circle cx="50" cy="50" r="6" fill="#F2A8CC"/>
       </svg>
     </div>`;
