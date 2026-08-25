@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v109';
+const APP_VERSION = 'priv-spaca-v110';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -289,12 +289,14 @@ function initialsOf(name) {
 }
 
 function colorOf(seed) {
-  if (!seed) return '#00a2ff';
+  if (!seed) return '#5B9BFA';
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
-  const sat = 60 + (h % 20);
-  return `hsl(${hue}, ${sat}%, 55%)`;
+  // Curated soft blue/pink hues keep avatars on-brand (no random lime/purple).
+  const hues = [211, 224, 200, 330, 344, 192];
+  const hue = hues[h % hues.length];
+  const light = 58 + (h % 8);
+  return `hsl(${hue}, 72%, ${light}%)`;
 }
 
 /**
@@ -305,11 +307,12 @@ function bubbleTintFor(seed) {
   if (!seed) return { bg: '#eef3f7', fg: '#1a2733', author: '#3a4d5c' };
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
+  const hues = [211, 224, 200, 330, 344, 192];
+  const hue = hues[h % hues.length];
   return {
-    bg:     `hsl(${hue}, 78%, 95%)`,   // soft pastel
-    fg:     `hsl(${hue}, 40%, 18%)`,   // dark readable text
-    author: `hsl(${hue}, 60%, 38%)`,   // medium-dark for author line
+    bg:     `hsl(${hue}, 70%, 95%)`,   // soft pastel
+    fg:     `hsl(${hue}, 45%, 22%)`,   // dark readable text
+    author: `hsl(${hue}, 55%, 42%)`,   // medium-dark for author line
   };
 }
 
@@ -334,9 +337,9 @@ function ownerVerifiedBadgeSvg(extraClass = '') {
     <svg class="owner-verified-badge ${extraClass}" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
       <defs>
         <linearGradient id="${g}" x1="5" y1="4" x2="27" y2="28">
-          <stop offset="0" stop-color="#5bd6ff"/>
-          <stop offset="0.42" stop-color="#159cff"/>
-          <stop offset="1" stop-color="#0068e8"/>
+          <stop offset="0" stop-color="#8FBCFF"/>
+          <stop offset="0.42" stop-color="#5B9BFA"/>
+          <stop offset="1" stop-color="#3F7FE8"/>
         </linearGradient>
       </defs>
       <path class="bt-shape" d="M16 1.9 19.1 4.4 23.1 4.2 24.8 7.9 28.5 9.6 28.2 13.6 30.7 16.7 28.2 19.8 28.5 23.8 24.8 25.5 23.1 29.2 19.1 29 16 31.5 12.9 29 8.9 29.2 7.2 25.5 3.5 23.8 3.8 19.8 1.3 16.7 3.8 13.6 3.5 9.6 7.2 7.9 8.9 4.2 12.9 4.4 16 1.9Z" fill="url(#${g})"/>
@@ -843,82 +846,38 @@ function bindAuth() {
   const authPanels = document.querySelectorAll('[data-auth-panel]');
   const authBottom = $('[data-auth-secondary]'); // .auth-bottom with 'Create new account'
 
-  // Sakura Editorial: restructure the login form to match the design preview.
-  // - Hide the logo/brand area (design is text-only)
-  // - Inject editorial title with mixed serif + sans-blue "gather."
-  // - Inject "sign in to continue" script subtitle
-  // - Add labels above inputs ("Email or handle", "Password")
-  // - Change button text to "Enter garden →"
-  // - Hide "Forgotten password?" link
-  // - Add terms checkbox text after button
-  // - Change bottom CTA text to "New here?" / "Create an account"
+  // Porcelain & Powder: restructure the login screen for the soft
+  // pastel white/blue/pink redesign.
+  // - Show the flower logo badge + clean wordmark (no ornament, no padlock hero)
+  // - Soft tagline under the wordmark
+  // - Labels above inputs
+  // - Button text "Log in"
+  // - Terms note under the button
   function applySakuraLoginEditorial() {
-    // 0. Ornate page frame + top/bottom flavor-text strips — injected once
-    // directly under .auth-shell so they sit behind/around the scrollable
-    // content, matching the reference book-cover's bordered title page.
-    const authShell = document.querySelector('.auth-shell');
-    if (authShell && !authShell.querySelector('.auth-page-frame')) {
-      const frame = document.createElement('div');
-      frame.className = 'auth-page-frame';
-      frame.setAttribute('aria-hidden', 'true');
-      frame.innerHTML =
-        '<span class="afc afc-tl"></span><span class="afc afc-tr"></span>' +
-        '<span class="afc afc-bl"></span><span class="afc afc-br"></span>';
-      authShell.appendChild(frame);
+    // 0. (The ornate page frame / flavor strips / engraved hero from the
+    // vintage look are intentionally not injected anymore.)
 
-      const topStrip = document.createElement('div');
-      topStrip.className = 'auth-frame-top';
-      topStrip.textContent = 'A private thread · A quiet room · Just us';
-      authShell.insertBefore(topStrip, authShell.firstChild);
-
-      const bottomStrip = document.createElement('div');
-      bottomStrip.className = 'auth-frame-bottom';
-      bottomStrip.textContent = 'Priv Spaca · Est. for the two of you';
-      const authBottomEl = authShell.querySelector('.auth-bottom');
-      if (authBottomEl) authShell.insertBefore(bottomStrip, authBottomEl.nextSibling);
-      else authShell.appendChild(bottomStrip);
-    }
-
-    // 1. Keep the logo badge (now a friendly rounded-square sky-blue icon in
-    // the storybook design) and the brand wordmark — just tidy the spacing.
+    // 1. Tidy the logo + wordmark area.
     const iconWrap = document.querySelector('.auth-icon-wrap');
     if (iconWrap) {
-      const petalParticles = iconWrap.querySelector('.petal-particles');
-      if (petalParticles) petalParticles.style.display = 'none';
-      iconWrap.style.margin = '4px 0 6px';
-      iconWrap.style.gap = '0';
-
-      // Hero illustration — injected once, wrapped so radiating ring
-      // linework (CSS) can sit behind it, sits between the wordmark and
-      // the login card.
-      if (!iconWrap.querySelector('.auth-hero-illo')) {
-        const heroWrap = document.createElement('div');
-        heroWrap.className = 'auth-hero-wrap';
-        const hero = document.createElement('img');
-        hero.className = 'auth-hero-illo';
-        hero.src = '/auth-hero.webp';
-        hero.alt = '';
-        hero.setAttribute('aria-hidden', 'true');
-        hero.loading = 'eager';
-        hero.decoding = 'async';
-        heroWrap.appendChild(hero);
-        iconWrap.appendChild(heroWrap);
+      // Soft petal particles are kept but tinted via CSS.
+      iconWrap.style.margin = '';
+      iconWrap.style.gap = '';
+      if (!iconWrap.querySelector('.auth-tagline')) {
+        const brandName = iconWrap.querySelector('.brand-name');
+        if (brandName) {
+          const wrap = brandName.parentElement;
+          const tagline = document.createElement('p');
+          tagline.className = 'auth-tagline';
+          tagline.textContent = 'Your private space, softly yours.';
+          wrap.insertBefore(tagline, brandName.nextSibling);
+        }
       }
     }
 
-    // 2. Inject editorial title + subtitle above the login form
+    // 2. (Editorial head no longer injected — the wordmark carries the brand.)
     const loginPanel = document.querySelector('[data-auth-panel="login"]');
     const loginForm = document.getElementById('loginForm');
-    if (loginPanel && loginForm && !loginPanel.querySelector('.auth-editorial-head')) {
-      const head = document.createElement('div');
-      head.className = 'auth-editorial-head';
-      head.innerHTML =
-        '<div class="auth-editorial-eyebrow">A quiet place · A private line</div>' +
-        '<div class="auth-editorial-rule"></div>' +
-        '<div class="auth-editorial-title">Priv <span class="accent">Spaca</span></div>' +
-        '<div class="auth-form-sub">Some things are meant for just the two of you.</div>';
-      loginPanel.insertBefore(head, loginForm);
-    }
 
     // 3. Add labels above inputs + set placeholders
     if (loginForm && !loginForm.dataset.sakuraFields) {
@@ -941,9 +900,9 @@ function bindAuth() {
         pwInput.parentElement.insertBefore(lbl, pwInput);
       }
 
-      // 4. Change submit button text
+      // 4. Submit button text
       const submitBtn = loginForm.querySelector('button[type="submit"]');
-      if (submitBtn) submitBtn.textContent = 'Enter';
+      if (submitBtn) submitBtn.textContent = 'Log in';
 
       // 5. RESTORE "Forgotten password?" link — reposition below the button
       const resetLink = loginForm.querySelector('[data-auth-step="reset"]');
@@ -3726,12 +3685,12 @@ function _renderTopNotifMessage(msg) {
         <div class="tnb-text">${preview}</div>
       </div>
       <svg class="tnb-flower" viewBox="0 0 100 100" aria-hidden="true">
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#ff7ab8" transform="rotate(0 50 50)" opacity="0.9"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#c33dff" transform="rotate(72 50 50)" opacity="0.9"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#7c5cff" transform="rotate(144 50 50)" opacity="0.9"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#c33dff" transform="rotate(216 50 50)" opacity="0.9"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#ff7ab8" transform="rotate(288 50 50)" opacity="0.9"/>
-        <circle cx="50" cy="50" r="6" fill="#ffc233"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F9CFE3" transform="rotate(0 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F4A8CC" transform="rotate(72 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#FBDCEC" transform="rotate(144 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F9CFE3" transform="rotate(216 50 50)" opacity="0.9"/>
+        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F4A8CC" transform="rotate(288 50 50)" opacity="0.9"/>
+        <circle cx="50" cy="50" r="6" fill="#F2A8CC"/>
       </svg>
     </div>`;
   // v93.10: Tap the banner → open the conversation with the sender.
@@ -7388,7 +7347,7 @@ function openSettings() {
   syncPrivateAccountToggle();
   const cvs = $id('#cardVisibilitySelect'); if (cvs && State.user) cvs.value = State.user.cardVisibility || 'everyone';
   $$('#settingsSheet [data-theme-set]').forEach(b => b.classList.toggle('active', b.dataset.themeSet === stored));
-  const accent = localStorage.getItem('ps_accent') || '#00a2ff';
+  const accent = localStorage.getItem('ps_accent') || '#5B9BFA';
   $$('#settingsSheet [data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === accent));
   updatePushStatus();
   updateRealtimeStatus();
@@ -8790,7 +8749,7 @@ function applyStoredTheme() {
 
   const accent = localStorage.getItem('ps_accent');
   if (accent) applyAccent(accent);
-  $$('[data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === (accent || '#00a2ff')));
+  $$('[data-accent]').forEach(b => b.classList.toggle('active', b.dataset.accent === (accent || '#5B9BFA')));
 
   updateMetaThemeColor();
 }
@@ -8827,7 +8786,7 @@ function updateMetaThemeColor(accentHex) {
                  (document.documentElement.getAttribute('data-theme') !== 'light' &&
                   window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
   const meta = document.querySelector('meta[name="theme-color"]:not([media])');
-  if (meta) meta.content = isDark ? '#0b1620' : (accentHex || '#00a2ff');
+  if (meta) meta.content = isDark ? '#0D1424' : (accentHex || '#5B9BFA');
 }
 function bindThemeToggle() {
   $$('[data-theme-set]').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.themeSet)));
@@ -9056,7 +9015,7 @@ const SelfHeal = {
             The app couldn't recover automatically (${reason || 'unknown issue'}).
             Tap below to clear cached data and reload.
           </p>
-          <button id="ps-heal-reset" style="background:#00a2ff;color:#fff;border:none;border-radius:10px;padding:14px 28px;font-size:16px;cursor:pointer;font-weight:600;">
+          <button id="ps-heal-reset" style="background:#5B9BFA;color:#fff;border:none;border-radius:10px;padding:14px 28px;font-size:16px;cursor:pointer;font-weight:600;">
             Reset & Reload
           </button>
           <p style="margin:16px 0 0;font-size:12px;color:#777;">

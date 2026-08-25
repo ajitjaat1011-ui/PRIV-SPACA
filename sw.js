@@ -5,15 +5,15 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v109';
-const STATIC_CACHE = 'priv-spaca-static-v94';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v94';
+const SW_VERSION = 'priv-spaca-v110';
+const STATIC_CACHE = 'priv-spaca-static-v95';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v95';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=139',
-  '/app.min.js?v=136',
+  '/style.min.css?v=140',
+  '/app.min.js?v=137',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',
@@ -123,7 +123,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 // Push notification handler (delivered when the app is closed)
-const ICON_DATA_URI = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300c6ff'/%3E%3Cstop offset='1' stop-color='%230072ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='192' height='192' rx='42' fill='url(%23g)'/%3E%3Cpath fill='%23fff' d='M42 96 150 42 126 150 96 108z'/%3E%3C/svg%3E";
+const ICON_DATA_URI = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238FBCFF'/%3E%3Cstop offset='1' stop-color='%235B9BFA'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='192' height='192' rx='42' fill='url(%23g)'/%3E%3Cpath fill='%23fff' d='M42 96 150 42 126 150 96 108z'/%3E%3C/svg%3E";
 
 self.addEventListener('push', (event) => {
   let data = {};
