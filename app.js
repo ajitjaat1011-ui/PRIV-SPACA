@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v111';
+const APP_VERSION = 'priv-spaca-v112';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3679,70 +3679,10 @@ function _renderTopNotifMessage(msg) {
   const timeStr = msg.createdAt ? timeAgo(msg.createdAt) : 'now';
   _topNotifBannerEl.innerHTML = `
     <div class="tnb-msg">
-      <div class="tnb-av"><div class="tnb-av-inner">${avatarHtml}</div></div>
-      <div class="tnb-content">
-        <div class="tnb-top"><span class="tnb-name">${escapeHtml(name)}</span><span class="tnb-time">· ${escapeHtml(timeStr)}</span></div>
-        <div class="tnb-text">${preview}</div>
-      </div>
-      <svg class="tnb-flower" viewBox="0 0 100 100" aria-hidden="true">
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F9CFE3" transform="rotate(0 50 50)"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F4A8CC" transform="rotate(72 50 50)"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#FBDCEC" transform="rotate(144 50 50)"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F9CFE3" transform="rotate(216 50 50)"/>
-        <ellipse cx="50" cy="22" rx="9" ry="15" fill="#F4A8CC" transform="rotate(288 50 50)"/>
-        <circle cx="50" cy="50" r="6" fill="#F2A8CC"/>
-      </svg>
-    </div>`;
-  // v93.10: Tap the banner → open the conversation with the sender.
-  // If it's a DM, open the DM room. If it's a group message, open general-group.
-  _topNotifBannerEl.onclick = () => {
-    const senderId = msg.sender && msg.sender.id;
-    const roomId = msg.roomId || (senderId && senderId !== (State.user && State.user.id)
-      ? dmRoomId(State.user.id, senderId)  // DM with the sender
-      : 'general-group');                   // fallback to group
-    // Switch to chat tab first
-    switchTab('chat');
-    // Open the specific conversation
-    setTimeout(() => {
-      if (roomId && roomId.startsWith('dm:') && senderId) {
-        // Find the member and open DM
-        const member = (State.members || []).find(u => u.id === senderId);
-        if (member && typeof openDM === 'function') {
-          openDM(member);
-        }
-      } else {
-        // Group chat — click the general-group room
-        const roomItem = $('#roomsList .room-item[data-room="general-group"]');
-        if (roomItem) roomItem.click();
-      }
-    }, 200);
-    // Clear the banner after opening
-    _clearTopNotifBanner();
-  };
-  _topNotifBannerEl.style.cursor = 'pointer';
-}
-
-// Render the call banner (transparent, Design C) — called from showCallUI
-function _showTopNotifCall(user, isVideo) {
-  if (!_topNotifBannerEl) _topNotifBannerEl = $id('#topNotifBanner');
-  if (!_topNotifBannerEl) return;
-  _topNotifCurrent = 'call';
-  const name = (user && (user.displayName || user.username)) || 'Caller';
-  const initials = (name || '?').trim().slice(0, 2).toUpperCase();
-  const avatarHtml = (user && user.photoUrl)
-    ? `<img src="${escapeHtml(user.photoUrl)}" alt="" onerror="this.style.display='none'">`
-    : escapeHtml(initials);
-  const label = isVideo ? 'INCOMING VIDEO' : 'INCOMING CALL';
-  _topNotifBannerEl.innerHTML = `
-    <div class="tnb-call">
-      <div class="tnb-call-av"><div class="tnb-call-av-inner">${avatarHtml}</div></div>
-      <div class="tnb-call-info">
-        <div class="tnb-call-label">${label}</div>
-        <div class="tnb-call-name">${escapeHtml(name)}</div>
-      </div>
-      <div class="tnb-call-actions">
-        <button class="tnb-call-btn tnb-call-decline" aria-label="Decline" data-tnb-action="decline"><i data-lucide="phone-off"></i></button>
-        <button class="tnb-call-btn tnb-call-accept" aria-label="Accept" data-tnb-action="accept"><i data-lucide="phone"></i></button>
+      <div class="tnb-petals"><i></i><i class="b"></i><i></i><i class="b"></i><i></i></div>
+      <div class="tnb-center">
+        <div class="tnb-name">${escapeHtml(name)}</div>
+        <div class="tnb-text">${preview} · ${escapeHtml(timeStr)}</div>
       </div>
     </div>`;
   _topNotifBannerEl.onclick = null;

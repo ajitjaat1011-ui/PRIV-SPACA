@@ -833,43 +833,64 @@ img{user-select:none;-webkit-user-drag:none}
 /* Shows unread message preview or incoming call UI in the topbar slot.
    Empty by default (clean, no content). Transparent — no background. */
 .top-notif-banner{
-  flex:1;min-width:0;max-width:calc(100% - 180px);height:40px;
+  flex:1;min-width:0;max-width:calc(100% - 180px);height:54px;
   display:flex;align-items:center;
   overflow:hidden;
   transition:opacity .3s ease;
   margin:0 8px;
 }
 .top-notif-banner:empty{display:flex}  /* keep flex space so layout doesn't jump */
-/* Message state — transparent, COMPACT floating content (v93.9: smaller) */
+/* ===== Message banner — #6 Floating Petals (v112) ===== */
 .top-notif-banner .tnb-msg{
-  display:flex;align-items:center;gap:7px;
-  width:100%;
-  height:38px;padding:0 7px 0 4px;
-  border-radius:999px;
-  background:linear-gradient(135deg,rgba(255,255,255,.9) 0%,rgba(245,249,254,.74) 100%);
-  -webkit-backdrop-filter:blur(14px) saturate(160%);
-  backdrop-filter:blur(14px) saturate(160%);
-  border:1px solid var(--line-2);
-  box-shadow:0 4px 14px -6px rgba(56,80,130,.18);
+  position:relative;width:100%;height:100%;
+  display:flex;align-items:center;justify-content:center;
   animation:tnb-slide-down .4s cubic-bezier(.2,.8,.2,1);
   cursor:pointer;
 }
-[data-theme="dark"] .top-notif-banner .tnb-msg{
-  background:rgba(255,255,255,.07);
-  border-color:rgba(255,255,255,.16);
-  box-shadow:0 4px 14px -6px rgba(0,0,0,.5);
+.top-notif-banner .tnb-petals{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.top-notif-banner .tnb-petals i{
+  position:absolute;width:13px;height:13px;
+  border-radius:100% 0 100% 0;
+  background:linear-gradient(135deg,#FBDCEC,#F4A8CC);
+  opacity:.85;
+  animation:tnb-petal-float 6s ease-in-out infinite;
+}
+.top-notif-banner .tnb-petals i.b{background:linear-gradient(135deg,#DCE9FF,#8FBCFF)}
+.top-notif-banner .tnb-petals i:nth-child(1){left:8%;top:22%;animation-delay:0s}
+.top-notif-banner .tnb-petals i:nth-child(2){left:26%;top:66%;animation-delay:1.2s;width:10px;height:10px}
+.top-notif-banner .tnb-petals i:nth-child(3){left:48%;top:20%;animation-delay:2.1s;width:15px;height:15px}
+.top-notif-banner .tnb-petals i:nth-child(4){left:70%;top:60%;animation-delay:.7s;width:9px;height:9px}
+.top-notif-banner .tnb-petals i:nth-child(5){left:87%;top:28%;animation-delay:1.7s;width:11px;height:11px}
+@keyframes tnb-petal-float{
+  0%,100%{transform:translateY(0) rotate(0deg);opacity:.55}
+  50%{transform:translateY(-10px) rotate(55deg);opacity:1}
+}
+.top-notif-banner .tnb-center{position:relative;z-index:1;text-align:center;min-width:0;max-width:100%}
+.top-notif-banner .tnb-name{
+  font-size:13px;font-weight:800;letter-spacing:-.1px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+  background:linear-gradient(95deg,#3F7FE8 0%,#8F9FE8 50%,#E76FA8 100%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+}
+.top-notif-banner .tnb-text{
+  font-size:10.5px;font-weight:600;color:var(--muted);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+[data-theme="dark"] .top-notif-banner .tnb-name{
+  background:linear-gradient(95deg,#8FBCFF 0%,#B4A8F0 50%,#F4A8CC 100%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
 }
 @media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .top-notif-banner .tnb-msg{
-    background:rgba(255,255,255,.07);
-    border-color:rgba(255,255,255,.16);
-    box-shadow:0 4px 14px -6px rgba(0,0,0,.5);
+  :root:not([data-theme="light"]) .top-notif-banner .tnb-name{
+    background:linear-gradient(95deg,#8FBCFF 0%,#B4A8F0 50%,#F4A8CC 100%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
   }
 }
 @keyframes tnb-slide-down{
   from{transform:translateY(-12px);opacity:0}
   to{transform:translateY(0);opacity:1}
 }
+/* (legacy avatar bits — kept for any older markup) */
 [data-theme="dark"] .top-notif-banner .tnb-av-inner{ background:rgba(255,255,255,.1); }
 .top-notif-banner .tnb-av{
   width:22px;height:22px;border-radius:50%;padding:1.2px;flex-shrink:0;
@@ -882,16 +903,6 @@ img{user-select:none;-webkit-user-drag:none}
   font-size:9px;font-weight:800;color:#F291BE;overflow:hidden;
 }
 .top-notif-banner .tnb-av-inner img{width:100%;height:100%;object-fit:cover}
-.top-notif-banner .tnb-content{display:flex;flex-direction:column;justify-content:center;gap:1px;flex:1;min-width:0;overflow:hidden;line-height:1.15}
-.top-notif-banner .tnb-top{display:flex;align-items:baseline;gap:5px;min-width:0}
-.top-notif-banner .tnb-name{font-size:11.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.top-notif-banner .tnb-time{font-size:9.5px;color:var(--muted-2);white-space:nowrap;flex-shrink:0}
-.top-notif-banner .tnb-text{
-  font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;
-}
-.top-notif-banner .tnb-flower{
-  width:13px;height:13px;flex-shrink:0;opacity:.6;
-}
 /* Call state — transparent, COMPACT floating content (v93.9: smaller, no overlap) */
 .top-notif-banner .tnb-call{
   display:flex;align-items:center;gap:7px;
@@ -1109,94 +1120,105 @@ img{user-select:none;-webkit-user-drag:none}
 .profile-titlebar .ghost-btn i{width:24px;height:24px;stroke-width:2}
 .profile-titlebar .ghost-btn:hover{background:var(--bg-soft);color:var(--text)}
 
-/* ===== Bottom Navigation (Instagram/WhatsApp Floating Pill + Action Button) ===== */
+/* Feed/search/profile scroll clearance for the petal arc */
+.feed-wrap, .search-wrap, .profile-wrap { padding-bottom: 122px; }
+
+/* ===== Bottom Navigation — Petal Arc (v112: #08 design) ===== */
 .bottom-nav-wrap{
-  position:fixed;bottom:14px;left:10px;right:10px;max-width:480px;margin:0 auto;
-  display:flex;align-items:center;gap:8px;
+  position:fixed;bottom:20px;left:10px;right:10px;max-width:480px;margin:0 auto;
+  display:flex;align-items:center;justify-content:center;
   z-index:60;pointer-events:none;box-sizing:border-box;
 }
 .bottom-nav-pill{
-  flex:1;height:60px;
-  background:rgba(255,255,255,0.62);
-  backdrop-filter:blur(32px) saturate(1.4);-webkit-backdrop-filter:blur(32px) saturate(1.4);
-  border:1px solid rgba(255,255,255,0.5);border-radius:9999px;
-  box-shadow:0 2px 12px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
-  display:flex;align-items:center;justify-content:space-around;
-  padding:4px 6px;pointer-events:auto;min-width:0;
+  flex:0 1 auto;height:auto;
+  background:none;border:0;box-shadow:none;
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+  display:flex;align-items:flex-end;justify-content:center;
+  gap:7px;padding:0 2px 4px;pointer-events:auto;min-width:0;
 }
-.floating-add-btn{
-  width:48px;height:48px;border-radius:50%;
-  background:var(--accent-grad);
-  color:#fff;border:none;
-  box-shadow:0 4px 16px rgba(91,155,250,0.28), 0 1px 4px rgba(0,0,0,0.06);
-  display:flex;align-items:center;justify-content:center;
-  cursor:pointer;flex-shrink:0;
-  transition:transform 0.3s ease-out, box-shadow 0.3s ease-out;
-  pointer-events:auto;
-}
-.floating-add-btn:hover{
-  transform:scale(1.06);
-  box-shadow:0 6px 20px rgba(91,155,250,0.36);
-}
-.floating-add-btn:active{transform:scale(0.94)}
-.floating-add-btn i{width:22px;height:22px;stroke-width:2.2;transition:transform .3s ease-out}
-.floating-add-btn:hover i{transform:rotate(90deg)}
-.floating-add-btn:active i{transform:rotate(90deg) scale(0.9)}
-
-/* Soft nav buttons — always show labels, pill active indicator */
+/* Petal tabs — fanned like a blossom */
 .bn-btn{
-  height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  background:transparent;border:0;cursor:pointer;color:var(--muted);
-  border-radius:22px;transition:all 0.35s cubic-bezier(0.4,0,0.2,1);
-  position:relative;gap:1px;padding:0 8px;min-width:0;flex:1;
+  width:58px;height:66px;flex:0 0 auto;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  background:linear-gradient(180deg,#C3CBF5,#9AA8F0);
+  border:0;cursor:pointer;color:#fff;
+  border-radius:50% 50% 50% 50% / 68% 68% 32% 32%;
+  transform-origin:50% 100%;
+  position:relative;padding:0;min-width:0;
+  box-shadow:0 12px 24px -8px rgba(56,80,130,.45), inset 0 1.5px 0 rgba(255,255,255,.4);
+  filter:saturate(.88);
+  transition:transform .3s cubic-bezier(0.4,0,0.2,1), box-shadow .3s ease, filter .3s ease;
 }
-.bn-btn:hover{color:var(--text-2)}
-.bn-btn:active{transform:scale(0.93)}
-.bn-btn .bn-label{
-  display:block;font-weight:600;font-size:10px;letter-spacing:0.15px;white-space:nowrap;
-  opacity:0.55;transition:all 0.35s cubic-bezier(0.4,0,0.2,1);
-}
-.bn-btn.active{
-  background:rgba(var(--accent-rgb),0.08);color:var(--accent);
-}
-.bn-btn.active .bn-label{
-  display:block;font-weight:700;font-size:10px;
-  opacity:0.85;color:var(--accent);
-}
-.bn-btn i{width:21px;height:21px;stroke-width:1.7;transition:all 0.35s cubic-bezier(0.4,0,0.2,1)}
+.bn-btn i{width:20px;height:20px;stroke-width:2.3;color:#fff;transition:all 0.35s cubic-bezier(0.4,0,0.2,1)}
 .bn-btn .i-filled{display:none}
 .bn-btn.active .i-outline{display:none}
 .bn-btn.active .i-filled{display:inline-block}
-.bn-btn.active i{stroke-width:1.8;color:var(--accent);transform:scale(1.02)}
-/* Remove old bounce pop animation — replaced with gentle scale */
-@keyframes navIconPop{
-  0%{transform:scale(0.92)}
-  100%{transform:scale(1.05)}
+.bn-btn .bn-label{
+  display:block;font-weight:800;font-size:8px;letter-spacing:.7px;white-space:nowrap;
+  color:#fff;opacity:.95;text-transform:uppercase;
 }
+/* The fan — per-tab colour + tilt */
+.bn-btn[data-tab="feed"]{ background:linear-gradient(180deg,#A9CBF5,#7FB0FF); transform:rotate(-24deg) translateY(5px); }
+.bn-btn[data-tab="search"]{ background:linear-gradient(180deg,#C3CBF5,#9AA8F0); transform:rotate(-13deg) translateY(2px); }
+.bn-btn[data-tab="chat"]{ background:linear-gradient(180deg,#F9CFE3,#F291BE); transform:rotate(13deg) translateY(2px); }
+.bn-btn[data-tab="profile"]{ background:linear-gradient(180deg,#F4A8CC,#E76FA8); transform:rotate(24deg) translateY(5px); }
+/* Active petal: full colour + lifted */
+.bn-btn.active{
+  filter:none;
+  box-shadow:0 16px 30px -8px rgba(91,155,250,.6), 0 0 0 4px rgba(130,182,255,.4), inset 0 1.5px 0 rgba(255,255,255,.55);
+}
+.bn-btn[data-tab="feed"].active{ transform:rotate(-24deg) translateY(0); }
+.bn-btn[data-tab="search"].active{ transform:rotate(-13deg) translateY(-3px); }
+.bn-btn[data-tab="chat"].active{ transform:rotate(13deg) translateY(-3px); }
+.bn-btn[data-tab="profile"].active{ transform:rotate(24deg) translateY(0); }
+.bn-btn:active{ filter:brightness(.94); }
+/* Centre create petal */
+.floating-add-btn{
+  width:62px;height:74px;flex:0 0 auto;
+  border-radius:50% 50% 50% 50% / 68% 68% 32% 32%;
+  background:linear-gradient(180deg,#82B6FF,#5B9BFA 55%,#F291BE);
+  color:#fff;border:none;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  transform:translateY(-12px);transform-origin:50% 100%;
+  box-shadow:0 18px 34px -8px rgba(91,155,250,.7), 0 0 0 4px rgba(130,182,255,.25), inset 0 1.5px 0 rgba(255,255,255,.5);
+  pointer-events:auto;
+  transition:transform 0.3s ease-out, box-shadow 0.3s ease-out, filter .3s ease;
+}
+.floating-add-btn i{width:24px;height:24px;stroke-width:2.6;color:#fff;transition:transform .3s ease-out}
+.floating-add-btn .bn-label{display:block;font-weight:800;font-size:8px;letter-spacing:.7px;color:#fff;opacity:.95;text-transform:uppercase}
+.floating-add-btn:hover{ box-shadow:0 22px 40px -8px rgba(91,155,250,.8), 0 0 0 5px rgba(130,182,255,.3), inset 0 1.5px 0 rgba(255,255,255,.55); }
+.floating-add-btn:hover i{transform:rotate(90deg)}
+.floating-add-btn:active{transform:translateY(-12px) scale(0.94)}
+.floating-add-btn:active i{transform:rotate(90deg) scale(0.9)}
+/* Profile petal keeps the user avatar */
+.bn-dp-btn{padding:0!important}
 .bn-btn .bn-avatar{
   width:26px;height:26px;border-radius:50%;
   background-size:cover;background-position:center;
-  background-color:var(--bg-soft);
+  background-color:rgba(255,255,255,.3);
   display:inline-flex;align-items:center;justify-content:center;
   color:#fff;font-weight:700;font-size:11px;letter-spacing:.5px;
-  border:2px solid rgba(0,0,0,0.06);transition:all 0.3s ease-out;
+  border:2px solid rgba(255,255,255,.75);transition:all 0.3s ease-out;
 }
-.bn-btn.active .bn-avatar{border-color:var(--accent);box-shadow:0 0 0 2px rgba(var(--accent-rgb),0.15)}
-/* Centered DP button in bottom nav */
-.bn-dp-btn{padding:0!important;display:flex;align-items:center;justify-content:center}
 .bn-dp-btn .bn-avatar-lg{
-  width:36px;height:36px;border-radius:50%;
+  width:32px;height:32px;border-radius:50%;
   background-size:cover;background-position:center;
+  background-color:rgba(255,255,255,.3);
   display:inline-flex;align-items:center;justify-content:center;
-  color:#fff;font-weight:700;font-size:13px;letter-spacing:.5px;
-  border:2.5px solid rgba(0,0,0,0.06);transition:all 0.3s ease-out;
-  box-shadow:0 2px 8px rgba(0,0,0,0.06);
+  color:#fff;font-weight:700;font-size:12px;letter-spacing:.5px;
+  border:2px solid rgba(255,255,255,.8);
+  box-shadow:0 2px 8px rgba(0,0,0,.15);
+  transition:all 0.3s ease-out;
 }
-.bn-dp-btn.active .bn-avatar-lg,
-.bn-dp-btn:active .bn-avatar-lg{
-  border-color:var(--accent,#5B9BFA);
-  box-shadow:0 0 0 3px rgba(var(--accent-rgb),0.12);
-  transform:scale(0.94);
+.bn-dp-btn.active .bn-avatar-lg{ transform:scale(1.05); box-shadow:0 0 0 3px rgba(255,255,255,.35); }
+/* Dark mode: deeper shadows, slightly richer petals */
+[data-theme="dark"] .bn-btn{ box-shadow:0 12px 24px -8px rgba(0,0,0,.55), inset 0 1.5px 0 rgba(255,255,255,.25); }
+[data-theme="dark"] .bn-btn.active{ box-shadow:0 16px 30px -8px rgba(0,0,0,.6), 0 0 0 4px rgba(130,182,255,.4), inset 0 1.5px 0 rgba(255,255,255,.35); }
+[data-theme="dark"] .floating-add-btn{ box-shadow:0 18px 34px -8px rgba(0,0,0,.6), 0 0 0 4px rgba(130,182,255,.22), inset 0 1.5px 0 rgba(255,255,255,.35); }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .bn-btn{ box-shadow:0 12px 24px -8px rgba(0,0,0,.55), inset 0 1.5px 0 rgba(255,255,255,.25); }
+  :root:not([data-theme="light"]) .bn-btn.active{ box-shadow:0 16px 30px -8px rgba(0,0,0,.6), 0 0 0 4px rgba(130,182,255,.4), inset 0 1.5px 0 rgba(255,255,255,.35); }
+  :root:not([data-theme="light"]) .floating-add-btn{ box-shadow:0 18px 34px -8px rgba(0,0,0,.6), 0 0 0 4px rgba(130,182,255,.22), inset 0 1.5px 0 rgba(255,255,255,.35); }
 }
 
 /* Notification dot — softer */
@@ -4100,11 +4122,11 @@ body{
 
 /* Bottom navigation — soft glass (matches base, kept for specificity) */
 .bottom-nav-pill{
-  background:rgba(255,255,255,0.72)!important;
-  border:1px solid rgba(255,255,255,0.65)!important;
-  box-shadow:0 4px 20px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)!important;
-  backdrop-filter:blur(28px) saturate(1.6)!important;
-  -webkit-backdrop-filter:blur(28px) saturate(1.6)!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
 }
 /* Remove individual icon circle backgrounds — let icons breathe */
 .bottom-nav-pill .bn-btn i,
@@ -4120,17 +4142,8 @@ body{
 .bottom-nav-pill .bn-avatar-lg{box-shadow:0 2px 8px rgba(0,0,0,0.06)!important}
 .bottom-nav-pill .bn-btn i,
 .bottom-nav-pill .bn-btn svg{width:22px!important;height:22px!important;padding:0!important}
-.bottom-nav-pill .bn-btn.active{
-  background:rgba(var(--accent-rgb),0.10)!important;
-  box-shadow:none!important;
-}
-.bottom-nav-pill .bn-btn:active{transform:scale(.94)!important}
-.floating-add-btn{
-  background:var(--accent-grad)!important;
-  border:1px solid rgba(255,255,255,0.35)!important;
-  box-shadow:0 4px 16px rgba(91,155,250,0.28), 0 1px 4px rgba(0,0,0,0.06)!important;
-}
-.floating-add-btn:active{transform:scale(.9)!important}
+.bottom-nav-pill .bn-btn:active{filter:brightness(.92)!important}
+.floating-add-btn:active{transform:translateY(-12px) scale(.9)!important}
 
 /* ===== Liquid glass composer + merged call chooser ===== */
 .call-action-wrap{position:relative;display:flex;align-items:center;gap:6px}
@@ -5309,33 +5322,23 @@ body{
 /* Dark floating add button */
 [data-theme="dark"] .floating-add-btn{border-color:rgba(127,176,255,.14) !important;box-shadow:0 4px 16px rgba(127,176,255,0.15), 0 1px 4px rgba(0,0,0,.20) !important}
 [data-theme="dark"] .bottom-nav-pill{
-  background:rgba(19,29,51,0.78)!important;
-  border:1px solid rgba(127,176,255,0.14)!important;
-  box-shadow:0 4px 20px rgba(0,0,0,0.20), 0 1px 3px rgba(0,0,0,0.10)!important;
-}
-[data-theme="dark"] .bn-btn.active{
-  background:rgba(var(--accent-rgb),0.18)!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]) .floating-add-btn{border-color:rgba(127,176,255,.14) !important;box-shadow:0 4px 16px rgba(127,176,255,0.15), 0 1px 4px rgba(0,0,0,.20) !important}
   :root:not([data-theme="light"]) .bottom-nav-pill{
-    background:rgba(19,29,51,0.78)!important;
-    border:1px solid rgba(127,176,255,0.14)!important;
-    box-shadow:0 4px 20px rgba(0,0,0,0.20), 0 1px 3px rgba(0,0,0,0.10)!important;
-  }
-  :root:not([data-theme="light"]) .bn-btn.active{
-    background:rgba(var(--accent-rgb),0.18)!important;
+    background:transparent!important;
+    border:0!important;
+    box-shadow:none!important;
   }
 }
-/* dark-mode equivalents for manual theme toggle (data-theme=dark) */
-[data-theme="dark"] .floating-add-btn{border-color:rgba(127,176,255,.14) !important;box-shadow:0 4px 16px rgba(127,176,255,0.15), 0 1px 4px rgba(0,0,0,.20) !important}
+/* (petal arc v112) — pill container stays transparent in manual dark too */
 [data-theme="dark"] .bottom-nav-pill{
-    background:rgba(19,29,51,0.78)!important;
-    border:1px solid rgba(127,176,255,0.14)!important;
-    box-shadow:0 4px 20px rgba(0,0,0,0.20), 0 1px 3px rgba(0,0,0,0.10)!important;
-  }
-[data-theme="dark"] .bn-btn.active{
-    background:rgba(var(--accent-rgb),0.18)!important;
+    background:transparent!important;
+    border:0!important;
+    box-shadow:none!important;
   }
 
 
