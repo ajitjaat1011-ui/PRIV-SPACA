@@ -7025,3 +7025,122 @@ body{
 /* ============================================================
    END Sakura Editorial Selective Page Overrides (v95)
    ============================================================ */
+
+/* ===== Profile — Polaroid Stack (v113 · design 09) ===== */
+.profile-wrap{
+  background-image:radial-gradient(rgba(130,150,190,.16) 1px, transparent 1.3px);
+  background-size:18px 18px;
+}
+[data-theme="dark"] .profile-wrap{
+  background-image:radial-gradient(rgba(190,205,240,.09) 1px, transparent 1.3px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .profile-wrap{
+    background-image:radial-gradient(rgba(190,205,240,.09) 1px, transparent 1.3px);
+  }
+}
+.ig-profile-head{
+  display:block!important;
+  position:relative;
+  padding:28px 14px 6px!important;
+  background:transparent!important;
+  min-height:246px;
+}
+/* avatar polaroid */
+.profile-avatar-wrap{
+  position:relative;
+  width:198px;
+  margin:0 0 0 2px;
+  background:#fff;
+  border-radius:10px;
+  padding:12px 10px 0;
+  transform:rotate(-3.5deg);
+  box-shadow:0 18px 38px -14px rgba(56,80,130,.42), 0 2px 8px rgba(56,80,130,.12);
+  display:flex;flex-direction:column;align-items:center;
+  flex-shrink:0;
+}
+.profile-avatar-wrap::before{
+  content:'';
+  position:absolute;top:-9px;left:50%;width:64px;height:20px;margin-left:-32px;
+  transform:rotate(-6deg);
+  background:rgba(249,207,227,.72);
+  box-shadow:0 1px 3px rgba(56,80,130,.18);
+}
+.profile-avatar-wrap .avatar.xxl{
+  width:92px;height:92px;font-size:30px;
+  border:3px solid #fff;
+  background-color:#F5F9FE;
+  box-shadow:0 0 0 1px var(--line), 0 8px 18px -8px rgba(56,80,130,.4);
+}
+.pol-caption{
+  width:100%;
+  padding:9px 4px 12px;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  font-family:'Dancing Script',cursive;
+  font-weight:700;font-size:18px;
+  color:#26324E;
+  min-height:38px;
+  max-width:100%;
+}
+.pol-caption #polaroidCaption{
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  max-width:150px;
+}
+.pol-caption .pol-flower{
+  font-family:'Inter',sans-serif;font-size:13px;color:var(--pink-2,#E76FA8);flex-shrink:0;
+}
+.profile-avatar-wrap .profile-mood-bubble{ top:-22px; left:-4px; }
+.profile-avatar-wrap .profile-avatar-add{ bottom:42px; right:12px; border-color:#fff; }
+/* stats polaroid */
+.ig-profile-stats{
+  position:absolute;right:0;top:70px;width:192px;
+  background:#fff;
+  border-radius:10px;
+  padding:13px 15px;
+  transform:rotate(3deg);
+  display:flex!important;flex-direction:column!important;
+  justify-content:flex-start!important;
+  gap:0;
+  box-shadow:0 18px 38px -14px rgba(56,80,130,.42), 0 2px 8px rgba(56,80,130,.12);
+  z-index:1;
+}
+.ig-profile-stats::before{
+  content:'';
+  position:absolute;top:-8px;left:50%;width:52px;height:17px;margin-left:-26px;
+  transform:rotate(5deg);
+  background:rgba(195,203,245,.72);
+  box-shadow:0 1px 3px rgba(56,80,130,.18);
+}
+.ig-profile-stats .stat-btn{
+  flex-direction:row-reverse!important;
+  justify-content:space-between!important;
+  align-items:baseline!important;
+  gap:8px;
+  padding:8px 2px!important;
+  border-radius:0;
+  border-bottom:1px dashed var(--line);
+  background:transparent!important;
+  color:#26324E;
+}
+.ig-profile-stats .stat-btn:last-child{ border-bottom:0; }
+.ig-profile-stats .stat-btn:hover{ background:transparent!important; transform:none; }
+.ig-profile-stats .stat-btn strong{ font-size:16px; font-weight:800; color:#26324E; }
+.ig-profile-stats .stat-btn span{
+  font-size:9.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;
+  color:#8592B2;
+}
+/* meta: name now lives in the polaroid caption */
+.ig-profile-meta .ig-name{ display:none; }
+.ig-profile-meta{ padding:0 18px 10px; }
+/* dark mode: white paper stays white, shadows deepen */
+[data-theme="dark"] .profile-avatar-wrap,
+[data-theme="dark"] .ig-profile-stats{
+  box-shadow:0 20px 44px -14px rgba(0,0,0,.65), 0 2px 8px rgba(0,0,0,.4);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .profile-avatar-wrap,
+  :root:not([data-theme="light"]) .ig-profile-stats{
+    box-shadow:0 20px 44px -14px rgba(0,0,0,.65), 0 2px 8px rgba(0,0,0,.4);
+  }
+}
+

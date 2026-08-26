@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v112';
+const APP_VERSION = 'priv-spaca-v113';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -527,6 +527,10 @@ function lsGetJSON(k, fallback) {
 }
 
 // Persist State.user to localStorage (was duplicated 8× as try/catch one-liners)
+function syncPolaroidCaption(name) {
+  const el = $id('#polaroidCaption');
+  if (el) el.textContent = name || '';
+}
 function persistUser() {
   if (State.user) lsSet('ps_user', JSON.stringify(State.user));
 }
@@ -8172,6 +8176,7 @@ async function renderOwnProfile() {
   // Never leave the design placeholder visible while fresh profile data loads.
   if (titleU) titleU.innerHTML = displayNameWithProfileBadges(State.user, cachedUsername, 'title');
   if ($id('#profileDisplayName')) $id('#profileDisplayName').textContent = State.user.displayName || '';
+  syncPolaroidCaption(State.user.displayName || State.user.username || '');
   if ($id('#profileUsername')) $id('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
   // so the grid does not feel slow or blank while /users and /posts load.
@@ -8198,6 +8203,7 @@ async function renderOwnProfile() {
     }
     const realUsername = u.username || State.user.username || cachedUsername;
     $id('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
+    syncPolaroidCaption(u.displayName || State.user.displayName || u.username || '');
     $id('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
     if (titleU) titleU.innerHTML = displayNameWithProfileBadges(u, realUsername, 'title');
     const mb = $id('#profileMoodBubble');
