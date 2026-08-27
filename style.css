@@ -7216,3 +7216,59 @@ body{
   }
 }
 
+
+/* ===== Feed Post — Floating Glass (v116 · design A) ===== */
+.post-card{
+  background:rgba(255,255,255,.62)!important;
+  border:1px solid rgba(255,255,255,.92)!important;
+  -webkit-backdrop-filter:blur(20px) saturate(160%)!important;
+  backdrop-filter:blur(20px) saturate(160%)!important;
+  box-shadow:0 20px 44px -18px rgba(56,80,130,.38), inset 0 1.5px 0 rgba(255,255,255,.9)!important;
+}
+.post-card .post-img-wrap{ border-radius:18px; overflow:hidden; }
+.post-card:has(.post-img-wrap) .post-actions{
+  position:relative; z-index:3;
+  margin-top:-44px;
+  margin-left:10px; margin-right:10px;
+  background:rgba(255,255,255,.58);
+  -webkit-backdrop-filter:blur(18px) saturate(170%);
+  backdrop-filter:blur(18px) saturate(170%);
+  border:1px solid rgba(255,255,255,.92);
+  border-radius:999px;
+  padding:9px 18px!important;
+  box-shadow:0 12px 28px -10px rgba(56,80,130,.42), inset 0 1px 0 rgba(255,255,255,.92);
+}
+.post-card:has(.post-img-wrap) .post-actions .act-btn{ color:#26324E; }
+.post-card:has(.post-img-wrap) .post-actions .act-btn.liked{ color:#E76FA8; }
+.post-card:has(.post-img-wrap) .liked-by,
+.post-card:has(.post-img-wrap) .post-caption,
+.post-card:has(.post-img-wrap) .post-time,
+.post-card:has(.post-img-wrap) .post-add-comment{ margin-top:14px; }
+[data-theme="dark"] .post-card{
+  background:rgba(255,255,255,.055)!important;
+  border-color:rgba(255,255,255,.12)!important;
+  -webkit-backdrop-filter:blur(20px)!important;
+  backdrop-filter:blur(20px)!important;
+  box-shadow:0 20px 44px -18px rgba(0,0,0,.6), inset 0 1.5px 0 rgba(255,255,255,.08)!important;
+}
+[data-theme="dark"] .post-card:has(.post-img-wrap) .post-actions{
+  background:rgba(15,22,42,.55);
+  border-color:rgba(255,255,255,.14);
+  box-shadow:0 12px 28px -10px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.1);
+}
+[data-theme="dark"] .post-card:has(.post-img-wrap) .post-actions .act-btn{ color:#ECF1FB; }
+[data-theme="dark"] .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{ color:#F2A8CC; }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .post-card{
+    background:rgba(255,255,255,.055)!important;
+    border-color:rgba(255,255,255,.12)!important;
+    box-shadow:0 20px 44px -18px rgba(0,0,0,.6), inset 0 1.5px 0 rgba(255,255,255,.08)!important;
+  }
+  :root:not([data-theme="light"]) .post-card:has(.post-img-wrap) .post-actions{
+    background:rgba(15,22,42,.55);
+    border-color:rgba(255,255,255,.14);
+    box-shadow:0 12px 28px -10px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.1);
+  }
+  :root:not([data-theme="light"]) .post-card:has(.post-img-wrap) .post-actions .act-btn{ color:#ECF1FB; }
+  :root:not([data-theme="light"]) .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{ color:#F2A8CC; }
+}
