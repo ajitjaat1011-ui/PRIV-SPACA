@@ -7042,9 +7042,24 @@ body{
 .ig-profile-head{
   display:block!important;
   position:relative;
-  padding:28px 14px 6px!important;
-  background:transparent!important;
-  min-height:246px;
+  padding:34px 14px 20px!important;
+  background:linear-gradient(135deg,#E7F0FE 0%,#F3EFFB 48%,#FDF2F8 100%)!important;
+  border:1px solid #DCE7F6;
+  border-radius:28px;
+  box-shadow:0 10px 26px -14px rgba(56,80,130,.25);
+  min-height:252px;
+}
+[data-theme="dark"] .ig-profile-head{
+  background:linear-gradient(135deg,rgba(130,182,255,.17) 0%,rgba(143,159,232,.11) 48%,rgba(242,145,190,.16) 100%)!important;
+  border:1px solid rgba(130,182,255,.25);
+  box-shadow:0 12px 30px -14px rgba(0,0,0,.5);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .ig-profile-head{
+    background:linear-gradient(135deg,rgba(130,182,255,.17) 0%,rgba(143,159,232,.11) 48%,rgba(242,145,190,.16) 100%)!important;
+    border:1px solid rgba(130,182,255,.25);
+    box-shadow:0 12px 30px -14px rgba(0,0,0,.5);
+  }
 }
 /* avatar polaroid */
 .profile-avatar-wrap{
