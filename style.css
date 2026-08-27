@@ -7043,24 +7043,81 @@ body{
   display:block!important;
   position:relative;
   padding:34px 14px 20px!important;
-  background:linear-gradient(135deg,#E7F0FE 0%,#F3EFFB 48%,#FDF2F8 100%)!important;
+  background:linear-gradient(160deg,#F0F6FF 0%,#FAF7FC 55%,#FDF5F9 100%)!important;
   border:1px solid #DCE7F6;
   border-radius:28px;
   box-shadow:0 10px 26px -14px rgba(56,80,130,.25);
-  min-height:252px;
+  min-height:276px;
+  overflow:hidden;
 }
 [data-theme="dark"] .ig-profile-head{
-  background:linear-gradient(135deg,rgba(130,182,255,.17) 0%,rgba(143,159,232,.11) 48%,rgba(242,145,190,.16) 100%)!important;
+  background:linear-gradient(160deg,#131D3A 0%,#1A1838 55%,#201A3A 100%)!important;
   border:1px solid rgba(130,182,255,.25);
   box-shadow:0 12px 30px -14px rgba(0,0,0,.5);
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]) .ig-profile-head{
-    background:linear-gradient(135deg,rgba(130,182,255,.17) 0%,rgba(143,159,232,.11) 48%,rgba(242,145,190,.16) 100%)!important;
+    background:linear-gradient(160deg,#131D3A 0%,#1A1838 55%,#201A3A 100%)!important;
     border:1px solid rgba(130,182,255,.25);
     box-shadow:0 12px 30px -14px rgba(0,0,0,.5);
   }
 }
+/* Profile backdrop — Deluxe orb cluster (7 glass orbs) */
+.profile-bg{ position:absolute; inset:0; pointer-events:none; overflow:hidden; z-index:0; }
+.profile-bg i{ position:absolute; border-radius:50%;
+  background:radial-gradient(circle at 32% 28%,
+    rgba(255,255,255,.95) 0%, rgba(255,255,255,.4) 22%,
+    var(--c1) 46%, var(--c2) 78%, var(--c3) 100%);
+  box-shadow:0 10px 24px -8px var(--sh), inset 0 -6px 12px var(--in), inset 0 2px 3px rgba(255,255,255,.9);
+  border:1.5px solid var(--rim); }
+.profile-bg .pb-a1{ width:170px; height:170px; left:-46px; top:-52px;
+  --c1:rgba(214,233,255,.9); --c2:rgba(130,182,255,.75); --c3:rgba(91,155,250,.55);
+  --sh:rgba(91,155,250,.4); --in:rgba(91,155,250,.25); --rim:rgba(255,255,255,.75); }
+.profile-bg .pb-a2{ width:185px; height:185px; right:-52px; bottom:-62px;
+  --c1:rgba(255,232,242,.95); --c2:rgba(249,207,227,.8); --c3:rgba(242,145,190,.6);
+  --sh:rgba(231,111,168,.35); --in:rgba(231,111,168,.22); --rim:rgba(255,255,255,.8); }
+.profile-bg .pb-a3{ width:110px; height:110px; right:26px; top:-38px;
+  --c1:rgba(233,231,255,.95); --c2:rgba(195,203,245,.8); --c3:rgba(143,159,232,.6);
+  --sh:rgba(143,159,232,.35); --in:rgba(143,159,232,.22); --rim:rgba(255,255,255,.8); }
+.profile-bg .pb-a4{ width:56px; height:56px; left:31%; top:70%;
+  --c1:rgba(255,244,250,.95); --c2:rgba(255,224,238,.85); --c3:rgba(244,168,204,.65);
+  --sh:rgba(231,111,168,.3); --in:rgba(231,111,168,.18); --rim:rgba(255,255,255,.85); }
+.profile-bg .pb-a5{ width:42px; height:42px; left:8%; top:56%;
+  --c1:rgba(235,244,255,.95); --c2:rgba(180,215,255,.85); --c3:rgba(130,182,255,.65);
+  --sh:rgba(91,155,250,.3); --in:rgba(91,155,250,.18); --rim:rgba(255,255,255,.85); }
+.profile-bg .pb-a6{ width:30px; height:30px; left:47%; top:14%;
+  --c1:rgba(255,255,255,.95); --c2:rgba(255,244,250,.9); --c3:rgba(255,235,245,.8);
+  --sh:rgba(143,159,232,.25); --in:rgba(143,159,232,.12); --rim:rgba(255,255,255,.9); }
+.profile-bg .pb-a7{ width:24px; height:24px; right:12%; top:47%;
+  --c1:rgba(255,240,248,.95); --c2:rgba(250,214,235,.85); --c3:rgba(246,178,212,.7);
+  --sh:rgba(231,111,168,.25); --in:rgba(231,111,168,.15); --rim:rgba(255,255,255,.9); }
+/* keep polaroids above the orbs */
+.ig-profile-head .profile-avatar-wrap{ z-index:1; }
+.ig-profile-head .ig-profile-stats{ z-index:1; }
+/* dark mode orbs */
+[data-theme="dark"] .profile-bg .pb-a1{ --c1:rgba(160,196,255,.5); --c2:rgba(110,160,250,.4); --c3:rgba(91,155,250,.25);
+  --sh:rgba(0,0,0,.5); --rim:rgba(255,255,255,.25); }
+[data-theme="dark"] .profile-bg .pb-a2{ --c1:rgba(250,200,225,.5); --c2:rgba(240,150,195,.38); --c3:rgba(231,111,168,.25);
+  --sh:rgba(0,0,0,.5); --rim:rgba(255,255,255,.25); }
+[data-theme="dark"] .profile-bg .pb-a3{ --c1:rgba(200,200,250,.45); --c2:rgba(160,165,240,.35); --c3:rgba(143,159,232,.22);
+  --sh:rgba(0,0,0,.5); --rim:rgba(255,255,255,.22); }
+[data-theme="dark"] .profile-bg .pb-a4,
+[data-theme="dark"] .profile-bg .pb-a5,
+[data-theme="dark"] .profile-bg .pb-a6,
+[data-theme="dark"] .profile-bg .pb-a7{ opacity:.8; }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .profile-bg .pb-a1{ --c1:rgba(160,196,255,.5); --c2:rgba(110,160,250,.4); --c3:rgba(91,155,250,.25);
+    --sh:rgba(0,0,0,.5); --rim:rgba(255,255,255,.25); }
+  :root:not([data-theme="light"]) .profile-bg .pb-a2{ --c1:rgba(250,200,225,.5); --c2:rgba(240,150,195,.38); --c3:rgba(231,111,168,.25);
+    --sh:rgba(0,0,0,.5); --rim:rgba(255,255,255,.25); }
+  :root:not([data-theme="light"]) .profile-bg .pb-a3{ --c1:rgba(200,200,250,.45); --c2:rgba(160,165,240,.35); --c3:rgba(143,159,232,.22);
+    --sh:rgba(0,0,0,.5); --rim:rgba(255,255,255,.22); }
+  :root:not([data-theme="light"]) .profile-bg .pb-a4,
+  :root:not([data-theme="light"]) .profile-bg .pb-a5,
+  :root:not([data-theme="light"]) .profile-bg .pb-a6,
+  :root:not([data-theme="light"]) .profile-bg .pb-a7{ opacity:.8; }
+}
+
 /* avatar polaroid */
 .profile-avatar-wrap{
   position:relative;

@@ -5,14 +5,14 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v114';
+const SW_VERSION = 'priv-spaca-v115';
 const STATIC_CACHE = 'priv-spaca-static-v99';
 const RUNTIME_CACHE = 'priv-spaca-runtime-v99';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=144',
+  '/style.min.css?v=145',
   '/app.min.js?v=141',
   '/manifest.json',
   '/favicon.ico',
