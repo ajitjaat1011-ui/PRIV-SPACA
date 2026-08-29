@@ -7525,3 +7525,120 @@ body{
 .story-ring .avatar-inner{ border-color:var(--surface) !important; }
 /* story rail empty state shouldn't look like a dead white slab */
 .stories-rail:empty{ min-height:0; padding:0; border-width:0; box-shadow:none; }
+
+/* =====================================================
+   BOTTOM NAV — MOLTEN BLOB (v118)
+   Organic melting pill, liquid blob chip w/ hanging drip,
+   iridescent conic fill. Replaces Petal Arc.
+   ===================================================== */
+.bottom-nav-pill{
+  flex:0 1 auto;height:76px;padding:0 12px 6px!important;
+  background:linear-gradient(150deg,rgba(255,255,255,.97),rgba(226,228,236,.9))!important;
+  border:0!important;border-radius:58px 68px 60px 72px/56px 62px 52px 64px!important;
+  backdrop-filter:blur(20px) saturate(1.3)!important;
+  -webkit-backdrop-filter:blur(20px) saturate(1.3)!important;
+  box-shadow:0 18px 40px rgba(50,54,80,.22),inset 0 2px 4px rgba(255,255,255,.95),inset 0 -2px 6px rgba(120,126,150,.15)!important;
+  display:flex;align-items:center;justify-content:center;gap:2px;min-width:0;
+  width:100%!important;flex:1 1 auto!important;max-width:480px;margin:0 auto;
+}
+/* Kill old petal fan on every tab */
+.bn-btn,.bn-btn[data-tab="feed"],.bn-btn[data-tab="search"],.bn-btn[data-tab="chat"],.bn-btn[data-tab="profile"]{
+  width:auto!important;height:62px;flex:1 1 0;transform:none!important;
+  background:transparent!important;border-radius:0!important;
+  box-shadow:none!important;filter:none!important;gap:3px;
+}
+.bn-btn i,.bn-btn svg{width:22px!important;height:22px!important;color:#8A8FA2;stroke-width:2!important;position:relative;z-index:1;transition:color .3s ease}
+.bn-btn .bn-label{color:#8A8FA2!important;opacity:1!important;font-size:8.5px!important;font-weight:700!important;letter-spacing:.2px!important;text-transform:none!important;position:relative;z-index:1;transition:color .3s ease}
+/* Liquid blob chip (active tab) */
+.bn-btn.active::before{
+  content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:52px;height:50px;z-index:0;
+  border-radius:48% 52% 50% 50%/52% 48% 52% 48%;
+  background:linear-gradient(135deg,#fff 0%,#C2C6D4 45%,#F0F2F8 60%,#A6ABBE 100%);
+  box-shadow:inset 0 2px 3px rgba(255,255,255,.95),inset 0 -2px 5px rgba(120,126,150,.35),0 8px 18px rgba(50,54,80,.3);
+  animation:melt-blob 6s ease-in-out infinite alternate;
+}
+/* Hanging drip */
+.bn-btn.active::after{
+  content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,24px);
+  width:8px;height:10px;z-index:0;
+  background:linear-gradient(135deg,#E8EAF2,#A6ABBE);
+  border-radius:50% 50% 50% 50%/40% 40% 60% 60%;
+  box-shadow:0 3px 6px rgba(50,54,80,.25);
+  animation:melt-drip 2.6s ease-in-out infinite;
+}
+.bn-btn.active i,.bn-btn.active svg{color:#23252B}
+.bn-btn.active .bn-label{color:#23252B!important}
+.bn-btn:active{transform:scale(.94)!important}
+@keyframes melt-blob{
+  0%{border-radius:48% 52% 50% 50%/52% 48% 52% 48%}
+  50%{border-radius:52% 48% 46% 54%/48% 54% 46% 52%}
+  100%{border-radius:46% 54% 52% 48%/54% 46% 54% 46%}
+}
+@keyframes melt-drip{
+  0%,100%{transform:translate(-50%,24px) scaleY(1)}
+  50%{transform:translate(-50%,28px) scaleY(1.25)}
+}
+/* Centre create blob (keeps #floatingAddBtn) */
+.floating-add-btn{
+  width:56px!important;height:60px!important;flex:0 0 auto!important;
+  border-radius:46% 54% 50% 50%/50% 46% 54% 50%!important;
+  background:linear-gradient(135deg,#fff 0%,#C9CCD8 40%,#F4F5FA 55%,#AEB2C2 100%)!important;
+  color:#23252B!important;gap:2px!important;
+  transform:translateY(-12px)!important;transform-origin:50% 100%;
+  box-shadow:inset 0 2px 3px rgba(255,255,255,.95),inset 0 -2px 5px rgba(120,126,150,.3),0 12px 26px rgba(50,54,80,.35)!important;
+  animation:melt-blob 7s ease-in-out infinite alternate;
+  transition:transform .3s ease-out,box-shadow .3s ease-out,filter .3s ease;
+}
+.floating-add-btn i,.floating-add-btn svg{width:24px!important;height:24px!important;color:#23252B!important;stroke-width:2.6!important;transition:transform .3s ease-out}
+.floating-add-btn .bn-label{color:#23252B!important;opacity:.7!important;font-size:8px!important}
+.floating-add-btn:hover i,.floating-add-btn:hover svg{transform:rotate(90deg)}
+.floating-add-btn:active{transform:translateY(-12px) scale(.92)!important}
+.floating-add-btn:active i{transform:rotate(90deg) scale(.9)}
+/* You avatar sits on the blob */
+.bn-dp-btn .bn-avatar-lg{width:30px!important;height:30px!important;position:relative;z-index:1;box-shadow:0 2px 8px rgba(0,0,0,.2)!important}
+
+/* ---- DARK: iridescent melt ---- */
+[data-theme="dark"] .bottom-nav-pill{
+  background:rgba(22,19,36,.84)!important;
+  border:1px solid rgba(255,255,255,.14)!important;
+  box-shadow:0 18px 42px rgba(0,0,0,.55),0 0 32px rgba(143,123,255,.22),inset 0 2px 4px rgba(255,255,255,.14)!important;
+}
+[data-theme="dark"] .bn-btn i,[data-theme="dark"] .bn-btn svg{color:#9A94BE}
+[data-theme="dark"] .bn-btn .bn-label{color:#9A94BE!important}
+[data-theme="dark"] .bn-btn.active::before{
+  background:conic-gradient(from 200deg,#8F7BFF,#F2A0C6,#6FD8FF,#8F7BFF);
+  box-shadow:0 0 24px rgba(143,123,255,.6),inset 0 2px 3px rgba(255,255,255,.4);
+}
+[data-theme="dark"] .bn-btn.active::after{
+  background:linear-gradient(135deg,#F2A0C6,#8F7BFF);
+  box-shadow:0 0 10px rgba(242,160,198,.8);
+}
+[data-theme="dark"] .bn-btn.active i,[data-theme="dark"] .bn-btn.active svg{color:#fff}
+[data-theme="dark"] .bn-btn.active .bn-label{color:#E5DFFF!important}
+[data-theme="dark"] .floating-add-btn{
+  background:conic-gradient(from 200deg,#8F7BFF,#F2A0C6,#6FD8FF,#8F7BFF)!important;
+  color:#fff!important;
+  box-shadow:0 0 26px rgba(143,123,255,.55),inset 0 2px 3px rgba(255,255,255,.4),0 12px 26px rgba(0,0,0,.5)!important;
+}
+[data-theme="dark"] .floating-add-btn i,[data-theme="dark"] .floating-add-btn svg{color:#fff!important}
+[data-theme="dark"] .floating-add-btn .bn-label{color:rgba(255,255,255,.85)!important}
+[data-theme="dark"] .bn-dp-btn .bn-avatar-lg{box-shadow:0 0 14px rgba(143,123,255,.5)!important}
+/* OS dark twin */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .bottom-nav-pill{
+    background:rgba(22,19,36,.84)!important;
+    border:1px solid rgba(255,255,255,.14)!important;
+    box-shadow:0 18px 42px rgba(0,0,0,.55),0 0 32px rgba(143,123,255,.22),inset 0 2px 4px rgba(255,255,255,.14)!important;
+  }
+  :root:not([data-theme="light"]) .bn-btn i,:root:not([data-theme="light"]) .bn-btn svg{color:#9A94BE}
+  :root:not([data-theme="light"]) .bn-btn .bn-label{color:#9A94BE!important}
+  :root:not([data-theme="light"]) .bn-btn.active::before{background:conic-gradient(from 200deg,#8F7BFF,#F2A0C6,#6FD8FF,#8F7BFF);box-shadow:0 0 24px rgba(143,123,255,.6),inset 0 2px 3px rgba(255,255,255,.4)}
+  :root:not([data-theme="light"]) .bn-btn.active::after{background:linear-gradient(135deg,#F2A0C6,#8F7BFF);box-shadow:0 0 10px rgba(242,160,198,.8)}
+  :root:not([data-theme="light"]) .bn-btn.active i,:root:not([data-theme="light"]) .bn-btn.active svg{color:#fff}
+  :root:not([data-theme="light"]) .bn-btn.active .bn-label{color:#E5DFFF!important}
+  :root:not([data-theme="light"]) .floating-add-btn{background:conic-gradient(from 200deg,#8F7BFF,#F2A0C6,#6FD8FF,#8F7BFF)!important;color:#fff!important;box-shadow:0 0 26px rgba(143,123,255,.55),inset 0 2px 3px rgba(255,255,255,.4),0 12px 26px rgba(0,0,0,.5)!important}
+  :root:not([data-theme="light"]) .floating-add-btn i,:root:not([data-theme="light"]) .floating-add-btn svg{color:#fff!important}
+  :root:not([data-theme="light"]) .floating-add-btn .bn-label{color:rgba(255,255,255,.85)!important}
+  :root:not([data-theme="light"]) .bn-dp-btn .bn-avatar-lg{box-shadow:0 0 14px rgba(143,123,255,.5)!important}
+}
