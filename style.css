@@ -7272,3 +7272,256 @@ body{
   :root:not([data-theme="light"]) .post-card:has(.post-img-wrap) .post-actions .act-btn{ color:#ECF1FB; }
   :root:not([data-theme="light"]) .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{ color:#F2A8CC; }
 }
+
+
+/* ============================================================
+   ONE UI · LIQUID GLASS (v117)
+   One glass language · one icon family (outline → filled) ·
+   gold is the only colour. Replaces "Porcelain & Powder".
+   ============================================================ */
+:root, [data-theme="light"]{
+  --bg:#F1F3F8; --bg-2:#FFFFFF; --bg-soft:#FFFFFF;
+  --surface:#FFFFFF; --surface-2:#F7F8FC;
+  --border:#E1E4EC; --line:#E7EAF1; --line-2:#DDE1EA;
+  --text:#10151C; --text-2:#39414E; --muted:#6E7686; --muted-2:#A5ACB9;
+  --shadow-xs:0 1px 2px rgba(35,48,77,.05);
+  --shadow-sm:0 2px 10px rgba(35,48,77,.07);
+  --shadow:0 10px 28px rgba(35,48,77,.10);
+  --shadow-lg:0 24px 64px rgba(35,48,77,.18);
+  --accent:#C08F35; --accent-2:#9A7226; --accent-rgb:192,143,53;
+  --accent-grad:linear-gradient(135deg,#E3B85C 0%,#C08F35 100%);
+  --accent-soft:rgba(192,143,53,.12); --accent-softer:rgba(192,143,53,.06);
+  --pink:#DCAE54; --pink-2:#C08F35; --pink-rgb:220,174,84;
+  --pink-grad:linear-gradient(135deg,#F9E9A0 0%,#DCAE54 45%,#B98A33 100%);
+  --dual-grad:linear-gradient(135deg,#F9E9A0 0%,#DCAE54 50%,#B98A33 100%);
+  --green:#3E9F6E; --red:#D9534F;
+  --bubble-mine-bg:linear-gradient(135deg,#E3B85C,#C08F35);
+  --bubble-mine-fg:#241A05;
+  --liquid-icon-bg:rgba(255,255,255,.85);
+  --liquid-icon-border:rgba(192,143,53,.25);
+  --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.9),0 8px 20px rgba(35,48,77,.10);
+  --gold:#B9862F; --gold-2:#C08F35; --gold-rgb:192,143,53;
+  --glass:rgba(255,255,255,.72); --glass-2:rgba(255,255,255,.92);
+  --glass-line:rgba(255,255,255,.95);
+  --pill:rgba(16,21,28,.07);
+  --card-sh:0 20px 44px -22px rgba(35,48,77,.30);
+  --glass-inset:inset 0 1px 0 rgba(255,255,255,.9);
+}
+[data-theme="dark"]{
+  --bg:#0B0D11; --bg-2:#10131A; --bg-soft:#141821;
+  --surface:#151922; --surface-2:#1A1F2A;
+  --border:#262C38; --line:#232936; --line-2:#2A3140;
+  --text:#F4F6F9; --text-2:#C6CBD8; --muted:#8B93A5; --muted-2:#5E6678;
+  --shadow-xs:0 1px 2px rgba(0,0,0,.4);
+  --shadow-sm:0 2px 8px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.25);
+  --shadow:0 10px 28px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.3);
+  --shadow-lg:0 24px 64px rgba(0,0,0,.6);
+  --accent:#D9AC4F; --accent-2:#F0D68A; --accent-rgb:217,172,79;
+  --accent-grad:linear-gradient(135deg,#F0D68A 0%,#D9AC4F 100%);
+  --accent-soft:rgba(217,172,79,.16); --accent-softer:rgba(217,172,79,.08);
+  --pink:#E8C677; --pink-2:#D9AC4F; --pink-rgb:232,198,119;
+  --pink-grad:linear-gradient(135deg,#F9E9A0 0%,#E3B85C 45%,#B98A33 100%);
+  --dual-grad:linear-gradient(135deg,#F9E9A0 0%,#E3B85C 50%,#B98A33 100%);
+  --green:#5ED09A; --red:#F07E93;
+  --bubble-mine-bg:linear-gradient(135deg,#F0D68A,#D9AC4F);
+  --bubble-mine-fg:#241A05;
+  --liquid-icon-bg:rgba(255,255,255,.075);
+  --liquid-icon-border:rgba(255,255,255,.12);
+  --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.08),0 8px 20px rgba(0,0,0,.24);
+  --gold:#E8C677; --gold-2:#F0D68A; --gold-rgb:232,198,119;
+  --glass:rgba(255,255,255,.07); --glass-2:rgba(255,255,255,.13);
+  --glass-line:rgba(255,255,255,.14);
+  --pill:rgba(255,255,255,.16);
+  --card-sh:0 24px 50px -26px rgba(0,0,0,.75);
+  --glass-inset:inset 0 1px 0 rgba(255,255,255,.10);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B0D11; --bg-2:#10131A; --bg-soft:#141821;
+    --surface:#151922; --surface-2:#1A1F2A;
+    --border:#262C38; --line:#232936; --line-2:#2A3140;
+    --text:#F4F6F9; --text-2:#C6CBD8; --muted:#8B93A5; --muted-2:#5E6678;
+    --accent:#D9AC4F; --accent-2:#F0D68A; --accent-rgb:217,172,79;
+    --accent-grad:linear-gradient(135deg,#F0D68A 0%,#D9AC4F 100%);
+    --accent-soft:rgba(217,172,79,.16); --accent-softer:rgba(217,172,79,.08);
+    --pink:#E8C677; --pink-2:#D9AC4F; --pink-rgb:232,198,119;
+    --pink-grad:linear-gradient(135deg,#F9E9A0 0%,#E3B85C 45%,#B98A33 100%);
+    --dual-grad:linear-gradient(135deg,#F9E9A0 0%,#E3B85C 50%,#B98A33 100%);
+    --bubble-mine-bg:linear-gradient(135deg,#F0D68A,#D9AC4F);
+    --bubble-mine-fg:#241A05;
+    --gold:#E8C677; --gold-2:#F0D68A; --gold-rgb:232,198,119;
+    --glass:rgba(255,255,255,.07); --glass-2:rgba(255,255,255,.13);
+    --glass-line:rgba(255,255,255,.14);
+    --pill:rgba(255,255,255,.16);
+    --card-sh:0 24px 50px -26px rgba(0,0,0,.75);
+    --glass-inset:inset 0 1px 0 rgba(255,255,255,.10);
+  }
+}
+
+/* ── topbar → floating glass capsule ─────────────────────── */
+.topbar{
+  padding:0 !important; margin:10px 12px 2px !important;
+  height:52px !important; border-radius:999px !important;
+  background:var(--glass) !important;
+  border:1px solid var(--glass-line) !important;
+  backdrop-filter:blur(26px) saturate(1.5) !important;
+  -webkit-backdrop-filter:blur(26px) saturate(1.5) !important;
+  box-shadow:var(--glass-inset), var(--card-sh) !important;
+  z-index:40 !important;
+}
+.brand-wrap{display:flex;align-items:center;gap:8px;flex-shrink:0;z-index:3}
+.brand-mark{display:flex;align-items:center;flex:none}
+.brand-mark svg{display:block}
+.brand-wordmark{ font-size:15px !important; letter-spacing:.01em !important; }
+.brand-wordmark::after{ animation:none !important; opacity:0 !important; }
+.brand-wordmark:active{ filter:none; }
+.topbar .ghost-btn{ color:var(--text); }
+.topbar .icon-with-dot{
+  background:var(--glass-2) !important;
+  border:1px solid var(--glass-line) !important;
+  box-shadow:var(--glass-inset) !important;
+}
+.topbar .icon-with-dot::after, .topbar .ghost-btn .ndot, .icon-with-dot .dot-badge{
+  background:var(--gold-2) !important;
+  box-shadow:0 0 8px rgba(var(--gold-rgb),.8) !important;
+}
+
+/* ── bottom nav → floating glass pill (retires Petal Arc) ── */
+.bottom-nav-wrap{ bottom:12px; left:12px; right:12px; }
+.bottom-nav-pill{
+  height:64px; padding:0 10px; gap:5px; align-items:center;
+  border-radius:999px;
+  background:var(--glass) !important;
+  border:1px solid var(--glass-line) !important;
+  backdrop-filter:blur(28px) saturate(1.5) !important;
+  -webkit-backdrop-filter:blur(28px) saturate(1.5) !important;
+  box-shadow:var(--glass-inset), var(--card-sh) !important;
+}
+.bn-btn{
+  flex:1 1 0 !important; width:auto !important; height:52px !important;
+  border-radius:999px !important;
+  background:transparent !important;
+  transform:none !important;
+  box-shadow:none !important;
+  filter:none !important;
+  color:var(--muted-2) !important;
+  gap:2.5px !important;
+  padding:0 !important;
+  transition:background .25s ease, color .25s ease;
+}
+.bn-btn i{ color:currentColor !important; width:21px; height:21px; stroke-width:2; }
+.bn-btn .bn-label{ font-size:8.5px !important; letter-spacing:.02em !important; color:currentColor !important; font-weight:700 !important; text-transform:none !important; opacity:1 !important; }
+.bn-btn.active{
+  background:var(--pill) !important;
+  color:var(--text) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08) !important;
+}
+[data-theme="dark"] .bn-btn.active{ box-shadow:inset 0 1px 0 rgba(255,255,255,.06) !important; }
+.bn-btn:active{ filter:none; transform:scale(.96); }
+.bn-btn .dot{ background:var(--gold-2) !important; box-shadow:0 0 6px rgba(var(--gold-rgb),.9); }
+/* you-tab avatar ring */
+.bn-dp-btn .bn-avatar-lg{ border:2px solid var(--glass-line) !important; }
+.bn-dp-btn.active .bn-avatar-lg{ transform:scale(1.05); box-shadow:0 0 0 2px var(--gold-2), 0 0 12px rgba(var(--gold-rgb),.5) !important; }
+/* centre gold coin */
+.floating-add-btn{
+  flex:0 0 auto !important;
+  width:47px !important; height:47px !important;
+  border-radius:50% !important;
+  background:linear-gradient(135deg,#F9E9A0 0%,#E7BC60 40%,#C08F35 75%,#96701F 100%) !important;
+  transform:translateY(-15px) !important;
+  box-shadow:0 10px 24px -6px rgba(var(--gold-rgb),.55), inset 0 1.5px 0 rgba(255,255,255,.55) !important;
+  color:#241A05 !important;
+  gap:0 !important;
+  pointer-events:auto;
+}
+.floating-add-btn i{ color:#241A05 !important; width:22px !important; height:22px !important; stroke-width:2.7; }
+.floating-add-btn .bn-label{ display:none !important; }
+.floating-add-btn:hover i{ transform:rotate(90deg); }
+.floating-add-btn:active{ transform:translateY(-15px) scale(.93) !important; }
+
+/* ── splash / auth mark ──────────────────────────────────── */
+.splash-name{ color:var(--text) !important; letter-spacing:.28em !important; }
+
+/* ── story rail → glass capsule ──────────────────────────── */
+.stories-rail{
+  margin:10px 12px 0 !important;
+  border-radius:26px !important;
+  background:var(--glass) !important;
+  border:1px solid var(--glass-line) !important;
+  backdrop-filter:blur(26px) saturate(1.5) !important;
+  -webkit-backdrop-filter:blur(26px) saturate(1.5) !important;
+  box-shadow:var(--glass-inset), var(--card-sh) !important;
+}
+
+/* ── post cards: neutral glass shadow, gold likes ────────── */
+.post-card{ box-shadow:0 20px 44px -18px rgba(35,48,77,.28), inset 0 1.5px 0 rgba(255,255,255,.9) !important; }
+[data-theme="dark"] .post-card{ box-shadow:0 20px 44px -18px rgba(0,0,0,.65), inset 0 1.5px 0 rgba(255,255,255,.08) !important; }
+.post-actions .act-btn.liked, .post-actions .act-btn.liked i, .act-btn.liked i{ color:var(--gold) !important; }
+[data-theme="dark"] .post-actions .act-btn.liked{ color:var(--gold) !important; }
+.post-actions .act-btn.liked .liked-fill{ fill:var(--gold); }
+.liked-by .txt strong{ color:var(--gold) !important; }
+.post-add-comment .post-btn:not(:disabled){ color:var(--accent-2) !important; font-weight:800 !important; }
+.post-time, .post-add-comment input::placeholder{ color:var(--muted-2); }
+
+/* ── chat screen: proper dark glass (fixes light-glass leak) */
+[data-theme="dark"] .chat-view.show-rooms .req-banner,
+[data-theme="dark"] .chat-view.show-rooms .note-bubble{
+  background:rgba(255,255,255,.06) !important;
+  border:1px solid rgba(255,255,255,.14) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 16px 34px rgba(0,0,0,.35) !important;
+}
+[data-theme="dark"] .chat-view.show-rooms .req-banner .req-nm{ color:#F4F6F9 !important; }
+[data-theme="dark"] .chat-view.show-rooms .req-banner .req-sub{ color:#8B93A5 !important; }
+[data-theme="dark"] .chat-view.show-rooms .req-banner .req-chev{ color:#8B93A5 !important; }
+[data-theme="dark"] .chat-view.show-rooms .req-banner .req-ic{ background:linear-gradient(135deg,rgba(255,255,255,.14),rgba(var(--gold-rgb),.14)) !important; border:1px solid rgba(255,255,255,.14) !important; }
+[data-theme="dark"] .chat-view.show-rooms .req-banner::after{ display:none !important; }
+[data-theme="dark"] .chat-view.show-rooms .note-bubble{ color:#C6CBD8 !important; }
+[data-theme="dark"] .chat-view.show-rooms .note-bubble::after{ background:rgba(255,255,255,.06) !important; border:0 !important; }
+[data-theme="dark"] .chat-view.show-rooms .member-item:active{ background:rgba(255,255,255,.06) !important; border-color:rgba(255,255,255,.12) !important; }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .chat-view.show-rooms .req-banner,
+  :root:not([data-theme="light"]) .chat-view.show-rooms .note-bubble{
+    background:rgba(255,255,255,.06) !important;
+    border:1px solid rgba(255,255,255,.14) !important;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 16px 34px rgba(0,0,0,.35) !important;
+  }
+  :root:not([data-theme="light"]) .chat-view.show-rooms .req-banner .req-nm{ color:#F4F6F9 !important; }
+  :root:not([data-theme="light"]) .chat-view.show-rooms .req-banner .req-sub,
+  :root:not([data-theme="light"]) .chat-view.show-rooms .req-banner .req-chev{ color:#8B93A5 !important; }
+  :root:not([data-theme="light"]) .chat-view.show-rooms .req-banner .req-ic{ background:linear-gradient(135deg,rgba(255,255,255,.14),rgba(var(--gold-rgb),.14)) !important; border:1px solid rgba(255,255,255,.14) !important; }
+  :root:not([data-theme="light"]) .chat-view.show-rooms .req-banner::after{ display:none !important; }
+  :root:not([data-theme="light"]) .chat-view.show-rooms .note-bubble{ color:#C6CBD8 !important; }
+}
+
+/* ── profile: gold-ring avatar, glass wells ──────────────── */
+.ig-profile-head .me-avatar, .profile-avatar{ box-shadow:0 0 0 2.5px var(--gold-2), 0 0 18px rgba(var(--gold-rgb),.45); }
+
+/* ── gold focus/selection accents ────────────────────────── */
+::-webkit-scrollbar-thumb{ background:var(--muted-2); border-radius:99px; }
+::selection{ background:rgba(var(--gold-rgb),.3); }
+
+/* ===== ONE UI · v117.1 — gold rings, clean usernames (kill hardcoded pastel !important) ===== */
+.post-header-avatar{
+  background:linear-gradient(135deg,#F9E9A0 0%,#DCAE54 45%,#B98A33 100%) !important;
+  box-shadow:0 4px 14px -4px rgba(var(--gold-rgb),.45);
+}
+.post-header-avatar:hover{ box-shadow:0 6px 18px -2px rgba(var(--gold-rgb),.55); }
+.post-header-avatar .avatar.md{ border-color:var(--surface) !important; }
+.post-header-username, .post-caption .author{
+  background:none !important;
+  -webkit-background-clip:unset !important; background-clip:unset !important;
+  -webkit-text-fill-color:var(--text) !important;
+  color:var(--text) !important;
+}
+.story-ring{
+  background:conic-gradient(from 200deg,#F9E9A0 0%,#DCAE54 22%,#B98A33 50%,#DCAE54 78%,#F9E9A0 100%) !important;
+  box-shadow:0 0 0 1px var(--glass-line), 0 6px 18px -6px rgba(var(--gold-rgb),.5) !important;
+}
+.story-cell:hover .story-ring{ box-shadow:0 0 0 1px var(--glass-line), 0 10px 24px -4px rgba(var(--gold-rgb),.55) !important; }
+.story-ring.is-me{
+  background:linear-gradient(135deg,#F9E9A0 0%,#DCAE54 50%,#B98A33 100%) !important;
+  box-shadow:0 0 0 1px var(--glass-line), 0 8px 22px -4px rgba(var(--gold-rgb),.6) !important;
+}
+.story-ring .avatar-inner{ border-color:var(--surface) !important; }
+/* story rail empty state shouldn't look like a dead white slab */
+.stories-rail:empty{ min-height:0; padding:0; border-width:0; box-shadow:none; }
