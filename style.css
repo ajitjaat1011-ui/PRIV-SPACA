@@ -7533,11 +7533,11 @@ body{
    ===================================================== */
 .bottom-nav-pill{
   flex:0 1 auto;height:76px;padding:0 12px 6px!important;
-  background:linear-gradient(150deg,rgba(255,255,255,.55),rgba(226,228,236,.35))!important;
-  border:1px solid rgba(255,255,255,.55)!important;border-radius:58px 68px 60px 72px/56px 62px 52px 64px!important;
-  backdrop-filter:blur(28px) saturate(1.6)!important;
-  -webkit-backdrop-filter:blur(28px) saturate(1.6)!important;
-  box-shadow:0 14px 30px rgba(50,54,80,.16),inset 0 2px 4px rgba(255,255,255,.7),inset 0 -2px 6px rgba(120,126,150,.1)!important;
+  background:linear-gradient(165deg,rgba(255,255,255,.68) 0%,rgba(255,255,255,.42) 45%,rgba(240,242,250,.34) 100%)!important;
+  border:1px solid rgba(255,255,255,.7)!important;border-radius:58px 68px 60px 72px/56px 62px 52px 64px!important;
+  backdrop-filter:blur(38px) saturate(2.2)!important;
+  -webkit-backdrop-filter:blur(38px) saturate(2.2)!important;
+  box-shadow:0 22px 48px rgba(56,60,92,.16),0 0 0 .5px rgba(255,255,255,.4),inset 0 1.5px 1px rgba(255,255,255,.95),inset 0 -1.5px 3px rgba(255,255,255,.5),inset 0 -10px 18px rgba(150,156,180,.12)!important;
   display:flex;align-items:center;justify-content:center;gap:2px;min-width:0;
   width:100%!important;flex:1 1 auto!important;max-width:480px;margin:0 auto;
 }
@@ -7554,8 +7554,9 @@ body{
   content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   width:52px;height:50px;z-index:0;
   border-radius:48% 52% 50% 50%/52% 48% 52% 48%;
-  background:linear-gradient(135deg,rgba(255,255,255,.9) 0%,rgba(194,198,212,.72) 45%,rgba(240,242,248,.85) 60%,rgba(166,171,190,.68) 100%);
-  box-shadow:inset 0 2px 3px rgba(255,255,255,.85),inset 0 -2px 5px rgba(120,126,150,.25),0 8px 18px rgba(50,54,80,.22);
+  background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(255,255,255,.6))!important;
+  box-shadow:0 10px 22px rgba(56,60,92,.22),inset 0 1.5px 1px rgba(255,255,255,.95),inset 0 -2px 4px rgba(150,156,180,.18),0 0 0 .5px rgba(255,255,255,.5)!important;
+  backdrop-filter:blur(14px) saturate(1.8)!important;
   animation:melt-blob 6s ease-in-out infinite alternate;
 }
 /* Hanging drip */
@@ -7583,10 +7584,10 @@ body{
 .floating-add-btn{
   width:56px!important;height:60px!important;flex:0 0 auto!important;
   border-radius:46% 54% 50% 50%/50% 46% 54% 50%!important;
-  background:linear-gradient(135deg,rgba(255,255,255,.92) 0%,rgba(201,204,216,.74) 40%,rgba(244,245,250,.85) 55%,rgba(174,178,194,.68) 100%)!important;
+  background:linear-gradient(165deg,rgba(255,255,255,.9),rgba(244,246,252,.55))!important;
   color:#23252B!important;gap:2px!important;
   transform:translateY(-12px)!important;transform-origin:50% 100%;
-  box-shadow:inset 0 2px 3px rgba(255,255,255,.95),inset 0 -2px 5px rgba(120,126,150,.3),0 12px 26px rgba(50,54,80,.35)!important;
+  box-shadow:0 16px 32px rgba(56,60,92,.2),0 0 0 .5px rgba(255,255,255,.5),inset 0 1.5px 1px rgba(255,255,255,.95),inset 0 -2px 4px rgba(150,156,180,.15)!important;
   animation:melt-blob 7s ease-in-out infinite alternate;
   transition:transform .3s ease-out,box-shadow .3s ease-out,filter .3s ease;
 }
@@ -7600,15 +7601,16 @@ body{
 
 /* ---- DARK: iridescent melt ---- */
 [data-theme="dark"] .bottom-nav-pill{
-  background:rgba(22,19,36,.42)!important;
-  border:1px solid rgba(255,255,255,.16)!important;
-  box-shadow:0 14px 32px rgba(0,0,0,.4),0 0 32px rgba(143,123,255,.22),inset 0 2px 4px rgba(255,255,255,.08)!important;
+  background:linear-gradient(165deg,rgba(64,64,78,.4),rgba(24,24,34,.32))!important;
+  border:1px solid rgba(255,255,255,.18)!important;
+  box-shadow:0 22px 48px rgba(0,0,0,.45),0 0 0 .5px rgba(255,255,255,.08),inset 0 1.5px 1px rgba(255,255,255,.2),inset 0 -1.5px 3px rgba(255,255,255,.05),0 0 30px rgba(143,123,255,.1)!important;
 }
 [data-theme="dark"] .bn-btn i,[data-theme="dark"] .bn-btn svg{color:#9A94BE}
 [data-theme="dark"] .bn-btn .bn-label{color:#9A94BE!important}
 [data-theme="dark"] .bn-btn.active::before{
-  background:conic-gradient(from 200deg,rgba(143,123,255,.85),rgba(242,160,198,.85),rgba(111,216,255,.85),rgba(143,123,255,.85));
-  box-shadow:0 0 24px rgba(143,123,255,.6),inset 0 2px 3px rgba(255,255,255,.4);
+  background:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.09))!important;
+  box-shadow:inset 0 1.5px 1px rgba(255,255,255,.28),inset 0 -2px 4px rgba(0,0,0,.35),0 10px 22px rgba(0,0,0,.4),0 0 18px rgba(143,123,255,.25)!important;
+  backdrop-filter:blur(14px)!important;
 }
 [data-theme="dark"] .bn-btn.active::after{
   background:linear-gradient(135deg,#F2A0C6,#8F7BFF);
@@ -7617,9 +7619,9 @@ body{
 [data-theme="dark"] .bn-btn.active i,[data-theme="dark"] .bn-btn.active svg{color:#fff}
 [data-theme="dark"] .bn-btn.active .bn-label{color:#E5DFFF!important}
 [data-theme="dark"] .floating-add-btn{
-  background:conic-gradient(from 200deg,rgba(143,123,255,.85),rgba(242,160,198,.85),rgba(111,216,255,.85),rgba(143,123,255,.85))!important;
+  background:linear-gradient(180deg,rgba(255,255,255,.28),rgba(255,255,255,.1))!important;
   color:#fff!important;
-  box-shadow:0 0 26px rgba(143,123,255,.55),inset 0 2px 3px rgba(255,255,255,.4),0 12px 26px rgba(0,0,0,.5)!important;
+  box-shadow:inset 0 1.5px 1px rgba(255,255,255,.32),inset 0 -2px 4px rgba(0,0,0,.35),0 14px 28px rgba(0,0,0,.45),0 0 22px rgba(143,123,255,.3)!important;
 }
 [data-theme="dark"] .floating-add-btn i,[data-theme="dark"] .floating-add-btn svg{color:#fff!important}
 [data-theme="dark"] .floating-add-btn .bn-label{color:rgba(255,255,255,.85)!important}
@@ -7627,17 +7629,17 @@ body{
 /* OS dark twin */
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]) .bottom-nav-pill{
-    background:rgba(22,19,36,.42)!important;
-    border:1px solid rgba(255,255,255,.16)!important;
-    box-shadow:0 14px 32px rgba(0,0,0,.4),0 0 32px rgba(143,123,255,.22),inset 0 2px 4px rgba(255,255,255,.08)!important;
+    background:linear-gradient(165deg,rgba(64,64,78,.4),rgba(24,24,34,.32))!important;
+    border:1px solid rgba(255,255,255,.18)!important;
+    box-shadow:0 22px 48px rgba(0,0,0,.45),0 0 0 .5px rgba(255,255,255,.08),inset 0 1.5px 1px rgba(255,255,255,.2),inset 0 -1.5px 3px rgba(255,255,255,.05),0 0 30px rgba(143,123,255,.1)!important;
   }
   :root:not([data-theme="light"]) .bn-btn i,:root:not([data-theme="light"]) .bn-btn svg{color:#9A94BE}
   :root:not([data-theme="light"]) .bn-btn .bn-label{color:#9A94BE!important}
-  :root:not([data-theme="light"]) .bn-btn.active::before{background:conic-gradient(from 200deg,rgba(143,123,255,.85),rgba(242,160,198,.85),rgba(111,216,255,.85),rgba(143,123,255,.85));box-shadow:0 0 24px rgba(143,123,255,.6),inset 0 2px 3px rgba(255,255,255,.4)}
+  :root:not([data-theme="light"]) .bn-btn.active::before{background:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.09))!important;box-shadow:inset 0 1.5px 1px rgba(255,255,255,.28),inset 0 -2px 4px rgba(0,0,0,.35),0 10px 22px rgba(0,0,0,.4),0 0 18px rgba(143,123,255,.25)!important;backdrop-filter:blur(14px)!important}
   :root:not([data-theme="light"]) .bn-btn.active::after{background:linear-gradient(135deg,#F2A0C6,#8F7BFF);box-shadow:0 0 10px rgba(242,160,198,.8)}
   :root:not([data-theme="light"]) .bn-btn.active i,:root:not([data-theme="light"]) .bn-btn.active svg{color:#fff}
   :root:not([data-theme="light"]) .bn-btn.active .bn-label{color:#E5DFFF!important}
-  :root:not([data-theme="light"]) .floating-add-btn{background:conic-gradient(from 200deg,rgba(143,123,255,.85),rgba(242,160,198,.85),rgba(111,216,255,.85),rgba(143,123,255,.85))!important;color:#fff!important;box-shadow:0 0 26px rgba(143,123,255,.55),inset 0 2px 3px rgba(255,255,255,.4),0 12px 26px rgba(0,0,0,.5)!important}
+  :root:not([data-theme="light"]) .floating-add-btn{background:linear-gradient(180deg,rgba(255,255,255,.28),rgba(255,255,255,.1))!important;color:#fff!important;box-shadow:inset 0 1.5px 1px rgba(255,255,255,.32),inset 0 -2px 4px rgba(0,0,0,.35),0 14px 28px rgba(0,0,0,.45),0 0 22px rgba(143,123,255,.3)!important}
   :root:not([data-theme="light"]) .floating-add-btn i,:root:not([data-theme="light"]) .floating-add-btn svg{color:#fff!important}
   :root:not([data-theme="light"]) .floating-add-btn .bn-label{color:rgba(255,255,255,.85)!important}
   :root:not([data-theme="light"]) .bn-dp-btn .bn-avatar-lg{box-shadow:0 0 14px rgba(143,123,255,.5)!important}
