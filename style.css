@@ -7837,3 +7837,20 @@ body{
 }
 #authShell.hidden{display:none !important}
 #appShell.hidden{display:none !important}
+
+/* v122 patch 4: topbar = flat white (no pink aura) + notification bell + symmetric placement */
+.topbar{
+  height:54px !important;
+  background:#fff !important;
+  border:0 !important;border-bottom:1px solid #ececf1 !important;
+  box-shadow:none !important;
+  padding:0 16px !important;
+  display:flex !important;align-items:center !important;justify-content:space-between !important;
+}
+.brand-wrap{display:flex !important;align-items:center !important;padding:0 !important;margin:0 !important}
+.brand-wordmark{margin:0 !important;line-height:1 !important}
+.mandala-glow{display:none !important}
+[data-theme="dark"] .topbar{background:#000 !important;border-bottom:1px solid #16161c !important;box-shadow:none !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .topbar{background:#000 !important;border-bottom:1px solid #16161c !important;box-shadow:none !important}
+}
