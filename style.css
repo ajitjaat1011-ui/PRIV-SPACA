@@ -7824,3 +7824,16 @@ body{
   }
   :root:not([data-theme="light"]) .post-card:has(.post-img-wrap) .post-actions .act-btn{color:#fff !important}
 }
+/* v122 patch 3: Insta feed = flat surface (no ambient glow) + hidden shells truly hidden */
+.feed-view::before,.feed-view::after{display:none !important}
+[data-theme="dark"] .feed-view::before,[data-theme="dark"] .feed-view::after{display:none !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .feed-view::before,:root:not([data-theme="light"]) .feed-view::after{display:none !important}
+}
+.stories-rail::before{display:none !important}
+[data-theme="dark"] .stories-rail::before{display:none !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .stories-rail::before{display:none !important}
+}
+#authShell.hidden{display:none !important}
+#appShell.hidden{display:none !important}
