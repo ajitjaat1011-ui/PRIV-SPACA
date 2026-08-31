@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v120';
+const APP_VERSION = 'priv-spaca-v121';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -1381,6 +1381,7 @@ async function loadMembers(force = false) {
   if (!force && _lastMembersLoadedAt && (Date.now() - _lastMembersLoadedAt) < 2500 && Array.isArray(State.members) && State.members.length) {
     renderMembers();
     renderStoriesRail();
+    syncSuggestions();
     return State.members;
   }
   _loadMembersPromise = (async () => {
@@ -1390,6 +1391,7 @@ async function loadMembers(force = false) {
       _lastMembersLoadedAt = Date.now();
       renderMembers();
       renderStoriesRail();
+      syncSuggestions();
       return State.members;
     } catch (_) {
       return State.members;
@@ -3938,8 +3940,88 @@ function _postCardSignature(p) {
   ].join('|');
 }
 
+
+/* ===== Liquid Petal home (v121): bloom banner + petal chips + suggestions ===== */
+function fmtNum(n) {
+  n = Number(n) || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+function _syncBloomBanner() {
+  const el = $id('#bloomBanner');
+  if (!el) return;
+  const feedPosts = getFeedPosts();
+  const featured = feedPosts.find(p => (p.imageUrl || (Array.isArray(p.images) && p.images.length)) && !p.hidden);
+  if (!featured) { el.classList.add('hidden'); return; }
+  const author = resolveAuthor(featured.author, featured.userId, featured.authorSnapshot);
+  const petals = featured.likeCount || (featured.likes || []).length || 0;
+  const line = el.querySelector('#bloomLine');
+  if (line && author) line.textContent = (author.displayName || author.username || 'Someone') + ' · ' + fmtNum(petals) + ' petals';
+  const minis = el.querySelector('#bloomMinis');
+  if (minis) {
+    minis.innerHTML = '';
+    const imgs = (Array.isArray(featured.images) && featured.images.length ? featured.images : [featured.imageUrl]).slice(0, 2);
+    imgs.forEach(u => {
+      const m = document.createElement('span');
+      m.className = 'bloom-mini';
+      if (u && !_brokenPhotoUrls.has(u)) m.style.backgroundImage = bgImg(u);
+      minis.appendChild(m);
+    });
+  }
+  el.classList.remove('hidden');
+  el.onclick = () => {
+    const imgs = (Array.isArray(featured.images) && featured.images.length) ? featured.images : (featured.imageUrl ? [featured.imageUrl] : []);
+    if (imgs.length && author) openLightbox(imgs[0], author.displayName);
+  };
+}
+let _suggestSig = '';
+function syncSuggestions() {
+  const box = $id('#suggestBox'), rows = $id('#suggestRows');
+  if (!box || !rows || !State.user) return;
+  const meId = State.user.id;
+  const cands = (State.members || []).filter(m => m.id !== meId && !m.iFollow && !m.followsMe).slice(0, 3);
+  const sig = cands.map(c => c.id).join('|');
+  if (sig === _suggestSig) return;
+  _suggestSig = sig;
+  rows.innerHTML = '';
+  if (!cands.length) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  cands.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'suggest-row';
+    const av = document.createElement('span');
+    av.className = 'avatar sm suggest-av';
+    renderAvatar(av, m);
+    const nw = document.createElement('span');
+    nw.className = 'suggest-nw';
+    const nm = document.createElement('b');
+    nm.innerHTML = displayNameWithOwnerBadge(m, m.displayName || m.username || 'member', 'inline');
+    const sub = document.createElement('span');
+    sub.textContent = (m.bio || '').trim() ? m.bio.trim().slice(0, 30) : (m.online ? 'Online now' : 'Community member');
+    nw.appendChild(nm); nw.appendChild(sub);
+    const fu = document.createElement('button');
+    fu.type = 'button';
+    fu.className = 'suggest-fu';
+    fu.textContent = 'Follow';
+    fu.addEventListener('click', async () => {
+      try {
+        await api('/user/follow', { method: 'POST', body: { targetId: m.id } });
+        m.iFollow = true;
+        fu.textContent = '✓'; fu.classList.add('done'); fu.disabled = true;
+        toast('Following ' + (m.displayName || m.username));
+        _suggestSig = ''; syncSuggestions();
+      } catch (e) { toast(e.message || 'Failed', 'error'); }
+    });
+    row.appendChild(av); row.appendChild(nw); row.appendChild(fu);
+    rows.appendChild(row);
+  });
+}
+
 function renderPosts() {
   renderStoriesRail();
+  _syncBloomBanner();
+  syncSuggestions();
   const list = $id('#feedList');
   const meId = State.user && State.user.id;
   const feedPosts = getFeedPosts();
@@ -4577,6 +4659,14 @@ function renderPost(p) {
     });
     card.appendChild(pv);
   }
+
+  // Petal stats chips (Liquid Petal v121)
+  const petalRow = document.createElement('div');
+  petalRow.className = 'petal-stats';
+  const _likeN = p.likeCount || (p.likes || []).length || 0;
+  const _comN = p.commentCount || (p.comments || []).length || 0;
+  petalRow.innerHTML = '<span class="petal-chip">' + escapeHtml('✿ ' + fmtNum(_likeN) + ' petals') + '</span><span class="petal-chip">' + escapeHtml('💬 ' + fmtNum(_comN) + ' comments') + '</span>';
+  card.appendChild(petalRow);
 
   // Time stamp
   const t = document.createElement('div');
