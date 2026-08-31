@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v121';
+const APP_VERSION = 'priv-spaca-v122';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3941,39 +3941,12 @@ function _postCardSignature(p) {
 }
 
 
-/* ===== Liquid Petal home (v121): bloom banner + petal chips + suggestions ===== */
+/* ===== Liquid Petal home (v122): petal chips + suggestions ===== */
 function fmtNum(n) {
   n = Number(n) || 0;
   if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
   return String(n);
-}
-function _syncBloomBanner() {
-  const el = $id('#bloomBanner');
-  if (!el) return;
-  const feedPosts = getFeedPosts();
-  const featured = feedPosts.find(p => (p.imageUrl || (Array.isArray(p.images) && p.images.length)) && !p.hidden);
-  if (!featured) { el.classList.add('hidden'); return; }
-  const author = resolveAuthor(featured.author, featured.userId, featured.authorSnapshot);
-  const petals = featured.likeCount || (featured.likes || []).length || 0;
-  const line = el.querySelector('#bloomLine');
-  if (line && author) line.textContent = (author.displayName || author.username || 'Someone') + ' · ' + fmtNum(petals) + ' petals';
-  const minis = el.querySelector('#bloomMinis');
-  if (minis) {
-    minis.innerHTML = '';
-    const imgs = (Array.isArray(featured.images) && featured.images.length ? featured.images : [featured.imageUrl]).slice(0, 2);
-    imgs.forEach(u => {
-      const m = document.createElement('span');
-      m.className = 'bloom-mini';
-      if (u && !_brokenPhotoUrls.has(u)) m.style.backgroundImage = bgImg(u);
-      minis.appendChild(m);
-    });
-  }
-  el.classList.remove('hidden');
-  el.onclick = () => {
-    const imgs = (Array.isArray(featured.images) && featured.images.length) ? featured.images : (featured.imageUrl ? [featured.imageUrl] : []);
-    if (imgs.length && author) openLightbox(imgs[0], author.displayName);
-  };
 }
 let _suggestSig = '';
 function syncSuggestions() {
@@ -4020,7 +3993,6 @@ function syncSuggestions() {
 
 function renderPosts() {
   renderStoriesRail();
-  _syncBloomBanner();
   syncSuggestions();
   const list = $id('#feedList');
   const meId = State.user && State.user.id;

@@ -8045,8 +8045,8 @@ body{
 
 /* ============================================================
    HOME — LIQUID PETAL (v121 · Option C)
-   Gradient story rings, Bloom of the Day banner, petal stat
-   chips on posts, "You might like" glass suggestion box.
+   Gradient story rings, petal stat chips on posts,
+   "You might like" glass suggestion box.
    Porcelain blue→pink, light + dark twins.
    ============================================================ */
 
@@ -8072,54 +8072,6 @@ body{
     background:linear-gradient(135deg,#8FBCFF 0%,#5B9BFA 48%,#F2A0C6 100%)!important;
     box-shadow:0 0 0 1px rgba(255,255,255,.25),0 8px 18px -4px rgba(0,0,0,.6),0 0 16px rgba(143,188,255,.25)!important;
   }
-}
-
-/* ---- Bloom of the Day banner ---- */
-.bloom-banner{
-  display:flex;align-items:center;gap:12px;
-  border-radius:20px;padding:12px 14px;margin:12px 12px 2px;
-  background:rgba(255,255,255,.55);
-  border:1px solid rgba(255,255,255,.92);
-  -webkit-backdrop-filter:blur(16px) saturate(1.4);backdrop-filter:blur(16px) saturate(1.4);
-  box-shadow:0 14px 32px -14px rgba(56,80,130,.35),inset 0 1.5px 0 rgba(255,255,255,.9);
-  cursor:pointer;
-}
-.bloom-banner.hidden{display:none}
-.bloom-fl{
-  width:38px;height:38px;border-radius:50%;flex-shrink:0;
-  background:linear-gradient(135deg,#82B6FF 0%,#5B9BFA 48%,#F291BE 100%);
-  color:#fff;font-size:18px;display:flex;align-items:center;justify-content:center;
-  box-shadow:0 8px 18px -6px rgba(91,155,250,.55),inset 0 1px 1px rgba(255,255,255,.6);
-}
-.bloom-bt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.bloom-bt b{
-  font-size:13.5px;font-weight:800;
-  background:linear-gradient(135deg,#3F7FE8,#E76FA8);
-  -webkit-background-clip:text;background-clip:text;color:transparent;
-}
-.bloom-bt span{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bloom-minis{display:flex;flex-shrink:0}
-.bloom-mini{
-  width:32px;height:40px;border-radius:6px;
-  background-size:cover;background-position:center;
-  background-color:var(--soft);
-  border:1.5px solid rgba(255,255,255,.95);
-  box-shadow:0 6px 14px -6px rgba(56,80,130,.5);
-}
-.bloom-mini + .bloom-mini{margin-left:-8px}
-[data-theme="dark"] .bloom-banner{
-  background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.14);
-  box-shadow:0 14px 32px -14px rgba(0,0,0,.55),inset 0 1.5px 0 rgba(255,255,255,.1);
-}
-[data-theme="dark"] .bloom-bt b{background:linear-gradient(135deg,#8FBCFF,#F2A0C6);-webkit-background-clip:text;background-clip:text}
-[data-theme="dark"] .bloom-mini{border-color:rgba(255,255,255,.3)}
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .bloom-banner{
-    background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.14);
-    box-shadow:0 14px 32px -14px rgba(0,0,0,.55),inset 0 1.5px 0 rgba(255,255,255,.1);
-  }
-  :root:not([data-theme="light"]) .bloom-bt b{background:linear-gradient(135deg,#8FBCFF,#F2A0C6);-webkit-background-clip:text;background-clip:text}
-  :root:not([data-theme="light"]) .bloom-mini{border-color:rgba(255,255,255,.3)}
 }
 
 /* ---- Post cards: softer 24px glass + rounded media ---- */
