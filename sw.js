@@ -5,15 +5,15 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v127';
-const STATIC_CACHE = 'priv-spaca-static-v110';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v110';
+const SW_VERSION = 'priv-spaca-v123';
+const STATIC_CACHE = 'priv-spaca-static-v111';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v111';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=158',
-  '/app.min.js?v=148',
+  '/style.min.css?v=159',
+  '/app.min.js?v=149',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',
@@ -33,28 +33,13 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil((async () => {
-    // One-time forced hard refresh: when this new worker first activates,
-    // mark it, then reload every open client ONCE so everyone lands on the
-    // new shell (the flag cache persists, so this never fires again).
-    const FLAG_CACHE = 'ps-reload-flag';
-    let forced = false;
-    try {
-      if (!(await caches.has(FLAG_CACHE))) {
-        forced = true;
-        await caches.open(FLAG_CACHE);
-      }
-    } catch (_) { /* very old browsers: skip forced reload */ }
-    const keys = await caches.keys();
-    await Promise.all(keys.map((k) => {
-      if (k !== STATIC_CACHE && k !== RUNTIME_CACHE && k !== FLAG_CACHE) return caches.delete(k);
-    }));
-    await self.clients.claim();
-    if (forced) {
-      const cl = await self.clients.matchAll({ type: 'window' });
-      cl.forEach((c) => { try { c.navigate(c.url); } catch (_) {} });
-    }
-  })());
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.map((k) => {
+        if (k !== STATIC_CACHE && k !== RUNTIME_CACHE) return caches.delete(k);
+      }))
+    ).then(() => self.clients.claim())
+  );
 });
 
 self.addEventListener('fetch', (event) => {
