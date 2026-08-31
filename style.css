@@ -8123,3 +8123,127 @@ body{
     box-shadow:0 14px 32px -14px rgba(0,0,0,.55),inset 0 1.5px 0 rgba(255,255,255,.1);
   }
 }
+
+
+/* ============================================================
+   HOME — LIQUID PETAL v126 (Option C alignment)
+   Topbar: pink flower + blue→pink gradient brand, glass
+   notification blob with pink dot. Feed: restore glass cards
+   + floating action dock. Appended last — wins the cascade.
+   ============================================================ */
+
+/* ---- Topbar: Option C ---- */
+.topbar{
+  height:56px !important;margin:8px 12px 0 !important;
+  border-radius:46px 54px 42px 52px/42px 48px 40px 46px !important;
+  background:linear-gradient(150deg,#FFFFFF 0%,#F2F7FD 100%) !important;
+  border:1px solid #E3EAF5 !important;border-bottom:1px solid #E3EAF5 !important;
+  box-shadow:0 10px 26px rgba(56,80,130,.13) !important;
+  padding:0 14px !important;
+  display:flex !important;align-items:center !important;justify-content:center !important;
+  position:relative !important;
+}
+.brand-wrap{display:flex !important;align-items:center !important;padding:0 !important;margin:0 !important;gap:6px !important}
+.brand-wrap .brand-mark{display:none !important}
+.mandala-wrap{display:none !important}
+.brand-wrap::before{content:'✿';color:#F291BE;font-size:15px;line-height:1}
+.brand-wordmark,.brand-wordmark::before{
+  background:linear-gradient(135deg,#82B6FF 0%,#5B9BFA 48%,#F291BE 100%) !important;
+  -webkit-background-clip:text !important;background-clip:text !important;
+  color:transparent !important;-webkit-text-fill-color:transparent !important;
+  filter:none !important;text-shadow:none !important;
+  font-size:16px !important;font-weight:800 !important;letter-spacing:.2px !important;
+}
+.top-msg-btn{
+  position:absolute !important;right:10px !important;top:50% !important;transform:translateY(-50%) !important;
+  width:42px !important;height:42px !important;padding:0 !important;
+  border-radius:46% 54% 50% 50%/50% 46% 54% 50% !important;
+  background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(244,246,252,.7)) !important;
+  border:1px solid #E3EAF5 !important;
+  box-shadow:inset 0 2px 3px rgba(255,255,255,.95),0 8px 18px rgba(56,80,130,.18) !important;
+  display:flex !important;align-items:center !important;justify-content:center !important;
+  animation:none !important;
+}
+.top-msg-btn i,.top-msg-btn svg{width:20px !important;height:20px !important;color:#4F5E80 !important}
+.top-msg-btn .dot{
+  position:absolute !important;top:7px !important;right:8px !important;
+  width:9px !important;height:9px !important;border-radius:50% !important;
+  background:linear-gradient(135deg,#F291BE,#E76FA8) !important;
+  border:1.5px solid #FFFFFF !important;
+}
+[data-theme="dark"] .topbar{
+  background:linear-gradient(150deg,#131D33 0%,#0D1424 100%) !important;
+  border-color:#263553 !important;
+  box-shadow:0 10px 26px rgba(0,0,0,.5) !important;
+}
+[data-theme="dark"] .brand-wrap::before{color:#F2A0C6}
+[data-theme="dark"] .brand-wordmark,[data-theme="dark"] .brand-wordmark::before{
+  background:linear-gradient(135deg,#8FBCFF 0%,#5B9BFA 48%,#F2A0C6 100%) !important;
+  -webkit-background-clip:text !important;background-clip:text !important;
+}
+[data-theme="dark"] .top-msg-btn{
+  background:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,.05)) !important;
+  border-color:rgba(255,255,255,.18) !important;
+  box-shadow:inset 0 1.5px 1px rgba(255,255,255,.2),0 8px 18px rgba(0,0,0,.45) !important;
+}
+[data-theme="dark"] .top-msg-btn i,[data-theme="dark"] .top-msg-btn svg{color:#ECF1FB !important}
+[data-theme="dark"] .top-msg-btn .dot{border-color:#131D33 !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .topbar{background:linear-gradient(150deg,#131D33 0%,#0D1424 100%) !important;border-color:#263553 !important;box-shadow:0 10px 26px rgba(0,0,0,.5) !important}
+  :root:not([data-theme="light"]) .brand-wrap::before{color:#F2A0C6}
+  :root:not([data-theme="light"]) .brand-wordmark,:root:not([data-theme="light"]) .brand-wordmark::before{background:linear-gradient(135deg,#8FBCFF 0%,#5B9BFA 48%,#F2A0C6 100%) !important;-webkit-background-clip:text !important;background-clip:text !important}
+  :root:not([data-theme="light"]) .top-msg-btn{background:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,.05)) !important;border-color:rgba(255,255,255,.18) !important;box-shadow:inset 0 1.5px 1px rgba(255,255,255,.2),0 8px 18px rgba(0,0,0,.45) !important}
+  :root:not([data-theme="light"]) .top-msg-btn i,:root:not([data-theme="light"]) .top-msg-btn svg{color:#ECF1FB !important}
+  :root:not([data-theme="light"]) .top-msg-btn .dot{border-color:#131D33 !important}
+}
+
+/* ---- Feed: restore Liquid Petal glass cards ---- */
+.view.feed-view .stories-rail{padding:12px 6px 4px !important}
+#feedView .feed-list{gap:14px !important}
+#feedView .post-card{
+  background:rgba(255,255,255,.62) !important;
+  border:1px solid rgba(255,255,255,.92) !important;border-bottom:1px solid rgba(255,255,255,.92) !important;
+  border-radius:24px !important;
+  margin:0 12px !important;padding:10px !important;
+  -webkit-backdrop-filter:blur(20px) saturate(160%) !important;backdrop-filter:blur(20px) saturate(160%) !important;
+  box-shadow:0 20px 44px -18px rgba(56,80,130,.38),inset 0 1.5px 0 rgba(255,255,255,.9) !important;
+}
+#feedView .post-card .post-img-wrap{border-radius:16px !important;overflow:hidden !important}
+#feedView .post-card:has(.post-img-wrap) .post-actions{
+  position:relative !important;z-index:3 !important;
+  margin:-44px 10px 0 !important;
+  background:rgba(255,255,255,.72) !important;
+  border:1px solid rgba(255,255,255,.92) !important;border-radius:999px !important;
+  padding:9px 18px !important;
+  -webkit-backdrop-filter:blur(18px) saturate(170%) !important;backdrop-filter:blur(18px) saturate(170%) !important;
+  box-shadow:0 12px 28px -10px rgba(56,80,130,.42),inset 0 1px 0 rgba(255,255,255,.92) !important;
+}
+#feedView .post-card:has(.post-img-wrap) .post-actions .act-btn{color:#26324E !important}
+#feedView .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{color:#E76FA8 !important}
+[data-theme="dark"] #feedView .post-card{
+  background:rgba(255,255,255,.055) !important;
+  border-color:rgba(255,255,255,.12) !important;
+  box-shadow:0 20px 44px -18px rgba(0,0,0,.6),inset 0 1.5px 0 rgba(255,255,255,.08) !important;
+}
+[data-theme="dark"] #feedView .post-card:has(.post-img-wrap) .post-actions{
+  background:rgba(15,22,42,.66) !important;border-color:rgba(255,255,255,.14) !important;
+  box-shadow:0 12px 28px -10px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.1) !important;
+}
+[data-theme="dark"] #feedView .post-card:has(.post-img-wrap) .post-actions .act-btn{color:#ECF1FB !important}
+[data-theme="dark"] #feedView .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{color:#F2A8CC !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) #feedView .post-card{background:rgba(255,255,255,.055) !important;border-color:rgba(255,255,255,.12) !important;box-shadow:0 20px 44px -18px rgba(0,0,0,.6),inset 0 1.5px 0 rgba(255,255,255,.08) !important}
+  :root:not([data-theme="light"]) #feedView .post-card:has(.post-img-wrap) .post-actions{background:rgba(15,22,42,.66) !important;border-color:rgba(255,255,255,.14) !important;box-shadow:0 12px 28px -10px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.1) !important}
+  :root:not([data-theme="light"]) #feedView .post-card:has(.post-img-wrap) .post-actions .act-btn{color:#ECF1FB !important}
+  :root:not([data-theme="light"]) #feedView .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{color:#F2A8CC !important}
+}
+
+/* v126 patch: beat the v122 floral-mandala dark fill (specificity) */
+[data-theme="dark"] .brand-wordmark,[data-theme="dark"] .brand-wordmark::before{
+  color:transparent !important;-webkit-text-fill-color:transparent !important;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .brand-wordmark,:root:not([data-theme="light"]) .brand-wordmark::before{
+    color:transparent !important;-webkit-text-fill-color:transparent !important;
+  }
+}
