@@ -3,7 +3,7 @@
  *
  * Hono-based reimplementation of the Express API in api/index.js.
  * Same routes, same input/output, same JWT, same DB layout, same persistence.
- * The Express version (api/index.js) remains for  / local Node.
+ * The Express version (api/index.js) remains for local Node development.
  *
  * Required compatibility: nodejs_compat (Buffer + crypto + process.env).
  * 
@@ -11,7 +11,7 @@
  * =============================================================
  * This file (cf-worker.js) and index.js are INTENTIONALLY parallel implementations:
  * - cf-worker.js: Hono-based, runs on Cloudflare Workers/Pages
- * - index.js: Express-based, runs on  Functions / local Node.js
+ * - index.js: Express-based, runs on local Node.js
  * Both share the same API contract, DB schema, and business logic.
  * Changes to routes/logic should be applied to BOTH files.
  * This duplication exists because Express doesn't run on Cloudflare Workers

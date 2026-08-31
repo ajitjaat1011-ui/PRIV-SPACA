@@ -5,15 +5,15 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v123';
-const STATIC_CACHE = 'priv-spaca-static-v111';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v111';
+const SW_VERSION = 'priv-spaca-v124';
+const STATIC_CACHE = 'priv-spaca-static-v112';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v112';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=159',
-  '/app.min.js?v=149',
+  '/style.min.css?v=160',
+  '/app.min.js?v=150',
   '/manifest.json',
   '/favicon.ico',
   '/favicon-16x16.png',
@@ -47,7 +47,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
 
   // Never cache API calls — always live
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/./functions/')) {
+  if (url.pathname.startsWith('/api/')) {
     return;
   }
   // Only GET caching

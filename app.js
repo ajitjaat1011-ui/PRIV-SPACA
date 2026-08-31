@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v123';
+const APP_VERSION = 'priv-spaca-v124';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3210,7 +3210,7 @@ async function sendHeartbeat() {
 
 /* ========== Adaptive polling ========== */
 // Fast poll mode: after any user interaction we boost polling cadence so things feel
-// near-real-time even when SSE isn't available ( Functions buffers SSE).
+// near-real-time even when SSE isn't available (some hosts buffer SSE).
 let _fastPollUntil = 0;
 function boostPolling(durationMs = 30000) { _fastPollUntil = Date.now() + durationMs; }
 function isFastPolling() { return Date.now() < _fastPollUntil; }
@@ -3309,9 +3309,9 @@ let _sseReconnectTimer = null;
 let _sseAttempts = 0;
 
 /**
- * Connect SSE. Falls back gracefully on serverless hosts that buffer streaming responses
- * (e.g.  Functions on AWS Lambda). If we don't see ANY data within 3s of opening,
- * we mark it unsupported and rely on the aggressive polling fallback.
+ * Connect SSE. Falls back gracefully on hosts that buffer streaming responses.
+ * If we don't see ANY data within 3s of opening, we mark it unsupported and rely
+ * on the aggressive polling fallback.
  */
 function connectSSE() {
   if (!State.token) return;

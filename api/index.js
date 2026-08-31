@@ -5,7 +5,7 @@
  * Bug #17 fix: Architecture note on duplicate implementations
  * =============================================================
  * This file (index.js) and cf-worker.js are INTENTIONALLY parallel implementations:
- * - index.js: Express-based, runs on  Functions / local Node.js
+ * - index.js: Express-based, runs on local Node.js
  * - cf-worker.js: Hono-based, runs on Cloudflare Workers/Pages
  * Both share the same API contract, DB schema, and business logic.
  * Changes to routes/logic should be applied to BOTH files.
@@ -808,7 +808,7 @@ async function tursoEnsure() {
     -- bug), add them here so account-lockout UPSERTs don't throw.
     -- SQLite's ALTER TABLE ADD COLUMN is idempotent-safe via this try pattern.
     -- Tables added in this block mirror api/cf-worker.js so the Express path
-    -- (local dev / ) is no longer broken for RTC signaling.
+    -- (local dev) is no longer broken for RTC signaling.
     CREATE TABLE IF NOT EXISTS ps_events (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -1571,7 +1571,7 @@ setInterval(() => {
 
 // GET /api/stream — Server-Sent Events
 // Accepts ?token=... since EventSource cannot set Authorization headers.
-// Holds connection up to 25s ( limit ≈ 26s), client auto-reconnects.
+// Holds connection up to 25s, client auto-reconnects.
 app.get('/api/stream', async (req, res) => {
   // Auth via query token (EventSource can't add Authorization header)
   const token = req.query.token || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -1616,7 +1616,7 @@ app.get('/api/stream', async (req, res) => {
     try { res.write(': ping\n\n'); } catch (_) { closeConn(); }
   }, 10000);
 
-  // Auto-close at 24s so  doesn't timeout; client reconnects automatically
+  // Auto-close at 24s; client reconnects automatically
   const autoClose = setTimeout(() => closeConn(), 24000);
 
   function closeConn() {
