@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v126';
+const APP_VERSION = 'priv-spaca-v127';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -4412,7 +4412,15 @@ function renderPost(p) {
     if (imgs.length === 1) {
       const img = lazyImg(imgs[0], 'post image', p.id);
       img.className = 'post-img';
-      img.addEventListener('error', () => { wrap.style.display = 'none'; });
+      // v127: reserve space while loading so the floating dock never overlaps
+      // the header; mark broken images so CSS flattens the dock to a normal row.
+      wrap.style.minHeight = '240px';
+      img.addEventListener('load', () => { wrap.style.minHeight = ''; }, { once: true });
+      img.addEventListener('error', () => {
+        wrap.style.display = 'none';
+        wrap.style.minHeight = '';
+        card.classList.add('img-failed');
+      });
       let lastTap = 0, tapTimer = null;
       img.addEventListener('click', () => {
         const now = Date.now();
@@ -4441,6 +4449,9 @@ function renderPost(p) {
       track.className = 'ig-carousel-track';
       track.style.cssText = 'display:flex; overflow-x:auto; scroll-snap-type:x mandatory; scroll-behavior:smooth; width:100%; -webkit-overflow-scrolling:touch; scrollbar-width:none;';
 
+      wrap.style.minHeight = '240px';
+      const clearMin = () => { wrap.style.minHeight = ''; };
+
       const badge = document.createElement('div');
       badge.className = 'ig-carousel-badge';
       badge.style.cssText = 'position:absolute; top:14px; right:14px; background:rgba(0,0,0,0.75); color:#fff; font-size:12px; font-weight:700; padding:4px 9px; border-radius:12px; z-index:3; pointer-events:none;';
@@ -4454,6 +4465,8 @@ function renderPost(p) {
         const img = lazyImg(url, `slide ${idx+1}`, `${p.id}_${idx}`);
         img.className = 'post-img';
         img.style.cssText = 'max-height:75vh; width:100%; object-fit:cover;';
+        img.addEventListener('load', clearMin, { once: true });
+        img.addEventListener('error', () => { card.classList.add('img-failed'); clearMin(); });
         let lastTap = 0, tapTimer = null;
         img.addEventListener('click', () => {
           const now = Date.now();

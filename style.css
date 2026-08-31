@@ -8247,3 +8247,64 @@ body{
     color:transparent !important;-webkit-text-fill-color:transparent !important;
   }
 }
+
+/* ============================================================
+   v127 patch — fix double wordmark, hidden NEW label,
+   and floating dock overlapping header on broken images
+   ============================================================ */
+
+/* Wordmark: gradient ONLY on ::before — element text stays
+   invisible (was double-painted = blurry doubled text) */
+.brand-wordmark{
+  background:none !important;
+  color:transparent !important;
+  -webkit-text-fill-color:transparent !important;
+}
+
+/* Center create blob: show the NEW label again (was display:none) */
+.floating-add-btn .bn-label{
+  display:block !important;
+  color:#23252B !important;
+  opacity:.7 !important;
+  font-size:8px !important;
+}
+[data-theme="dark"] .floating-add-btn .bn-label,
+:root:not([data-theme="light"]) .floating-add-btn .bn-label{
+  color:rgba(255,255,255,.85) !important;
+}
+
+/* Broken / missing image: flatten the floating dock to a normal
+   action row so it never overlaps the post header */
+.post-card.img-failed:has(.post-img-wrap) .post-actions{
+  position:static !important;
+  margin:0 10px !important;
+  background:transparent !important;
+  border:0 !important;border-radius:0 !important;
+  box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;backdrop-filter:none !important;
+  padding:10px 4px 2px !important;
+}
+.post-card.img-failed .post-actions .act-btn{color:var(--text) !important}
+.post-card.img-failed .liked-by,
+.post-card.img-failed .post-caption,
+.post-card.img-failed .petal-stats,
+.post-card.img-failed .post-time,
+.post-card.img-failed .post-add-comment{margin-top:6px !important}
+
+/* v127 patch 2 — beat the ID-scoped restore rules */
+#feedView .post-card.img-failed:has(.post-img-wrap) .post-actions{
+  position:static !important;
+  margin:0 10px !important;
+  background:transparent !important;
+  border:0 !important;border-radius:0 !important;
+  box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;backdrop-filter:none !important;
+  padding:10px 4px 2px !important;
+}
+#feedView .post-card.img-failed .post-actions .act-btn{color:var(--text) !important}
+[data-theme="dark"] .brand-wordmark,
+:root:not([data-theme="light"]) .brand-wordmark{
+  background:none !important;
+  color:transparent !important;
+  -webkit-text-fill-color:transparent !important;
+}
