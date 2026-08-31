@@ -8359,3 +8359,35 @@ body{
   max-width:106px !important;margin:0 !important;
 }
 .top-notif-banner:empty{display:none !important}
+
+/* ============================================================
+   v130 — flower no longer overlaps the brand name.
+   The ✿ text glyph renders as a wide emoji on mobile and
+   bleeds over "Priv Spaca". Replaced with a fixed-size inline
+   SVG flower painted as the wordmark's background, with
+   padding reserving its space (light + dark).
+   ============================================================ */
+.brand-wrap::before{display:none !important;content:none !important}
+.brand-wrap{gap:0 !important}
+.brand-wordmark{
+  padding-left:21px !important;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><g fill='%23F291BE'><circle cx='12' cy='5.2' r='2.6'/><circle cx='4.6' cy='12' r='2.6'/><circle cx='19.4' cy='12' r='2.6'/><circle cx='7.2' cy='19.5' r='2.6'/><circle cx='16.8' cy='19.5' r='2.6'/></g><circle cx='12' cy='12' r='2.2' fill='%235B9BFA'/></svg>") !important;
+  background-repeat:no-repeat !important;
+  background-position:0 center !important;
+  background-size:14px 14px !important;
+}
+.brand-wordmark::before{
+  padding-left:21px !important;
+}
+[data-theme="dark"] .brand-wordmark,
+:root:not([data-theme="light"]) .brand-wordmark{
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><g fill='%23F2A0C6'><circle cx='12' cy='5.2' r='2.6'/><circle cx='4.6' cy='12' r='2.6'/><circle cx='19.4' cy='12' r='2.6'/><circle cx='7.2' cy='19.5' r='2.6'/><circle cx='16.8' cy='19.5' r='2.6'/></g><circle cx='12' cy='12' r='2.2' fill='%238FBCFF'/></svg>") !important;
+}
+
+/* v130 patch: dark background longhands (beat the v127 background:none shorthand) */
+[data-theme="dark"] .brand-wordmark,
+:root:not([data-theme="light"]) .brand-wordmark{
+  background-repeat:no-repeat !important;
+  background-position:0 center !important;
+  background-size:14px 14px !important;
+}
