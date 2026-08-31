@@ -8338,3 +8338,24 @@ body{
 }
 /* img-failed flatten now matches the new normal row (no pill) */
 #feedView .post-card.img-failed:has(.post-img-wrap) .post-actions{margin:0 10px !important}
+
+/* ============================================================
+   v129 — Option C topbar alignment: brand dead-center.
+   Empty notif banner no longer takes 156px of flex space
+   (was pushing "Priv Spaca" left). Content banner floats
+   left of the bell instead.
+   ============================================================ */
+.brand-wrap{
+  position:absolute !important;
+  left:50% !important;top:50% !important;
+  transform:translate(-50%,-50%) !important;
+  margin:0 !important;padding:0 !important;
+  gap:6px !important;
+}
+.top-notif-banner{
+  flex:0 0 auto !important;width:auto !important;
+  position:absolute !important;left:12px !important;top:50% !important;
+  transform:translateY(-50%) !important;
+  max-width:106px !important;margin:0 !important;
+}
+.top-notif-banner:empty{display:none !important}
