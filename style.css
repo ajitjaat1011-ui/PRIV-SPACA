@@ -8308,3 +8308,33 @@ body{
   color:transparent !important;
   -webkit-text-fill-color:transparent !important;
 }
+
+/* ============================================================
+   v128 — dock BELOW the image (no more overlapping the photo)
+   Like/comment/share/save row sits under the image as a clean
+   ink-on-surface row. Light + dark twins.
+   ============================================================ */
+#feedView .post-card:has(.post-img-wrap) .post-actions{
+  position:relative !important;z-index:3 !important;
+  margin:6px 12px 0 !important;
+  background:transparent !important;
+  border:0 !important;border-radius:0 !important;
+  box-shadow:none !important;
+  -webkit-backdrop-filter:none !important;backdrop-filter:none !important;
+  padding:10px 4px 0 !important;
+}
+#feedView .post-card:has(.post-img-wrap) .post-actions .act-btn{color:var(--text) !important}
+#feedView .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{color:#E76FA8 !important}
+#feedView .post-card:has(.post-img-wrap) .liked-by,
+#feedView .post-card:has(.post-img-wrap) .post-caption,
+#feedView .post-card:has(.post-img-wrap) .petal-stats,
+#feedView .post-card:has(.post-img-wrap) .post-time,
+#feedView .post-card:has(.post-img-wrap) .post-add-comment{margin-top:8px !important}
+[data-theme="dark"] #feedView .post-card:has(.post-img-wrap) .post-actions .act-btn{color:#ECF1FB !important}
+[data-theme="dark"] #feedView .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{color:#F2A8CC !important}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) #feedView .post-card:has(.post-img-wrap) .post-actions .act-btn{color:#ECF1FB !important}
+  :root:not([data-theme="light"]) #feedView .post-card:has(.post-img-wrap) .post-actions .act-btn.liked{color:#F2A8CC !important}
+}
+/* img-failed flatten now matches the new normal row (no pill) */
+#feedView .post-card.img-failed:has(.post-img-wrap) .post-actions{margin:0 10px !important}
