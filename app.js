@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v119';
+const APP_VERSION = 'priv-spaca-v120';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -8175,7 +8175,7 @@ async function renderOwnProfile() {
   const titleU = $id('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
   if (titleU) titleU.innerHTML = displayNameWithProfileBadges(State.user, cachedUsername, 'title');
-  if ($id('#profileDisplayName')) $id('#profileDisplayName').textContent = State.user.displayName || '';
+  if ($id('#profileDisplayName')) $id('#profileDisplayName').innerHTML = displayNameWithOwnerBadge(State.user, State.user.displayName || '', 'inline');
   syncPolaroidCaption(State.user.displayName || State.user.username || '');
   if ($id('#profileUsername')) $id('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
@@ -8202,7 +8202,7 @@ async function renderOwnProfile() {
       persistUser()
     }
     const realUsername = u.username || State.user.username || cachedUsername;
-    $id('#profileDisplayName').textContent = u.displayName || State.user.displayName || '';
+    $id('#profileDisplayName').innerHTML = displayNameWithOwnerBadge(u, u.displayName || State.user.displayName || '', 'inline');
     syncPolaroidCaption(u.displayName || State.user.displayName || u.username || '');
     $id('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
     if (titleU) titleU.innerHTML = displayNameWithProfileBadges(u, realUsername, 'title');

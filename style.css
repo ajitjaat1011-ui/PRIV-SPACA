@@ -7854,3 +7854,191 @@ body{
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]) .topbar{background:#000 !important;border-bottom:1px solid #16161c !important;box-shadow:none !important}
 }
+
+/* =====================================================================
+   PROFILE — POLAROID BRIDGE (Option C)
+   Instagram-style layout (avatar+stats row, name+bio, pill tab bar,
+   3-col rounded grid) while keeping the tilted polaroid + tape + flower.
+   Light + dark + prefers-color-scheme twins.
+   ===================================================================== */
+
+/* ---- Header: clean IG row (no glass-orb card, no backdrop) ---- */
+#profileView .ig-profile-head{
+  display:flex!important;
+  align-items:flex-start;
+  gap:14px;
+  padding:12px 18px 4px!important;
+  background:var(--surface)!important;
+  border:0!important;
+  border-radius:0!important;
+  box-shadow:none!important;
+  min-height:0!important;
+  overflow:visible!important;
+}
+#profileView .profile-bg{ display:none!important; }
+
+/* ---- Polaroid avatar (left) ---- */
+#profileView .profile-avatar-wrap{
+  position:relative;
+  width:150px!important;
+  margin:16px 0 6px 0!important;
+  transform:rotate(-4deg)!important;
+  padding:11px 10px 0!important;
+  background:#fff!important;
+  border-radius:8px!important;
+  box-shadow:0 16px 32px -16px rgba(56,80,130,.42), 0 2px 8px rgba(56,80,130,.10)!important;
+  display:flex!important;flex-direction:column;align-items:center;
+  flex-shrink:0;
+}
+#profileView .profile-avatar-wrap::before{
+  width:54px!important;height:16px!important;top:-8px!important;
+  margin-left:-27px!important;
+  background:rgba(195,203,245,.6)!important;
+}
+#profileView .profile-avatar-wrap .avatar.xxl{
+  width:104px!important;height:104px!important;font-size:30px!important;
+  border:3px solid #fff!important;
+  box-shadow:0 0 0 1px var(--line), 0 8px 18px -10px rgba(56,80,130,.35)!important;
+}
+#profileView .pol-caption{
+  font-size:16px!important;font-weight:700!important;
+  padding:8px 3px 10px!important;min-height:34px!important;
+}
+#profileView .pol-caption #polaroidCaption{ max-width:116px!important; }
+#profileView .pol-caption .pol-flower{ font-size:12px!important; }
+
+/* ---- Stats (right) — horizontal, no floating card ---- */
+#profileView .ig-profile-stats{
+  position:static!important;
+  transform:none!important;
+  width:auto!important;
+  flex:1!important;
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:flex-start!important;
+  justify-content:space-around!important;
+  gap:2px!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  border-radius:0!important;
+  padding:30px 2px 0!important;
+  z-index:2!important;
+  min-height:86px;
+}
+#profileView .ig-profile-stats::before{ content:none!important; }
+#profileView .ig-profile-stats .stat-btn{
+  flex-direction:column!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:2px!important;
+  min-width:0;
+  padding:4px 6px!important;
+  border:0!important;
+  border-bottom:0!important;
+  background:transparent!important;
+  color:var(--text)!important;
+}
+#profileView .ig-profile-stats .stat-btn:hover{ background:transparent!important; transform:none!important; }
+#profileView .ig-profile-stats .stat-btn strong{ font-size:20px!important; font-weight:800!important; color:var(--text)!important; }
+#profileView .ig-profile-stats .stat-btn span{
+  font-size:12.5px!important;font-weight:500!important;letter-spacing:0!important;
+  text-transform:none!important;color:var(--muted)!important;white-space:nowrap;
+}
+
+/* ---- Name + verified + bio (below header) ---- */
+#profileView .ig-profile-meta .ig-name{ display:block!important; }
+#profileView .ig-profile-meta{
+  padding:0 18px 2px!important;
+  background:var(--surface)!important;
+  display:flex!important;flex-direction:column;gap:1px!important;
+}
+#profileView .ig-profile-meta .ig-name{
+  font-size:15px!important;font-weight:800!important;color:var(--text)!important;
+  display:flex!important;align-items:center;
+}
+#profileView .ig-profile-meta .ig-bio{
+  font-size:13.5px!important;color:var(--muted)!important;margin-top:3px!important;
+}
+#profileView .ig-profile-meta .owner-verified-badge{
+  width:17px!important;height:17px!important;margin-left:6px!important;flex-shrink:0;
+}
+#profileView .ig-profile-meta .banner-row,
+#profileView .profile-banners-row{ margin-top:8px!important; }
+
+/* ---- Action pills + discover on surface ---- */
+#profileView .ig-profile-actions,
+#profileView .ig-discover-section{ background:var(--surface)!important; }
+#profileView .ig-profile-actions{ padding:8px 18px 4px!important; gap:10px!important; }
+#profileView .ig-action-btn{ border-radius:9999px!important; }
+#profileView .ig-discover-section{ padding:4px 18px 12px!important; }
+#profileView .ig-discover-head{ padding:8px 0 8px!important; }
+
+/* ---- Pill icon tab bar ---- */
+#profileView .ig-tabs{
+  display:flex!important;
+  align-items:center;
+  justify-content:center;
+  gap:12px!important;
+  margin:12px 18px 8px!important;
+  background:var(--surface)!important;
+  border:1px solid var(--border)!important;
+  border-radius:24px!important;
+  padding:7px 10px!important;
+  box-shadow:var(--shadow-xs)!important;
+}
+#profileView .ig-tab{
+  flex:0 0 auto!important;
+  width:46px!important;height:38px!important;
+  border-radius:15px!important;
+  padding:0!important;
+  display:flex!important;align-items:center;justify-content:center;
+  color:var(--muted)!important;
+  box-shadow:none!important;
+  transition:all .2s ease;
+}
+#profileView .ig-tab i{ width:21px!important;height:21px!important; }
+#profileView .ig-tab.active{
+  background:linear-gradient(135deg,#82B6FF 0%,#5B9BFA 48%,#F291BE 100%)!important;
+  color:#fff!important;
+  box-shadow:0 6px 16px rgba(91,155,250,.28)!important;
+}
+/* dark twin for the tab active pill */
+[data-theme="dark"] #profileView .ig-tab.active{
+  box-shadow:0 6px 18px rgba(0,0,0,.45), 0 4px 14px rgba(91,155,250,.18)!important;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) #profileView .ig-tab.active{
+    box-shadow:0 6px 18px rgba(0,0,0,.45), 0 4px 14px rgba(91,155,250,.18)!important;
+  }
+}
+
+/* ---- Rounded 3-col grid ---- */
+#profileView .ig-posts-grid{ gap:2.5px!important; padding:0 0 10px!important; }
+#profileView .ig-grid-cell{ border-radius:9px!important; }
+
+/* ---- Topbar: circular glass buttons + centered @handle ---- */
+#profileView .profile-titlebar{
+  padding:12px 16px 6px!important;
+  background:var(--surface)!important;
+}
+#profileView .profile-titlebar .ghost-btn{
+  width:38px!important;height:38px!important;
+  border-radius:50%!important;
+  display:flex!important;align-items:center;justify-content:center;gap:0!important;
+  background:rgba(255,255,255,.75)!important;
+  border:1px solid var(--border)!important;
+  box-shadow:var(--shadow-xs)!important;
+  color:var(--text)!important;
+  flex-shrink:0;
+}
+[data-theme="dark"] #profileView .profile-titlebar .ghost-btn{ background:rgba(255,255,255,.06)!important; }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) #profileView .profile-titlebar .ghost-btn{ background:rgba(255,255,255,.06)!important; }
+}
+#profileView .profile-titlebar .ghost-btn i{ width:19px!important;height:19px!important; }
+#profileView .profile-titlebar-center{
+  font-size:15px!important;font-weight:800!important;gap:2px!important;
+  letter-spacing:.01em;
+}
+#profileView #profileTitleUsername::before{ content:'@'; }
+#profileView .profile-titlebar-center i[data-lucide="chevron-down"]{ display:none!important; }
