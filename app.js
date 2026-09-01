@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v139';
+const APP_VERSION = 'priv-spaca-v140';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -1387,7 +1387,7 @@ async function loadMembers(force = false) {
   _loadMembersPromise = (async () => {
     try {
       const data = await api('/users');
-      State.members = data.users || [];
+      State.members = _applyLocalReadState(data.users || []);
       _unreadByRoom = data.unreadByRoom || {};
       _lastMembersLoadedAt = Date.now();
       renderMembers();
@@ -1482,15 +1482,43 @@ function bumpConversationToTop(roomId, msg, incrementUnread) {
 
 // Zero a conversation's badge locally and tell the server we've read it, so
 // the count does not come back on the next poll.
+// Rooms marked read locally, with the time it happened: roomId -> ts.
+// A /users response can be a cached or in-flight snapshot taken BEFORE the
+// read was recorded, so applying it verbatim resurrects a badge the user just
+// cleared. Within this window the local zero wins.
+const _readAtByRoom = new Map();
+const READ_SUPPRESS_MS = 15000;
+
 function markRoomRead(roomId, peerId) {
   if (!roomId) return;
+  _readAtByRoom.set(roomId, Date.now());
   if (peerId && Array.isArray(State.members)) {
     const u = State.members.find(x => x && x.id === peerId);
     if (u && _unreadOf(u) > 0) { u.unreadCount = 0; _lastMembersSig = ''; }
   }
   if (_unreadByRoom && _unreadByRoom[roomId]) _unreadByRoom[roomId] = 0;
-  api('/messages/read', { method: 'POST', body: { roomId, at: Date.now() } }).catch(() => {});
+  // Drop any cached /users body so the next read goes to the network.
+  bustApiCache('/users');
+  api('/messages/read', { method: 'POST', body: { roomId, at: Date.now() } })
+    .then(() => { bustApiCache('/users'); })
+    .catch(() => {});
 }
+
+// Zero out counts for rooms the user just opened, before the list is rendered.
+function _applyLocalReadState(users) {
+  if (!Array.isArray(users) || _readAtByRoom.size === 0) return users;
+  const now = Date.now();
+  for (const [roomId, ts] of Array.from(_readAtByRoom)) {
+    if (now - ts > READ_SUPPRESS_MS) { _readAtByRoom.delete(roomId); continue; }
+    if (!roomId.startsWith('dm:')) continue;
+    const meId = State.user && State.user.id;
+    const peerId = roomId.slice(3).split(':').find(id => id !== meId);
+    const u = peerId && users.find(x => x && x.id === peerId);
+    if (u) u.unreadCount = 0;
+  }
+  return users;
+}
+
 let _unreadByRoom = {};
 
 function renderMembers() {
