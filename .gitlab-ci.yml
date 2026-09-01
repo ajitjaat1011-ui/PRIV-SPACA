@@ -1,18 +1,21 @@
 # GitLab CI/CD pipeline for PRIV-SPACA.
 #
-# This mirror repo exists purely as an independent debug/test signal
-# alongside the GitHub -> Cloudflare Pages production deploy. It runs the
-# project's existing Python + Node test suites against a local, in-memory
-# instance of the Express dev server (api/index.js via dev-server.js), so it
-# needs no real secrets (Turso/GitHub/JWT) to catch regressions early.
+# This mirror repo is an independent debug/test signal alongside the
+# GitHub -> Cloudflare Pages production deploy. It runs against the real
+# Hono API (api/cf-worker.js) booted locally by scripts/dev-server.mjs, with
+# no secrets: without TURSO_* the API falls back to in-memory storage, which
+# is exactly what we want for a smoke test.
 #
-# Add CI/CD variables in GitLab (Settings > CI/CD > Variables) only if you
-# want a job to test against the *real* Turso-backed API instead of the
-# in-memory fallback: TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, JWT_SECRET.
+# NOTE: the previous pipeline invoked python suites (rtc_parity_test.py,
+# deep_practical_test.py, pw_inbox_test.py, pw_notes_test.py) and
+# dev-server.js. None of those files exist in this repository any more, so
+# every job was failing on a missing file. They are replaced below by checks
+# that actually exist and actually protect production.
 
 stages:
   - install
-  - test
+  - verify
+  - smoke
 
 variables:
   npm_config_cache: "$CI_PROJECT_DIR/.npm-cache"
@@ -35,52 +38,29 @@ install_deps:
       - node_modules/
     expire_in: 1 hour
 
-test_backend_suite:
+# Static guarantees: version sync (APP_VERSION === SW_VERSION), asset ?v=
+# consistency, the API bundle resolving, route-table ordering and declared
+# dependencies. Fails the pipeline on the mistakes that broke production before.
+sanity_check:
   extends: .node_defaults
-  stage: test
+  stage: verify
   needs: ["install_deps"]
   script:
-    # Boot the in-memory Express dev server in the background, then run the
-    # existing Python test suites against it on :8787. Only scripts that
-    # target localhost:8787 run here — test_suite.py / extra_api_test.py /
-    # browser_test.py intentionally hit the real production URL and must
-    # never run automatically in CI (would hammer real users' rate limits).
-    - apt-get update -qq && apt-get install -y -qq python3 python3-pip curl
-    - pip3 install --break-system-packages --quiet requests || pip3 install --quiet requests
-    - node dev-server.js &
-    - sleep 3
-    - curl -sf http://localhost:8787/api/health || (echo "dev server failed to start" && exit 1)
-    - python3 rtc_parity_test.py
-    - python3 deep_practical_test.py --local
-  allow_failure: false
+    - npm run check
 
-test_playwright_suite:
-  stage: test
+# Boots the real worker and exercises the API end to end.
+api_smoke:
+  extends: .node_defaults
+  stage: smoke
   needs: ["install_deps"]
-  # mcr.microsoft.com/playwright/python images ship Python + browsers but NOT
-  # Node.js, and dev-server.js needs Node to run. Install Node 20 via
-  # NodeSource instead of relying on the (Node-only) .node_defaults image.
-  image: mcr.microsoft.com/playwright/python:v1.44.0-jammy
-  cache:
-    key: "$CI_COMMIT_REF_SLUG-node"
-    paths:
-      - .npm-cache/
-      - node_modules/
   script:
-    - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    - apt-get install -y -qq nodejs
-    - node --version && npm --version
-    - npm install --no-audit --no-fund
-    - node dev-server.js &
-    - sleep 3
+    - node scripts/dev-server.mjs &
+    - sleep 4
     - curl -sf http://localhost:8787/api/health || (echo "dev server failed to start" && exit 1)
-    - pip3 install --quiet playwright
-    - python3 -m playwright install --with-deps chromium
-    - python3 pw_inbox_test.py
-    - python3 pw_notes_test.py
-  allow_failure: true
-  rules:
-    # Playwright browser install is heavy; only run this job on main/MRs to
-    # keep feature-branch pipelines fast. Adjust as needed.
-    - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # Unauthenticated request must be rejected.
+    - test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/api/users)" = "401"
+    # Unknown API path must hit the catch-all 404, not a route.
+    - test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/api/nope)" = "404"
+    # Static assets and the SPA fallback must still be served.
+    - test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/)" = "200"
+    - echo "API smoke passed"

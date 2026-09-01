@@ -9,9 +9,8 @@ function isBlockedAssetPath(pathname) {
     '/package.json',
     '/package-lock.json',
     '/wrangler.toml',
-    '/dev-server.js',
     '/.cloudflareignore',
-    '/.vercelignore',
+    '/.gitlab-ci.yml',
   ]);
   if (exact.has(pathname)) return true;
   return pathname.startsWith('/backups/')

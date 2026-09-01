@@ -2,29 +2,30 @@
   "name": "priv-spaca",
   "version": "1.0.0",
   "description": "PRIV SPACA - Secure private group chat and social community application",
-  "main": "api/index.js",
+  "type": "module",
+  "main": "api/cf-worker.js",
   "scripts": {
-    "start": "node api/index.js",
-    "dev": "node api/index.js",
-    "build": "node scripts/build.js"
+    "dev": "node scripts/dev-server.mjs",
+    "start": "node scripts/dev-server.mjs",
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs",
+    "deploy": "wrangler pages deploy . --project-name=priv-spaca --branch=main --commit-dirty=true"
   },
   "engines": {
-    "node": ">=18.x"
+    "node": ">=20"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
     "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
     "hono": "^4.12.27",
-    "jsonwebtoken": "^9.0.2",
-    "node-fetch": "^2.7.0",
-    "serverless-http": "^3.2.0",
-    "web-push": "^3.6.7"
+    "js-base64": "^3.7.7",
+    "promise-limit": "^2.7.0"
   },
   "devDependencies": {
+    "acorn": "^8.17.0",
+    "acorn-walk": "^8.3.5",
     "clean-css-cli": "^5.6.3",
-    "html-minifier-terser": "^7.2.0",
+    "esbuild": "^0.28.1",
     "terser": "^5.48.0",
     "wrangler": "^4.86.0"
   },
