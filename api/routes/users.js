@@ -16,7 +16,7 @@ import { cleanNoteMusic } from '../lib/media.js';
 import { requireAuth } from '../lib/middleware.js';
 import { normalizeRoomId } from '../lib/rooms.js';
 import { normalizeDb } from '../lib/schema.js';
-import { fetchTursoDmIndex, isTursoConfigured, tursoClient, tursoUpsertUser, tursoUpsertUserFeeds } from '../lib/store-turso.js';
+import { fetchTursoDmIndex, fetchTursoUnreadCounts, isTursoConfigured, tursoClient, tursoUpsertUser, tursoUpsertUserFeeds } from '../lib/store-turso.js';
 
 // ---------- User update ----------
 app.post('/api/user/update', requireAuth, async (c) => {
@@ -114,10 +114,14 @@ app.get('/api/users', requireAuth, async (c) => {
   // fetch (fetchTursoDmIndex) only needs myId, not db, so it's fully
   // independent of the db fetch — run both concurrently instead of
   // sequentially to avoid paying two round trips back-to-back.
-  const [db, tursoLastByPeer] = await Promise.all([
+  // unreadByRoom is independent of both other fetches, so it joins the same
+  // Promise.all rather than adding a third round trip.
+  const [db, tursoLastByPeer, unreadByRoom] = await Promise.all([
     fetchDatabase(),
     isTursoConfigured() ? fetchTursoDmIndex(myId) : Promise.resolve(null),
+    isTursoConfigured() ? fetchTursoUnreadCounts(myId) : Promise.resolve({}),
   ]);
+  const dmRoomId = (peerId) => 'dm:' + [myId, peerId].sort().join(':');
   const sourceUsers = db.users || [];
   const me = sourceUsers.find(u => u.id === myId);
   const myBlocked = new Set((me && me.blocked) || []);
@@ -160,8 +164,13 @@ app.get('/api/users', requireAuth, async (c) => {
       requestedByMe: myOutgoingRequests.has(u.id),
       requestedMe: myIncomingRequests.has(u.id),
       lastMessage: lastByPeer[u.id] || null,
+      unreadCount: (unreadByRoom && unreadByRoom[dmRoomId(u.id)]) || 0,
     }));
-  return c.json({ users: list });
+  return c.json({
+    users: list,
+    unreadByRoom: unreadByRoom || {},
+    groupUnread: (unreadByRoom && unreadByRoom['general-group']) || 0,
+  });
 });
 
 // ---------- E2E public key (Part 3) ----------

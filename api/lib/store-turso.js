@@ -107,6 +107,8 @@ export async function tursoEnsure() {
       user_id TEXT NOT NULL,
       from_user_id TEXT,
       kind TEXT,
+      post_id TEXT,
+      comment_id TEXT,
       created_at INTEGER NOT NULL,
       seen_at INTEGER,
       updated_at INTEGER NOT NULL,
@@ -124,6 +126,14 @@ export async function tursoEnsure() {
       PRIMARY KEY (owner_user_id, peer_user_id)
     );
     CREATE INDEX IF NOT EXISTS idx_ps_dm_index_owner_created ON ps_dm_index (owner_user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_read_state (
+      owner_user_id TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      last_read_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, room_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_read_state_owner ON ps_read_state (owner_user_id);
     CREATE TABLE IF NOT EXISTS ps_messages (
       id TEXT PRIMARY KEY,
       room_id TEXT NOT NULL,
@@ -493,4 +503,128 @@ export async function tursoUpsertUserFeeds(userFeeds) {
     args: [uf.userId, uf.postId, uf.createdAt]
   }));
   await tursoClient().batch(stmts, 'write').catch(e => console.warn('[turso] user_feeds upsert failed', e?.message));
+}
+
+// ---------- Per-room read state + unread counts ----------
+// A conversation's unread count is "messages in that room, from someone else,
+// created after the last time I opened it". last_read_at lives in
+// ps_read_state (one row per user+room) and is stamped by
+// POST /api/messages/read when the client opens a thread.
+
+// Rooms this user takes part in: the shared group plus any dm: room whose id
+// contains their user id (dm ids are 'dm:<sortedIdA>:<sortedIdB>').
+const _MY_ROOMS_SQL = "(m.room_id = 'general-group' OR (m.room_id LIKE 'dm:%' AND instr(m.room_id, ?) > 0))";
+
+/**
+ * Timestamp before which everything counts as already read.
+ *
+ * Written once, the first time this code touches the database, and never
+ * changed. Without it, shipping unread counts against a database full of
+ * history would greet every existing user with hundreds of unread badges.
+ *
+ * A global epoch is deliberately used instead of seeding each user lazily on
+ * their first request: lazy seeding stamps "now", so a message that arrived
+ * before the user's very first page load would be silently marked read.
+ */
+async function _unreadEpoch() {
+  if (state._unreadEpoch) return state._unreadEpoch;
+  const c = tursoClient();
+  const ts = nowMs();
+  // One batch, not two awaits: this runs on the first /users of every cold
+  // isolate, and sequential round trips there are exactly the kind of
+  // per-request overhead that trips Cloudflare's CPU limit (503 / 1102).
+  const res = await c.batch([
+    { sql: 'INSERT INTO ps_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING', args: ['unread_epoch', String(ts), ts] },
+    { sql: 'SELECT value FROM ps_meta WHERE key = ?', args: ['unread_epoch'] },
+  ], 'write').catch(() => null);
+  const rows = res && res[1] && res[1].rows;
+  const val = Number((rows && rows[0] && rows[0].value) || ts);
+  state._unreadEpoch = Number.isFinite(val) && val > 0 ? val : ts;
+  return state._unreadEpoch;
+}
+
+/**
+ * Unread count per room for one user: { [roomId]: count }.
+ * A message is unread when it is newer than this user's last_read_at for that
+ * room (or newer than the global epoch, if they have never opened it).
+ */
+export async function fetchTursoUnreadCounts(myId) {
+  if (!isTursoConfigured() || !myId) return {};
+  await tursoEnsure();
+  const c = tursoClient();
+  try {
+    const epoch = await _unreadEpoch();
+    const rs = await c.execute({
+      sql: `SELECT m.room_id AS room_id, COUNT(*) AS n
+            FROM ps_messages m
+            LEFT JOIN ps_read_state r
+              ON r.owner_user_id = ? AND r.room_id = m.room_id
+            WHERE ${_MY_ROOMS_SQL}
+              AND m.user_id != ?
+              AND (m.deleted_at IS NULL OR m.deleted_at = 0)
+              AND (m.disappear_at IS NULL OR m.disappear_at > ?)
+              AND m.created_at > COALESCE(r.last_read_at, ?)
+            GROUP BY m.room_id`,
+      args: [myId, myId, myId, nowMs(), epoch],
+    });
+    const out = {};
+    for (const row of (rs.rows || [])) {
+      const n = Number(row.n || 0);
+      if (n > 0) out[String(row.room_id)] = n;
+    }
+    return out;
+  } catch (e) {
+    console.warn('[turso] unread counts failed', e && e.message);
+    return {};
+  }
+}
+
+/** Stamp a room as read up to `ts` for one user. */
+export async function tursoMarkRoomRead(myId, roomId, ts = nowMs()) {
+  if (!isTursoConfigured() || !myId || !roomId) return false;
+  await tursoEnsure();
+  try {
+    await tursoClient().execute({
+      sql: `INSERT INTO ps_read_state (owner_user_id, room_id, last_read_at, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
+              last_read_at = MAX(ps_read_state.last_read_at, excluded.last_read_at),
+              updated_at = excluded.updated_at`,
+      args: [myId, roomId, Number(ts) || nowMs(), nowMs()],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[turso] mark read failed', e && e.message);
+    return false;
+  }
+}
+
+/**
+ * Self-healing migration for ps_notifications.post_id / comment_id.
+ *
+ * Deliberately NOT called from tursoEnsure(): that runs on the first Turso
+ * touch of every cold isolate, i.e. the hot path of every endpoint, and the
+ * extra PRAGMA + ALTER round trips there pushed requests over Cloudflare's
+ * per-request CPU limit (HTTP 503, "error code: 1102") on routes that had
+ * nothing to do with notifications.
+ *
+ * Instead this is invoked only from the error path of a write that failed
+ * because the columns are missing - once per isolate, effectively once per
+ * database.
+ */
+export async function tursoHealNotificationColumns() {
+  if (!isTursoConfigured()) return false;
+  if (state._notifColsHealed) return true;
+  try {
+    const c = tursoClient();
+    const info = await c.execute('PRAGMA table_info(ps_notifications)');
+    const cols = new Set((info.rows || []).map(r => String(r.name)));
+    if (!cols.has('post_id')) await c.execute('ALTER TABLE ps_notifications ADD COLUMN post_id TEXT');
+    if (!cols.has('comment_id')) await c.execute('ALTER TABLE ps_notifications ADD COLUMN comment_id TEXT');
+    state._notifColsHealed = true;
+    console.log('[turso] healed ps_notifications columns');
+    return true;
+  } catch (e) {
+    console.warn('[turso] notification column heal failed:', e && e.message);
+    return false;
+  }
 }

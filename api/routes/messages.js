@@ -12,7 +12,7 @@ import { _broadcastEvent, _pushEvent, pushNotification } from '../lib/events.js'
 import { isSafeMediaUrl, nowMs, sanitizeText, sanitizeUser, uid } from '../lib/helpers.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dmRoomFor, normalizeRoomId } from '../lib/rooms.js';
-import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoRefreshDmIndexForOwners, tursoUpsertMessages } from '../lib/store-turso.js';
+import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoHealNotificationColumns, tursoMarkRoomRead, tursoRefreshDmIndexForOwners, tursoUpsertMessages } from '../lib/store-turso.js';
 
 // ---------- Messages ----------
 app.get('/api/messages', requireAuth, async (c) => {
@@ -56,7 +56,11 @@ app.post('/api/messages/send', requireAuth, async (c) => {
       roomId: raw, text, imageUrl, replyTo, targetUserId,
       encrypted, cipher, iv,                  // E2E payload (Part 3)
       disappearAfterMs,                       // disappearing messages (Part 3)
+      clientNonce,                            // optimistic-UI correlation id
     } = body;
+    // Echoed back (and broadcast over SSE) so the sender's optimistic bubble
+    // can be matched to its real row instead of being drawn twice.
+    const nonce = typeof clientNonce === 'string' ? clientNonce.slice(0, 64) : null;
     const myId = c.get('userId');
     let roomId = raw;
     if (!roomId && targetUserId) roomId = dmRoomFor(myId, targetUserId);
@@ -118,6 +122,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
       id: uid('msg'), roomId, userId: myId,
       text: ct, imageUrl: ci, replyTo: replyRef, authorSnapshot: snap, createdAt: nowMs(),
     };
+    if (nonce) msg.clientNonce = nonce;
     if (isEncrypted) { msg.encrypted = true; msg.cipher = cipher; msg.iv = iv; }
     if (disappearAt) { msg.disappearAt = disappearAt; msg.disappearAfterMs = disappearAfterMs; }
     db.messages.push(msg);
@@ -144,15 +149,34 @@ app.post('/api/messages/send', requireAuth, async (c) => {
       });
       for (const n of tursoNotifs) {
         stmts.push({
-          sql: 'INSERT INTO ps_notifications (id, user_id, kind, from_user_id, post_id, comment_id, created_at, seen_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET seen_at=excluded.seen_at, data_json=excluded.data_json',
-          args: [n.id, n.userId, n.kind, n.fromUserId, n.postId||null, n.commentId||null, Number(n.createdAt||0), n.seenAt?Number(n.seenAt):null, JSON.stringify(n)]
+          // updated_at is NOT NULL; omitting it aborted the whole batch, which
+          // also rolled back the ps_dm_index upsert below (empty inbox preview).
+          sql: 'INSERT INTO ps_notifications (id, user_id, kind, from_user_id, post_id, comment_id, created_at, seen_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET seen_at=excluded.seen_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
+          args: [n.id, n.userId, n.kind, n.fromUserId, n.postId||null, n.commentId||null, Number(n.createdAt||0), n.seenAt?Number(n.seenAt):null, nowMs(), JSON.stringify(n)]
         });
       }
       if (roomId.startsWith('dm:')) {
         const ownerIds = roomId.slice(3).split(':').filter(Boolean);
-        const dmPreview = { roomId, text: (msg.text || '').slice(0, 120) || (msg.image ? '📷' : msg.audio ? '🎤' : ''), fromMe: true, createdAt: Number(msg.createdAt||0) };
+        // Preview text mirrors fetchTursoDmIndex()/tursoRefreshDmIndexForOwners().
+        let previewText;
+        if (isEncrypted) previewText = '🔒 Encrypted message';
+        else if (msg.storyReply) previewText = 'Replied to a story';
+        else if (msg.imageUrl) previewText = '📷 Photo';
+        else previewText = String(msg.text || '').slice(0, 60);
         for (const oid of ownerIds) {
           const peerId = oid === myId ? (ownerIds.find(x => x !== myId) || myId) : myId;
+          // One row per side of the conversation. data_json MUST carry
+          // peerUserId - fetchTursoDmIndex() drops any row without it, which
+          // is why the inbox showed no preview and had nothing to sort by.
+          // fromMe is per-owner: true for the sender, false for the recipient.
+          const dmPreview = {
+            ownerUserId: oid,
+            peerUserId: peerId,
+            roomId,
+            text: previewText,
+            fromMe: oid === myId,
+            createdAt: Number(msg.createdAt || 0),
+          };
           stmts.push({
             sql: `INSERT INTO ps_dm_index (owner_user_id, peer_user_id, room_id, created_at, from_me, updated_at, data_json)
                   VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -162,14 +186,36 @@ app.post('/api/messages/send', requireAuth, async (c) => {
                     from_me = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.from_me ELSE ps_dm_index.from_me END,
                     updated_at = excluded.updated_at,
                     data_json = CASE WHEN excluded.created_at > ps_dm_index.created_at THEN excluded.data_json ELSE ps_dm_index.data_json END`,
-            args: [oid, peerId, roomId, Number(msg.createdAt||0), 1, nowMs(), JSON.stringify(dmPreview)]
+            args: [oid, peerId, roomId, Number(msg.createdAt||0), oid === myId ? 1 : 0, nowMs(), JSON.stringify(dmPreview)]
           });
         }
       }
+      // Sending into a room implies you have read it: clear the sender's own
+      // unread for this room in the same batch, so the count is right even if
+      // the client never calls /api/messages/read.
+      stmts.push({
+        sql: `INSERT INTO ps_read_state (owner_user_id, room_id, last_read_at, updated_at) VALUES (?, ?, ?, ?)
+              ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
+                last_read_at = MAX(ps_read_state.last_read_at, excluded.last_read_at),
+                updated_at = excluded.updated_at`,
+        args: [myId, roomId, Number(msg.createdAt || 0) || nowMs(), nowMs()],
+      });
       const [persisted] = await Promise.all([
         saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true }),
-        tursoClient().batch(stmts, 'write').catch(e => {
-          console.warn('[send] batched write failed:', e && e.message);
+        tursoClient().batch(stmts, 'write').catch(async (e) => {
+          const emsg = (e && e.message) || '';
+          console.warn('[send] batched write failed:', emsg);
+          // A database created before post_id/comment_id existed rejects the
+          // notification insert and takes the whole batch (including the
+          // ps_dm_index upsert that drives the inbox preview) down with it.
+          // Patch the columns once, then retry the batch before falling back.
+          if (/no column named (post_id|comment_id)/i.test(emsg)) {
+            const healed = await tursoHealNotificationColumns();
+            if (healed) {
+              try { return await tursoClient().batch(stmts, 'write'); }
+              catch (e2) { console.warn('[send] retry after heal failed:', e2 && e2.message); }
+            }
+          }
           return tursoUpsertMessages([msg]).catch(() => {});
         })
       ]);
@@ -272,4 +318,25 @@ app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
   await saveDatabase(db, false);
   return c.json({ ok: true });
   } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+});
+
+// ---------- Mark a room read ----------
+// Called by the client when a conversation is opened (and when a message
+// arrives while that conversation is already on screen). Stamps
+// ps_read_state so the room's unread count in /api/users drops to zero.
+app.post('/api/messages/read', requireAuth, async (c) => {
+  try {
+    const myId = c.get('userId');
+    const body = await c.req.json().catch(() => ({}));
+    const roomId = String(body.roomId || '').trim();
+    if (!roomId) return c.json({ error: 'roomId required' }, 400);
+    // Only rooms the caller is actually in: the shared group, or a dm room
+    // whose id contains their user id.
+    const allowed = roomId === 'general-group'
+      || (roomId.startsWith('dm:') && roomId.slice(3).split(':').includes(myId));
+    if (!allowed) return c.json({ error: 'Forbidden' }, 403);
+    const ts = Number(body.at) > 0 ? Number(body.at) : nowMs();
+    if (isTursoConfigured()) await tursoMarkRoomRead(myId, roomId, ts);
+    return c.json({ ok: true, roomId, at: ts });
+  } catch (e) { return c.json({ error: e.message || 'Internal error' }, 500); }
 });

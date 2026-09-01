@@ -53,4 +53,10 @@ export const state = {
   // low per-request overhead of "create once, reuse within this request".
   _tursoReady: false,
   _tursoBootstrapped: false,
+  // Cached ps_meta 'unread_epoch': messages older than this are treated as
+  // already read, so shipping unread counts doesn't light up historic chats.
+  _unreadEpoch: 0,
+  // Set once ps_notifications has been confirmed/patched to have post_id +
+  // comment_id, so the repair is attempted at most once per isolate.
+  _notifColsHealed: false,
 };

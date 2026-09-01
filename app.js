@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v138';
+const APP_VERSION = 'priv-spaca-v139';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -1388,6 +1388,7 @@ async function loadMembers(force = false) {
     try {
       const data = await api('/users');
       State.members = data.users || [];
+      _unreadByRoom = data.unreadByRoom || {};
       _lastMembersLoadedAt = Date.now();
       renderMembers();
       renderStoriesRail();
@@ -1413,6 +1414,85 @@ function _isRequestUser(u) {
 }
 
 let _lastMembersSig = '';
+
+// ===== Inbox ordering + unread =====
+// A conversation's sort key is the timestamp of its most recent message in
+// either direction. Users with no history sort last, alphabetically, so the
+// list stays stable instead of shuffling on every poll.
+function _convoTs(u) {
+  return (u && u.lastMessage && u.lastMessage.createdAt) || 0;
+}
+function _sortByRecent(users) {
+  return users.slice().sort((a, b) => {
+    const d = _convoTs(b) - _convoTs(a);
+    if (d) return d;
+    const an = (a.displayName || a.username || '').toLowerCase();
+    const bn = (b.displayName || b.username || '').toLowerCase();
+    return an.localeCompare(bn);
+  });
+}
+function _unreadOf(u) {
+  const n = u && u.unreadCount;
+  return typeof n === 'number' && n > 0 ? n : 0;
+}
+function dmRoomIdFor(peerId) {
+  const meId = State.user && State.user.id;
+  return 'dm:' + [meId, peerId].sort().join(':');
+}
+
+// Move a conversation to the top of the inbox the instant a message is sent or
+// received, without waiting for the next /users poll to confirm the new order.
+// `incrementUnread` is for messages that arrive while the thread is NOT open.
+const _countedUnreadIds = new Set();
+function bumpConversationToTop(roomId, msg, incrementUnread) {
+  if (!roomId || !Array.isArray(State.members)) return;
+  // SSE and the polling backstop can both deliver the same message. Count each
+  // message id at most once, or the badge inflates (5 messages showing as 8).
+  if (incrementUnread && msg && msg.id) {
+    if (_countedUnreadIds.has(msg.id)) incrementUnread = false;
+    else {
+      _countedUnreadIds.add(msg.id);
+      if (_countedUnreadIds.size > 500) {
+        // keep the set bounded
+        const keep = Array.from(_countedUnreadIds).slice(-250);
+        _countedUnreadIds.clear();
+        keep.forEach(id => _countedUnreadIds.add(id));
+      }
+    }
+  }
+  const meId = State.user && State.user.id;
+  let peerId = null;
+  if (roomId.startsWith('dm:')) {
+    peerId = roomId.slice(3).split(':').find(id => id !== meId) || null;
+  }
+  if (!peerId) return; // group room: not part of the member list
+  const u = State.members.find(x => x && x.id === peerId);
+  if (!u) return;
+  const fromMe = !!(msg && msg.userId === meId);
+  let preview;
+  if (msg && msg.encrypted) preview = '🔒 Encrypted message';
+  else if (msg && msg.storyReply) preview = 'Replied to a story';
+  else if (msg && msg.imageUrl) preview = '📷 Photo';
+  else preview = String((msg && msg.text) || '').slice(0, 60);
+  u.lastMessage = { text: preview, createdAt: (msg && msg.createdAt) || Date.now(), fromMe };
+  if (incrementUnread && !fromMe) u.unreadCount = _unreadOf(u) + 1;
+  _lastMembersSig = ''; // force a re-sort on the next pass
+  renderMembers();
+}
+
+// Zero a conversation's badge locally and tell the server we've read it, so
+// the count does not come back on the next poll.
+function markRoomRead(roomId, peerId) {
+  if (!roomId) return;
+  if (peerId && Array.isArray(State.members)) {
+    const u = State.members.find(x => x && x.id === peerId);
+    if (u && _unreadOf(u) > 0) { u.unreadCount = 0; _lastMembersSig = ''; }
+  }
+  if (_unreadByRoom && _unreadByRoom[roomId]) _unreadByRoom[roomId] = 0;
+  api('/messages/read', { method: 'POST', body: { roomId, at: Date.now() } }).catch(() => {});
+}
+let _unreadByRoom = {};
+
 function renderMembers() {
   const list = $id('#membersList');
   if (!list) return;
@@ -1427,8 +1507,9 @@ function renderMembers() {
   if ($id('#memberCount')) $id('#memberCount').textContent = String(State.members.length);
 
   // Split into Primary (connected) vs Requests (not connected yet).
-  const primary = others.filter(u => !_isRequestUser(u));
-  const requests = others.filter(u => _isRequestUser(u));
+  // Newest conversation first (bug: the inbox used raw server order).
+  const primary = _sortByRecent(others.filter(u => !_isRequestUser(u)));
+  const requests = _sortByRecent(others.filter(u => _isRequestUser(u)));
 
   // Update segment badges.
   const gBadge = $id('#segGroupsBadge');
@@ -1445,7 +1526,10 @@ function renderMembers() {
   const typingIds = (State.typingUsers || []).map(t => t.id).sort().join(',');
   const activeDM = (State.currentRoom.kind === 'dm' && State.currentRoom.target) ? State.currentRoom.target.id : '';
   const sig = _inboxSeg + '|' + _inboxShowRequests + '||' +
-    others.map(u => u.id + ':' + (u.online?1:0) + ':' + (u.photoUrl?1:0) + ':' + (u.iFollow?1:0) + ':' + (u.followsMe?1:0)).join(',') +
+    // Order matters now, so hash the sorted lists (not `others`) and include
+    // the unread count + last-message stamp, otherwise a reorder or a new
+    // badge would be skipped by the signature guard.
+    primary.concat(requests).map(u => u.id + ':' + (u.online?1:0) + ':' + (u.photoUrl?1:0) + ':' + (u.iFollow?1:0) + ':' + (u.followsMe?1:0) + ':' + _unreadOf(u) + ':' + _convoTs(u) + ':' + ((u.lastMessage && u.lastMessage.text) || '')).join(',') +
     '||' + typingIds + '||' + activeDM;
   if (sig === _lastMembersSig && list.children.length > 0) return;
   _lastMembersSig = sig;
@@ -1469,14 +1553,26 @@ function renderMembers() {
     meta.innerHTML = '<span class="nm">' + displayNameWithOwnerBadge(u, u.displayName || u.username, 'inline') + '</span>' +
       '<span class="' + subCls + '">' + subTxt + '</span>';
     li.appendChild(avatar); li.appendChild(meta);
-    // Right column: last-message time.
-    if (u.lastMessage && u.lastMessage.createdAt) {
+    // Right column: last-message time + unread badge.
+    const unread = _unreadOf(u);
+    if ((u.lastMessage && u.lastMessage.createdAt) || unread > 0) {
       const right = document.createElement('div');
       right.className = 'row-right';
-      const t = document.createElement('span');
-      t.className = 'row-time';
-      t.textContent = (typeof timeAgo === 'function') ? timeAgo(u.lastMessage.createdAt) : '';
-      right.appendChild(t);
+      if (u.lastMessage && u.lastMessage.createdAt) {
+        const t = document.createElement('span');
+        t.className = 'row-time';
+        t.textContent = (typeof timeAgo === 'function') ? timeAgo(u.lastMessage.createdAt) : '';
+        right.appendChild(t);
+      }
+      if (unread > 0) {
+        const b = document.createElement('span');
+        b.className = 'row-unread';
+        // Exact count, including 1. Anything past 99 collapses to 99+.
+        b.textContent = unread > 99 ? '99+' : String(unread);
+        b.setAttribute('aria-label', unread === 1 ? '1 unread message' : unread + ' unread messages');
+        right.appendChild(b);
+        li.classList.add('has-unread');
+      }
       li.appendChild(right);
     }
     li.addEventListener('click', () => openDM(u));
@@ -2016,6 +2112,10 @@ function openDM(user) {
   }
   // Reset message-id memo so all messages in the new room animate-in once
   _previousMessageIds = new Set();
+  _lastMessageRenderSig = '';
+  // Opening a conversation clears its unread badge (locally now, on the
+  // server so the next /users poll agrees).
+  markRoomRead(State.currentRoom.id, user.id);
   renderMembers();
   refreshSecretChatUI();
   loadMessages(true);
@@ -2115,6 +2215,8 @@ function bindRooms() {
       updateChatThreadChrome();
       if ($id('#rtcCallActions')) $id('#rtcCallActions').style.display = 'none';
       _previousMessageIds = new Set();
+      _lastMessageRenderSig = '';
+      markRoomRead(id, null); // opening the group clears its unread too
       renderMembers();
       refreshSecretChatUI();
       loadMessages(true);
@@ -2461,6 +2563,19 @@ function dedupeMessagesById(messages) {
   return out;
 }
 
+// Does this server message correspond to a locally painted optimistic bubble?
+// The placeholder carries _clientNonce and the server echoes it back; the
+// content fallback covers older payloads and the SSE echo of our own message.
+function _isPendingTwin(m, msg) {
+  if (!m || !m._pending) return false;
+  if (msg.clientNonce && m._clientNonce) return msg.clientNonce === m._clientNonce;
+  if (m.userId !== msg.userId) return false;
+  if ((m.roomId || '') !== (msg.roomId || '')) return false;
+  if ((m.text || '') !== (msg.text || '')) return false;
+  if ((m.imageUrl || '') !== (msg.imageUrl || '')) return false;
+  return Math.abs((msg.createdAt || 0) - (m.createdAt || 0)) < 60000;
+}
+
 function upsertMessageInState(msg) {
   if (!msg || !msg.id) return false;
   const idx = State.messages.findIndex(m => m && m.id === msg.id);
@@ -2468,6 +2583,39 @@ function upsertMessageInState(msg) {
     // Realtime can arrive before /messages/send finishes. Merge instead of
     // pushing so slow voice-note sends never appear as two bubbles temporarily.
     State.messages[idx] = { ...State.messages[idx], ...msg };
+    // The real row can also arrive via the poll while our optimistic twin is
+    // still in the list (poll lands before the send response is handled). Drop
+    // the leftover placeholder, otherwise it stays pending forever.
+    const twin = State.messages.findIndex((m, i) => i !== idx && _isPendingTwin(m, msg));
+    if (twin >= 0) {
+      const t = State.messages[twin];
+      if (t._decrypted && _e2eDecryptCache) _e2eDecryptCache.set(msg.id, t._decrypted);
+      if (t._decrypted && !State.messages[idx]._decrypted) State.messages[idx]._decrypted = t._decrypted;
+      State.messages.splice(twin, 1);
+      _previousMessageIds.delete(t.id);
+    }
+    return false;
+  }
+  // Optimistic reconciliation: upgrade the placeholder in place (keeping its
+  // DOM node) instead of appending a duplicate.
+  const tempIdx = State.messages.findIndex(m => _isPendingTwin(m, msg));
+  if (tempIdx >= 0) {
+    const temp = State.messages[tempIdx];
+    // Carry over a locally decrypted body so an E2E bubble does not flash back
+    // to ciphertext at the moment the server copy lands.
+    const keptPlain = temp._decrypted;
+    State.messages[tempIdx] = { ...temp, ...msg, _pending: false, _failed: false, _clientNonce: undefined };
+    if (keptPlain && !State.messages[tempIdx]._decrypted) State.messages[tempIdx]._decrypted = keptPlain;
+    if (temp.id !== msg.id) {
+      // Keep the already-rendered DOM node by re-keying it to the real id, so
+      // the reconciler patches it rather than dropping and re-inserting.
+      const list = $id('#messagesList');
+      const node = list && list.querySelector('[data-key="m:' + (window.CSS && CSS.escape ? CSS.escape(temp.id) : temp.id) + '"]');
+      if (node) { node.dataset.key = 'm:' + msg.id; node.dataset.id = msg.id; }
+      _previousMessageIds.delete(temp.id);
+      _previousMessageIds.add(msg.id);
+      if (temp._decrypted && _e2eDecryptCache) _e2eDecryptCache.set(msg.id, temp._decrypted);
+    }
     return false;
   }
   State.messages.push(msg);
@@ -2478,10 +2626,31 @@ async function loadMessages(scrollEnd) {
   try {
     const data = await api('/messages?roomId=' + encodeURIComponent(State.currentRoom.id));
     const newMsgs = dedupeMessagesById(data.messages || []);
-    const sig = newMsgs.map(m => m.id).join('|');
+    // Merge, never clobber.
+    //
+    // A GET issued before a send completed can resolve after it, returning a
+    // snapshot that predates the new message. Assigning that straight to
+    // State.messages deleted the just-confirmed bubble and the next poll put
+    // it back - a visible disappear/reappear, and the main remaining source of
+    // flicker. So keep local messages the snapshot doesn't know about yet:
+    //   - optimistic bubbles still awaiting their server copy, and
+    //   - very recent confirmed messages (the racing-snapshot case).
+    // The recency window also lets genuine remote deletions propagate: once a
+    // message ages past it, the server list is authoritative again.
+    const nowTs = Date.now();
+    const RECENT_MS = 30000;
+    const keep = State.messages.filter(m => {
+      if (!m || !m.id) return false;
+      if (newMsgs.some(n => n.id === m.id)) return false;          // server has it
+      if (m._pending) return !newMsgs.some(n => _isPendingTwin(m, n)) && (nowTs - (m.createdAt || 0) < 20000);
+      return (nowTs - (m.createdAt || 0)) < RECENT_MS;             // just-confirmed, snapshot is stale
+    });
+    const merged = keep.length ? newMsgs.concat(keep) : newMsgs;
+    if (keep.length) merged.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const sig = merged.map(m => m.id).join('|');
     if (sig === lastMessagesSignature && !scrollEnd) return; // skip rerender if unchanged
     lastMessagesSignature = sig;
-    State.messages = newMsgs;
+    State.messages = merged;
     renderMessages(scrollEnd);
   } catch (e) {
     if (e.status !== 401) console.warn('loadMessages', e.message);
@@ -2490,64 +2659,210 @@ async function loadMessages(scrollEnd) {
 
 let _previousMessageIds = new Set();
 let _lastMessageRenderSig = '';
-function _messagesRenderSig(msgs) {
-  return msgs.map(m => m.id + ':' + (m.text||'').length + ':' + (m.imageUrl?'1':'0')).join('|');
+
+// Fingerprint of everything renderMessage() actually reads off a message.
+// If two renders produce the same string for the same id, the DOM node that is
+// already on screen is still correct and gets reused untouched. Keep this in
+// sync with renderMessage(): a field used there but missing here means a
+// stale bubble that never updates.
+function _msgSig(m, grouped, meId) {
+  const a = m.author || m.authorSnapshot || null;
+  return [
+    // m.id is deliberately absent: identity already lives in the row key
+    // (m:<id>). Including it meant that upgrading an optimistic bubble from its
+    // temp id to the real id changed the signature and forced a needless
+    // rebuild of a bubble whose content had not changed at all.
+    m.userId,
+    grouped ? 'g' : '',
+    m.userId === meId ? 'me' : '',
+    m.text || '',
+    m._decrypted || '',
+    m.encrypted ? 'e' : '',
+    m.imageUrl || '',
+    m.kind || '',
+    m.replyTo ? JSON.stringify(m.replyTo) : '',
+    m.storyReply ? '1' : '',
+    m.scheduledOriginally ? '1' : '',
+    m.disappearAt || '',
+    // Minute precision, because that is exactly what the bubble displays
+    // ("05:53 PM"). The optimistic copy is stamped with the client clock and
+    // the server's copy with the server clock; comparing raw milliseconds made
+    // every confirmation look like a content change and rebuilt the bubble.
+    Math.floor((m.createdAt || 0) / 60000),
+    m.target ? '1' : '',
+    // _pending is deliberately NOT in the signature: confirming a message only
+    // toggles a CSS class, so it is patched in place instead of rebuilding.
+    m._failed ? 'f' : '',
+    a ? ((a.displayName || '') + '|' + (a.username || '') + '|' + (a.avatarUrl || '')) : '',
+  ].join('\u0001');
 }
+
+function _messagesRenderSig(msgs) {
+  const meId = State.user && State.user.id;
+  let lastDay = null, lastSender = null;
+  const parts = [];
+  for (const m of msgs) {
+    const dk = dayKey(m.createdAt);
+    if (dk !== lastDay) { parts.push('D' + dk); lastDay = dk; lastSender = null; }
+    parts.push(_msgSig(m, lastSender === m.userId, meId));
+    lastSender = m.userId;
+  }
+  return parts.join('\u0002');
+}
+
+// Keyed, incremental render.
+//
+// The old implementation did `list.innerHTML = ''` and rebuilt every bubble on
+// every change, so one incoming message re-mounted the entire thread: images
+// blinked, CSS animations restarted, and scroll position had to be rescued
+// afterwards. That was the flicker.
+//
+// Now every row carries data-key (stable per message / per day divider) and
+// data-sig (content fingerprint). We diff the desired sequence against what is
+// already in the DOM: unchanged rows are left completely alone, changed rows
+// are swapped in place, new rows are inserted at the right offset, vanished
+// rows are removed. In the common case - one new message appended - the DOM
+// performs a single insertBefore and nothing else moves.
 function renderMessages(forceScroll) {
   const list = $id('#messagesList');
   const scroller = $id('#messagesScroll');
+  if (!list || !scroller) return;
   const wasAtBottom = lastMessagesScrollAtBottom;
   const currentIds = new Set(State.messages.map(m => m.id));
   const newOnes = new Set();
   currentIds.forEach(id => { if (!_previousMessageIds.has(id)) newOnes.add(id); });
-  // === Skip rebuild if nothing actually changed (anti-flicker) ===
+
+  // === Skip entirely if nothing changed (anti-flicker fast path) ===
   const sig = _messagesRenderSig(State.messages);
   if (sig === _lastMessageRenderSig && newOnes.size === 0 && !forceScroll && list.children.length > 0) {
     return;
   }
   _lastMessageRenderSig = sig;
   _previousMessageIds = currentIds;
-  list.innerHTML = '';
+
+  const meId = State.user && State.user.id;
+
+  // 1. Describe the rows we want, in order. Nothing touches the DOM yet.
+  const desired = [];
   if (State.messages.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty-state';
-    empty.innerHTML = `
+    desired.push({
+      key: '__empty__',
+      sig: '__empty__',
+      build: () => {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.innerHTML = `
       <div class="icon"><i data-lucide="message-circle"></i></div>
       <div class="title">No messages yet</div>
       <div class="sub">Be the first to say hi 👋</div>
     `;
-    list.appendChild(empty);
+        return empty;
+      },
+    });
   }
-  const meId = State.user && State.user.id;
   let lastDay = null;
   let lastSender = null;
-  State.messages.forEach((m, idx) => {
+  for (const m of State.messages) {
     const dk = dayKey(m.createdAt);
     if (dk !== lastDay) {
-      const div = document.createElement('div');
-      div.className = 'day-divider';
-      div.textContent = dayLabel(m.createdAt);
-      list.appendChild(div);
+      const label = dayLabel(m.createdAt);
+      desired.push({
+        key: 'd:' + dk,
+        sig: 'd:' + label,
+        build: () => {
+          const div = document.createElement('div');
+          div.className = 'day-divider';
+          div.textContent = label;
+          return div;
+        },
+      });
       lastDay = dk;
       lastSender = null;
     }
     const grouped = (lastSender === m.userId);
-    const node = renderMessage(m, meId, grouped);
-    list.appendChild(node);
-    // Only animate truly new messages (not the entire list on every poll)
-    if (newOnes.has(m.id)) {
-      const fromX = (m.userId === meId) ? 16 : -12;
-      motionAnimate(node,
-        { opacity: [0, 1], transform: [`translate(${fromX}px, 6px) scale(.96)`, 'translate(0,0) scale(1)'] },
-        { duration: 0.32, easing: [0.2, 0.85, 0.2, 1] }
-      );
-    }
+    const msg = m;
+    desired.push({
+      key: 'm:' + m.id,
+      sig: _msgSig(m, grouped, meId),
+      msg,
+      isNewMessage: newOnes.has(m.id),
+      build: () => renderMessage(msg, meId, grouped),
+    });
     lastSender = m.userId;
-  });
-  refreshIcons();
+  }
+
+  // 2. Diff against the live DOM.
+  const existing = new Map();
+  for (const child of Array.from(list.children)) {
+    const k = child.dataset && child.dataset.key;
+    if (k && !existing.has(k)) existing.set(k, child);
+    else child.remove(); // stray or duplicate node from an older build
+  }
+
+  const seen = new Set();
+  const freshlyBuilt = [];
+  let cursor = null; // last node we placed
+  let mutated = false;
+
+  for (const item of desired) {
+    seen.add(item.key);
+    let node = existing.get(item.key);
+    if (node && node.dataset.sig !== item.sig) {
+      // Same row, different content -> rebuild just this one.
+      const fresh = item.build();
+      fresh.dataset.key = item.key;
+      fresh.dataset.sig = item.sig;
+      list.replaceChild(fresh, node);
+      existing.set(item.key, fresh);
+      node = fresh;
+      mutated = true;
+      freshlyBuilt.push(item);
+    } else if (!node) {
+      node = item.build();
+      node.dataset.key = item.key;
+      node.dataset.sig = item.sig;
+      existing.set(item.key, node);
+      mutated = true;
+      freshlyBuilt.push(item);
+    }
+    // Cheap in-place patches that must never trigger a rebuild.
+    if (item.msg) {
+      const wantPending = !!item.msg._pending;
+      if (node.classList.contains('pending') !== wantPending) node.classList.toggle('pending', wantPending);
+      if (node.dataset.id !== item.msg.id) node.dataset.id = item.msg.id;
+    }
+    // Move it only if it is not already in the right place.
+    const expected = cursor ? cursor.nextSibling : list.firstChild;
+    if (expected !== node) {
+      list.insertBefore(node, expected);
+      mutated = true;
+    }
+    cursor = node;
+  }
+
+  // 3. Anything left over is gone from State -> remove it.
+  for (const [k, node] of existing) {
+    if (!seen.has(k)) { node.remove(); mutated = true; }
+  }
+
+  // 4. Animate only genuinely new message rows that we just created.
+  for (const item of freshlyBuilt) {
+    if (!item.isNewMessage || !item.msg) continue;
+    const node = existing.get(item.key);
+    if (!node) continue;
+    const fromX = (item.msg.userId === meId) ? 16 : -12;
+    motionAnimate(node,
+      { opacity: [0, 1], transform: [`translate(${fromX}px, 6px) scale(.96)`, 'translate(0,0) scale(1)'] },
+      { duration: 0.32, easing: [0.2, 0.85, 0.2, 1] }
+    );
+  }
+
+  // Only re-scan for lucide icons if markup actually changed.
+  if (mutated) refreshIcons();
   if (forceScroll || wasAtBottom) {
     requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
-    $id('#scrollBottomBtn').classList.add('hidden');
+    const sb = $id('#scrollBottomBtn');
+    if (sb) sb.classList.add('hidden');
   }
 }
 
@@ -2677,6 +2992,8 @@ function createVoiceNoteElement(src, isMine, opts = {}) {
 function renderMessage(m, meId, grouped) {
   const row = document.createElement('div');
   row.className = 'message';
+  // Optimistic bubble awaiting server confirmation (dimmed via CSS).
+  if (m._pending) row.classList.add('pending');
   if (m.scheduledOriginally) row.classList.add('scheduled-tag');
   if (grouped) row.classList.add('grouped');
   const isMine = m.userId === meId;
@@ -2930,6 +3247,33 @@ function bindComposer() {
     const sentReply = State.replyTo;
     clearAttach();
     clearReply();
+
+    // === Optimistic bubble ===
+    // Paint the message immediately instead of waiting for the round trip.
+    // It gets a temp id plus _clientNonce; upsertMessageInState() matches the
+    // server's copy back to this row and upgrades it in place, so the bubble
+    // never disappears and reappears.
+    const nonce = 'tmp_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    payload.clientNonce = nonce;
+    const optimistic = {
+      id: nonce,
+      roomId: room.id,
+      userId: State.user && State.user.id,
+      author: State.user,
+      text: payload.encrypted ? '' : text,
+      imageUrl: payload.imageUrl || null,
+      replyTo: sentReply || null,
+      createdAt: Date.now(),
+      encrypted: !!payload.encrypted,
+      _pending: true,
+      _clientNonce: nonce,
+    };
+    if (payload.encrypted) optimistic._decrypted = text;
+    if (disappearMs > 0) optimistic.disappearAt = Date.now() + disappearMs;
+    State.messages.push(optimistic);
+    lastMessagesSignature = '';
+    renderMessages(true);
+
     try {
       const data = await api('/messages/send', { method: 'POST', body: payload });
       // Preload local cache so our own encrypted bubble shows plaintext immediately
@@ -2937,11 +3281,22 @@ function bindComposer() {
         _e2eDecryptCache.set(data.message.id, text);
         data.message._decrypted = text;
       }
+      if (data.message && !data.message.clientNonce) data.message.clientNonce = nonce;
+      // The sender gets no SSE echo of their own message, so a cached
+      // /messages response can still be missing the row we just created. Bust
+      // it, or the next poll "resurrects" the pending twin.
+      bustApiCache('/messages');
       upsertMessageInState(data.message);
       State.messages = dedupeMessagesById(State.messages);
       lastMessagesSignature = '';
       renderMessages(true);
+      bumpConversationToTop(room.id, data.message || optimistic);
     } catch (err) {
+      // Roll the optimistic bubble back out of the list.
+      State.messages = State.messages.filter(m => m && m._clientNonce !== nonce);
+      _previousMessageIds.delete(nonce);
+      lastMessagesSignature = '';
+      renderMessages(false);
       // Translate generic 500s into something the user understands
       let msg = err.message || 'Send failed';
       if (err && err.status === 500) msg = 'Server error — message not sent. Please try again.';
@@ -3384,15 +3739,23 @@ function handleRealtimeEvent(type, evt) {
   const data = evt.data || {};
   if (type === 'new_message') {
     const msg = data.message; if (!msg) return;
+    const viewingThisRoom = msg.roomId === State.currentRoom.id;
     // Only render if user is currently viewing that room
-    if (msg.roomId === State.currentRoom.id) {
+    if (viewingThisRoom) {
       // Merge by id. This avoids the brief duplicate bubble that can happen
       // when SSE receives the same voice note before the send request resolves.
+      // For our own messages this also folds the echo into the optimistic
+      // bubble we already painted, instead of adding a second one.
       upsertMessageInState(msg);
       State.messages = dedupeMessagesById(State.messages);
       lastMessagesSignature = '';
       renderMessages(false);
+      // Already on screen => it counts as read straight away.
+      if (msg.userId !== (State.user && State.user.id)) markRoomRead(msg.roomId, State.currentRoom.target && State.currentRoom.target.id);
     }
+    // Float this conversation to the top of the inbox right now; only count it
+    // as unread when the thread isn't the one being viewed.
+    bumpConversationToTop(msg.roomId, msg, !viewingThisRoom);
     // Bust message cache so a manual switch will reload fresh
     bustApiCache('/messages');
     // v93.8/v93.9: INSTANT banner update — don't wait for pollNotifications.
