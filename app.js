@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v141';
+const APP_VERSION = 'priv-spaca-v142';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -4520,13 +4520,26 @@ function renderPosts() {
   const isFirstRender = _previousPostIds.size === 0;
 
   // ===== Smart incremental DOM diff (no flicker) =====
-  // 1) Remove cards no longer in State.posts
+  // 1) Remove cards that are no longer in State.posts, and any superseded
+  //    duplicate of a post that IS still here.
+  //
+  //    A rebuild (step 2) creates a NEW node for an existing post and
+  //    inserts it before the old one; the old node is never removed, so the
+  //    post ends up rendered twice — one copy frozen at its pre-interaction
+  //    state. Whichever node the cache currently points at is the live one.
+  const seenIds = new Set();
   Array.from(list.children).forEach(child => {
     const id = child.dataset && child.dataset.id;
-    if (id && !currentIds.has(id)) {
+    if (!id) return;
+    if (!currentIds.has(id)) {
       child.remove();
       _postCardCache.delete(id);
+      return;
     }
+    const cachedNode = _postCardCache.get(id);
+    const isLive = cachedNode ? cachedNode.card === child : !seenIds.has(id);
+    if (!isLive) { child.remove(); return; }
+    seenIds.add(id);
   });
 
   // Handle empty state — liquid glass card
