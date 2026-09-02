@@ -3,6 +3,13 @@
  *
  * GitHub db.json fallback store (used only when Turso is unavailable).
  *
+ * v154: removed two calls to isNeonPrimary()/neonReadDb()/neonWriteDb(). Those
+ * Neon stubs were deleted in an earlier refactor but the call sites survived,
+ * so the moment Turso was unconfigured or unreachable — exactly the situation
+ * this fallback exists for — repoRead()/repoWrite() threw
+ * "ReferenceError: isNeonPrimary is not defined" instead of falling back.
+ * Found by running the auth flow against a Turso-less local server.
+ *
  * Part of the modular Hono API (api/). Entry point: api/cf-worker.js
  */
 
@@ -14,7 +21,6 @@ import { isTursoPrimary, tursoReadDb, tursoWriteDb } from './store-turso.js';
 // ---------- GitHub repo persistence ----------
 export async function repoRead() {
   if (isTursoPrimary()) return await tursoReadDb();
-  if (isNeonPrimary()) return await neonReadDb();
   if (!isRepo()) return null;
   try {
     const url = `https://api.github.com/repos/${cfg.GH_REPO}/contents/${encodeURIComponent(cfg.GH_FILE)}?ref=${encodeURIComponent(cfg.GH_BRANCH)}&_=${Date.now()}`;
@@ -39,7 +45,6 @@ export async function repoRead() {
 
 export async function repoWrite(dbObj) {
   if (isTursoPrimary()) return await tursoWriteDb(dbObj);
-  if (isNeonPrimary()) return await neonWriteDb(dbObj);
   if (!isRepo()) return false;
   try {
     if (!state.ghFileSha) await repoRead();

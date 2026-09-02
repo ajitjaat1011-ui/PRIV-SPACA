@@ -9,9 +9,12 @@
 import { app } from '../lib/app.js';
 import { state } from '../lib/state.js';
 import { fetchDatabase, isPersist, saveDatabase, saveDatabaseVerified } from '../lib/db.js';
+import { wrapUnexpected } from '../lib/errors.js';
 import { _broadcastEvent, _pushEvent, pushNotification } from '../lib/events.js';
 import { fanoutPostToFollowers } from '../lib/feed.js';
 import { canViewerAccessPrivateProfile, canViewerSeeStory, isSafeImageUrl, isSafeMediaUrl, isStoryRecord, nowMs, sanitizeText, sanitizeUser, storyExpiresAt, uid } from '../lib/helpers.js';
+import * as S from '../lib/schemas.js';
+import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dmRoomFor } from '../lib/rooms.js';
 import { normalizeDb } from '../lib/schema.js';
@@ -56,12 +59,12 @@ app.get('/api/posts', requireAuth, async (c) => {
       return base;
     });
   return c.json({ posts: list });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 app.post('/api/posts/create', requireAuth, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await vbody(c, S.PostCreateBody);
     const { text, imageUrl, images, videoUrl, isScratch, music, style, story, storyExpiresAt, audience } = body;
     const ct = sanitizeText(text, 2000);
     const ci = isSafeImageUrl(imageUrl) ? String(imageUrl).trim() : null;
@@ -139,7 +142,7 @@ app.post('/api/posts/create', requireAuth, async (c) => {
 
 app.post('/api/posts/like', requireAuth, async (c) => {
   try {
-  const { postId } = await c.req.json().catch(() => ({}));
+  const { postId } = await vbody(c, S.PostIdBody);
   if (!postId) return c.json({ error: 'postId required' }, 400);
   let db = await fetchDatabase();
   let post = db.posts.find(p => p.id === postId);
@@ -166,11 +169,11 @@ app.post('/api/posts/like', requireAuth, async (c) => {
     if (notif) await tursoUpsertNotifications([notif]);
   }
   return c.json({ liked, likeCount: post.likes.length });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 app.post('/api/posts/comment', requireAuth, async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await vbody(c, S.CommentBody);
   const { postId, text } = body;
   if (!postId) return c.json({ error: 'postId required' }, 400);
   const ct = sanitizeText(text, 600).trim();
@@ -200,7 +203,7 @@ app.post('/api/posts/comment', requireAuth, async (c) => {
 
 app.post('/api/posts/delete', requireAuth, async (c) => {
   try {
-  const { postId } = await c.req.json().catch(() => ({}));
+  const { postId } = await vbody(c, S.PostIdBody);
   if (!postId) return c.json({ error: 'postId required' }, 400);
   let db = await fetchDatabase();
   let p = db.posts.find(x => x.id === postId);
@@ -211,12 +214,12 @@ app.post('/api/posts/delete', requireAuth, async (c) => {
   await saveDatabase(db, false, { skipSecondarySync: true });
   if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true, undoUntil: p.deletedAt + 30 * 24 * 3600 * 1000 });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 app.post('/api/posts/restore', requireAuth, async (c) => {
   try {
-  const { postId } = await c.req.json().catch(() => ({}));
+  const { postId } = await vbody(c, S.PostIdBody);
   if (!postId) return c.json({ error: 'postId required' }, 400);
   let db = await fetchDatabase();
   let p = db.posts.find(x => x.id === postId);
@@ -227,7 +230,7 @@ app.post('/api/posts/restore', requireAuth, async (c) => {
   await saveDatabase(db, false, { skipSecondarySync: true });
   if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 // ---------- Story analytics: "Seen by" ----------
@@ -251,7 +254,7 @@ app.post('/api/stories/:id/view', requireAuth, async (c) => {
   await saveDatabase(db, true); // ephemeral: high-frequency, low-criticality
   if (isTursoConfigured()) await tursoUpsertPosts([p]);
   return c.json({ ok: true, viewCount: p.views.length });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 // Owner-only viewer list for a story item (Instagram "Seen by").
@@ -273,13 +276,13 @@ app.get('/api/stories/:id/viewers', requireAuth, async (c) => {
     return { ...su, at: v.at || 0 };
   });
   return c.json({ viewers, viewCount: viewers.length });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 // ---------- Reply to a story (delivered into DMs) ----------
 app.post('/api/stories/:id/reply', requireAuth, async (c) => {
   const postId = c.req.param('id');
-  const body = await c.req.json().catch(() => ({}));
+  const body = await vbody(c, S.StoryReplyBody);
   const myId = c.get('userId');
   const emoji = typeof body.emoji === 'string' ? body.emoji.slice(0, 8) : '';
   const text = sanitizeText(body.text || '', 500).trim();
@@ -348,5 +351,5 @@ app.get('/api/feed', requireAuth, async (c) => {
       return { ...p, author: authorObj };
     });
   return c.json({ posts, source: isTursoConfigured() ? 'hybrid-turso-feed' : 'full-db-fallback' });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });

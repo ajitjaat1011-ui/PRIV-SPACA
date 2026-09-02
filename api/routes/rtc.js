@@ -10,12 +10,14 @@ import { app } from '../lib/app.js';
 import { fetchDatabase, isPersist, saveDatabaseVerified } from '../lib/db.js';
 import { _pushEvent } from '../lib/events.js';
 import { nowMs, sanitizeText, uid } from '../lib/helpers.js';
+import * as S from '../lib/schemas.js';
+import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dedupeRtcSignals, normalizeRtcSignalRow } from '../lib/rtc.js';
 import { isTursoConfigured, tursoClient } from '../lib/store-turso.js';
 
 app.post('/api/rtc/signal', requireAuth, async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await vbody(c, S.RtcSignalBody);
   const { targetId, signal } = body;
   if (typeof targetId !== 'string' || !/^[a-zA-Z0-9_-]{1,96}$/.test(targetId) || !signal || typeof signal !== 'object') return c.json({ error: 'Missing data' }, 400);
   const signalType = sanitizeText(signal.type || '', 24);

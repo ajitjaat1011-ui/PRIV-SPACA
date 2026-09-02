@@ -10,9 +10,12 @@ import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
 import { state } from '../lib/state.js';
 import { fetchDatabase, saveDatabase } from '../lib/db.js';
+import { wrapUnexpected } from '../lib/errors.js';
 import { _pushEvent, pushNotification } from '../lib/events.js';
 import { activeNote, canRequestFollow, canViewProfileCard, canViewerAccessPrivateProfile, clearFollowRequestPair, hasPendingFollowRequest, isSafeImageUrl, isStoryRecord, isUsername, normalizeFollowRequests, nowMs, sanitizeText, sanitizeUser } from '../lib/helpers.js';
 import { cleanNoteMusic } from '../lib/media.js';
+import * as S from '../lib/schemas.js';
+import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { normalizeRoomId } from '../lib/rooms.js';
 import { normalizeDb } from '../lib/schema.js';
@@ -21,7 +24,7 @@ import { fetchTursoDmIndex, fetchTursoUnreadCounts, isTursoConfigured, tursoClie
 // ---------- User update ----------
 app.post('/api/user/update', requireAuth, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await vbody(c, S.UserUpdateBody);
     const { displayName, username, bio, photoUrl, dateOfBirth, cardVisibility, isPrivate } = body;
     const db = await fetchDatabase();
     const user = db.users.find(u => u.id === c.get('userId'));
@@ -57,7 +60,7 @@ app.post('/api/user/update', requireAuth, async (c) => {
 
 app.post('/api/user/vip/redeem', requireAuth, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await vbody(c, S.VipRedeemBody);
     const key = sanitizeText(String(body.key || ''), 80).trim();
     if (!cfg.VIP_UNLOCK_KEY) return c.json({ error: 'VIP unlock is not configured' }, 503);
     if (!key || key !== cfg.VIP_UNLOCK_KEY) return c.json({ error: 'Invalid VIP key' }, 403);
@@ -82,7 +85,7 @@ app.get('/api/user/close-friends', requireAuth, async (c) => {
 
 app.post('/api/user/close-friends', requireAuth, async (c) => {
   try {
-    const { targetId, action } = await c.req.json().catch(() => ({}));
+    const { targetId, action } = await vbody(c, S.CloseFriendsBody);
     const myId = c.get('userId');
     if (!targetId) return c.json({ error: 'targetId required' }, 400);
     if (targetId === myId) return c.json({ error: 'You cannot add yourself' }, 400);
@@ -178,7 +181,7 @@ app.get('/api/users', requireAuth, async (c) => {
 // once on first login. Private key stays in the browser's IndexedDB.
 app.post('/api/user/public-key', requireAuth, async (c) => {
   try {
-    const { publicKey } = await c.req.json().catch(() => ({}));
+    const { publicKey } = await vbody(c, S.PublicKeyBody);
     if (typeof publicKey !== 'string' || publicKey.length < 32 || publicKey.length > 256) {
       return c.json({ error: 'Invalid key' }, 400);
     }
@@ -221,7 +224,7 @@ app.post('/api/user/heartbeat', requireAuth, async (c) => {
 // ---------- Notes: short 24h status shown on the DM inbox rail ----------
 app.post('/api/user/note', requireAuth, async (c) => {
   try {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await vbody(c, S.NoteBody);
   const db = await fetchDatabase();
   const u = db.users.find(x => x.id === c.get('userId'));
   if (!u) return c.json({ error: 'Not found' }, 404);
@@ -232,11 +235,11 @@ app.post('/api/user/note', requireAuth, async (c) => {
   else { u.note = { text, music, createdAt: nowMs(), expiresAt: nowMs() + 24 * 3600 * 1000 }; }
   await saveDatabase(db, false);
   return c.json({ ok: true, note: activeNote(u) });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 app.post('/api/user/typing', requireAuth, async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await vbody(c, S.TypingBody);
   if (!body.roomId) return c.json({ error: 'roomId required' }, 400);
   const roomId = normalizeRoomId(body.roomId, c.get('userId'));
   const db = await fetchDatabase();
@@ -264,7 +267,7 @@ app.get('/api/user/typing', requireAuth, async (c) => {
 // ---------- Follow / Block ----------
 app.post('/api/user/follow', requireAuth, async (c) => {
   try {
-  const { targetId } = await c.req.json().catch(() => ({}));
+  const { targetId } = await vbody(c, S.TargetIdBody);
   const myId = c.get('userId');
   if (!targetId || targetId === myId) return c.json({ error: 'Invalid target' }, 400);
   const db = await fetchDatabase();
@@ -315,11 +318,11 @@ app.post('/api/user/follow', requireAuth, async (c) => {
     } catch (_) { /* best-effort; don't fail the follow */ }
   }
   return c.json({ ok: true, requested: false, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 app.post('/api/user/unfollow', requireAuth, async (c) => {
-  const { targetId } = await c.req.json().catch(() => ({}));
+  const { targetId } = await vbody(c, S.TargetIdBody);
   if (!targetId) return c.json({ error: 'targetId required' }, 400);
   const db = await fetchDatabase();
   const me = db.users.find(u => u.id === c.get('userId'));
@@ -352,7 +355,7 @@ app.get('/api/user/follow-requests', requireAuth, async (c) => {
 });
 
 app.post('/api/user/follow-requests/respond', requireAuth, async (c) => {
-  const { requesterId, action } = await c.req.json().catch(() => ({}));
+  const { requesterId, action } = await vbody(c, S.FollowRespondBody);
   if (!requesterId || !['accept', 'reject'].includes(String(action || ''))) {
     return c.json({ error: 'requesterId and valid action required' }, 400);
   }
@@ -396,7 +399,7 @@ app.post('/api/user/follow-requests/respond', requireAuth, async (c) => {
 
 app.post('/api/user/block', requireAuth, async (c) => {
   try {
-  const { targetId } = await c.req.json().catch(() => ({}));
+  const { targetId } = await vbody(c, S.TargetIdBody);
   const myId = c.get('userId');
   if (!targetId || targetId === myId) return c.json({ error: 'Invalid target' }, 400);
   const db = await fetchDatabase();
@@ -420,11 +423,11 @@ app.post('/api/user/block', requireAuth, async (c) => {
     await tursoUpsertUser(target);
   }
   return c.json({ ok: true });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 app.post('/api/user/unblock', requireAuth, async (c) => {
-  const { targetId } = await c.req.json().catch(() => ({}));
+  const { targetId } = await vbody(c, S.TargetIdBody);
   if (!targetId) return c.json({ error: 'targetId required' }, 400);
   const db = await fetchDatabase();
   const me = db.users.find(u => u.id === c.get('userId'));

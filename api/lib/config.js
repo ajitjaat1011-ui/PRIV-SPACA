@@ -118,11 +118,14 @@ export function loadConfig(env) {
 
 export const JWT_EXPIRES_DAYS = 7;
 
-// Bug #7 fix: Consistent bcrypt rounds between index.js and cf-worker.js.
-// rounds=8 provides good security while remaining acceptable for the Workers
-// runtime (bcryptjs is pure-JS; ~100ms per login). The stored hash carries its
-// own cost factor so existing hashes with different costs continue to work.
-// We do a transparent upgrade to rounds=8 the first time a user signs in.
+// DEPRECATED (v154) — password hashing moved to lib/password.js, which uses
+// PBKDF2-HMAC-SHA256 at 600k iterations on native WebCrypto instead of
+// pure-JS bcryptjs. Measured on this runtime: bcryptjs cost 12 costs ~310ms of
+// interpreted CPU per login and risks the Cloudflare CPU limit (error 1102),
+// while PBKDF2 600k costs ~198ms native and is the OWASP recommendation when
+// Argon2id is unavailable. Existing bcrypt hashes still verify and are
+// upgraded transparently on next login, so no user is logged out.
+// Retained only so any straggling import keeps resolving; do not use.
 export const PASSWORD_HASH_ROUNDS = 8;
 
 // Cache TTL on Cloudflare tuned for up to 100 concurrent users (absorbs polling spikes across isolates)

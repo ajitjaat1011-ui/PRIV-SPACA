@@ -10,12 +10,14 @@ import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
 import { isRepo, uid } from '../lib/helpers.js';
 import { MEDIA_MAX_BYTES, MEDIA_MIME_EXT, _mediaKindFromMime, isCloudinaryConfigured, uploadToCloudinary } from '../lib/media.js';
+import * as S from '../lib/schemas.js';
+import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 
 app.post('/api/upload-media', requireAuth, async (c) => {
   try {
     const me = c.get('userId');
-    const body = await c.req.json().catch(() => ({}));
+    const body = await vbody(c, S.UploadMediaBody);
     const dataUrl = body && body.dataUrl;
     if (!dataUrl || typeof dataUrl !== 'string') return c.json({ error: 'dataUrl required' }, 400);
     const m = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
@@ -68,7 +70,7 @@ app.post('/api/upload-media', requireAuth, async (c) => {
 
 app.post('/api/upload-photo', requireAuth, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await vbody(c, S.UploadMediaBody);
     const { dataUrl, kind } = body;
     if (typeof dataUrl !== 'string' || (!dataUrl.startsWith('data:image/') && !dataUrl.startsWith('data:audio/') && !dataUrl.startsWith('data:video/'))) {
       return c.json({ error: 'Send a data URL: data:image/... , data:audio/... or data:video/...' }, 400);

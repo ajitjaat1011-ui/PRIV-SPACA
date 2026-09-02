@@ -8,8 +8,11 @@
 
 import { app } from '../lib/app.js';
 import { fetchDatabase, isPersist, saveDatabase, saveDatabaseVerified } from '../lib/db.js';
+import { wrapUnexpected } from '../lib/errors.js';
 import { _broadcastEvent, _pushEvent, pushNotification } from '../lib/events.js';
 import { isSafeMediaUrl, nowMs, sanitizeText, sanitizeUser, uid } from '../lib/helpers.js';
+import * as S from '../lib/schemas.js';
+import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dmRoomFor, normalizeRoomId } from '../lib/rooms.js';
 import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoHealNotificationColumns, tursoMarkRoomRead, tursoRefreshDmIndexForOwners, tursoUpsertMessages } from '../lib/store-turso.js';
@@ -51,7 +54,7 @@ app.get('/api/messages', requireAuth, async (c) => {
 
 app.post('/api/messages/send', requireAuth, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await vbody(c, S.MessageSendBody);
     const {
       roomId: raw, text, imageUrl, replyTo, targetUserId,
       encrypted, cipher, iv,                  // E2E payload (Part 3)
@@ -230,7 +233,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
 
 app.post('/api/messages/delete', requireAuth, async (c) => {
   try {
-    const { messageId } = await c.req.json().catch(() => ({}));
+    const { messageId } = await vbody(c, S.MessageIdBody);
     if (!messageId) return c.json({ error: 'messageId required' }, 400);
     const db = await fetchDatabase();
     const m = db.messages.find(x => x.id === messageId);
@@ -248,7 +251,7 @@ app.post('/api/messages/delete', requireAuth, async (c) => {
 
 app.post('/api/messages/restore', requireAuth, async (c) => {
   try {
-    const { messageId } = await c.req.json().catch(() => ({}));
+    const { messageId } = await vbody(c, S.MessageIdBody);
     const db = await fetchDatabase();
     const m = db.messages.find(x => x.id === messageId);
     if (!m) return c.json({ error: 'Not found' }, 404);
@@ -266,7 +269,7 @@ app.post('/api/messages/restore', requireAuth, async (c) => {
 // Scheduled
 app.post('/api/messages/schedule', requireAuth, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await vbody(c, S.MessageSendBody);
     const { roomId: raw, targetUserId, text, imageUrl, deliverAt, replyTo } = body;
     const myId = c.get('userId');
     let roomId = raw;
@@ -308,7 +311,7 @@ app.get('/api/messages/scheduled', requireAuth, async (c) => {
 
 app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
   try {
-  const { id } = await c.req.json().catch(() => ({}));
+  const { id } = await vbody(c, S.MessageDeleteBody);
   if (!id) return c.json({ error: 'id required' }, 400);
   const db = await fetchDatabase();
   const idx = db.scheduledMessages.findIndex(s => s.id === id);
@@ -317,7 +320,7 @@ app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
   db.scheduledMessages.splice(idx, 1);
   await saveDatabase(db, false);
   return c.json({ ok: true });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 // ---------- Mark a room read ----------
@@ -327,7 +330,7 @@ app.post('/api/messages/scheduled/cancel', requireAuth, async (c) => {
 app.post('/api/messages/read', requireAuth, async (c) => {
   try {
     const myId = c.get('userId');
-    const body = await c.req.json().catch(() => ({}));
+    const body = await vbody(c, S.MessageReadBody);
     const roomId = String(body.roomId || '').trim();
     if (!roomId) return c.json({ error: 'roomId required' }, 400);
     // Only rooms the caller is actually in: the shared group, or a dm room
@@ -338,5 +341,5 @@ app.post('/api/messages/read', requireAuth, async (c) => {
     const ts = Number(body.at) > 0 ? Number(body.at) : nowMs();
     if (isTursoConfigured()) await tursoMarkRoomRead(myId, roomId, ts);
     return c.json({ ok: true, roomId, at: ts });
-  } catch (e) { return c.json({ error: e.message || 'Internal error' }, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });

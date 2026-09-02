@@ -19,9 +19,10 @@ import { normalizeDb } from './schema.js';
 // reading/writing the GitHub db.json path. For local dev with neither
 // configured, an in-memory cache is used.
 //
-// The dead Neon stubs below (isNeonPrimary, neonReadDb, etc.) remain so the
-// rest of the file doesn't need additional edits; they all return
-// null/false, so they have no effect on behavior.
+// (Historical note: this file once carried dead Neon stubs — isNeonPrimary,
+// neonReadDb, etc. They were deleted, but two call sites in store-github.js
+// were missed and threw ReferenceError whenever the GitHub fallback ran. Fixed
+// in v154; do not reintroduce references to them.)
 export function isTursoPrimary() {
   return isTursoConfigured();
 }

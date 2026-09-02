@@ -6,14 +6,16 @@
  * Part of the modular Hono API (api/). Entry point: api/cf-worker.js
  */
 
-import bcrypt from 'bcryptjs';
 import { app } from '../lib/app.js';
-import { cfg } from '../lib/config.js';
+import { cfg, isDefaultJwtSecret } from '../lib/config.js';
 import { state } from '../lib/state.js';
 import { _authUserCache, _bcryptVerifyCache, _loginUserCache, signToken } from '../lib/auth.js';
-import { PASSWORD_HASH_ROUNDS } from '../lib/config.js';
+import { PBKDF2_PIN_ITERATIONS, hashPassword, needsRehash, verifyPassword } from '../lib/password.js';
 import { fetchPrimaryDatabase, isPersist, primaryPersistenceName, saveDatabase, saveDatabaseVerified } from '../lib/db.js';
+import { wrapUnexpected } from '../lib/errors.js';
 import { isEmail, isPin, isRepo, isUsername, normalizeAuthIdentifier, nowMs, safeJson, sanitizeText, sanitizeUser, uid } from '../lib/helpers.js';
+import { breakerSnapshot, loadSnapshot, withTimeout } from '../lib/resilience.js';
+import { pickBody } from '../lib/validate.js';
 import { requireAdmin, requireAuth } from '../lib/middleware.js';
 import { AUTH_GENERIC_ERROR, authFailureDelay, authRateLimit, authSubjectRateLimit, checkAccountLock, clearLoginFails, recordLoginFail } from '../lib/ratelimit.js';
 import { repoRead } from '../lib/store-github.js';
@@ -29,9 +31,48 @@ app.get('/api/health', (c) => c.json({
   persistence: primaryPersistenceName(),
   secondaryPersistence: isTursoConfigured() ? 'turso-structured-social' : null,
   runtime: 'cloudflare-workers',
+  // apiVersion tracks BACKEND deploys independently of APP_VERSION/SW_VERSION.
+  // Those two are the frontend cache-busting pair and bumping them forces every
+  // client to reload — pointless for a change that ships no new frontend asset.
+  // This field is how we confirm which worker build is actually live.
+  apiVersion: 'security-phase1',
   time: nowMs(), version: 'phase2-turso-json-primary',
   ...(cfg.APP_MIN_VERSION ? { minVersion: cfg.APP_MIN_VERSION } : {}),
 }));
+
+// ---------- Readiness probe ----------
+// /api/health answers "is this worker running?" and must stay dependency-free
+// so it keeps answering during an outage (it is also exempt from load
+// shedding). /api/ready answers the different question "can this worker
+// actually serve traffic?" — it checks the things a request needs, so an
+// orchestrator can stop sending traffic here without the process being dead.
+app.get('/api/ready', async (c) => {
+  const checks = {};
+  let ready = true;
+
+  // Config: a missing/default JWT secret means every authed request will 503.
+  checks.config = isDefaultJwtSecret() ? 'fail' : 'ok';
+  if (checks.config === 'fail') ready = false;
+
+  // Database: cheapest possible round trip, hard-bounded so a hung DB cannot
+  // hang the probe itself — a readiness check that never answers is useless.
+  if (isTursoConfigured()) {
+    try {
+      await withTimeout(tursoClient().execute('SELECT 1'), 2000, 'database check');
+      checks.database = 'ok';
+    } catch (_) {
+      checks.database = 'fail';
+      ready = false;
+    }
+  } else {
+    checks.database = 'skipped';
+  }
+
+  checks.load = loadSnapshot();
+  checks.breakers = breakerSnapshot();
+
+  return c.json({ ready, checks, time: nowMs() }, ready ? 200 : 503);
+});
 
 app.get('/api/diag', requireAdmin, async (c) => {
   const out = {
@@ -59,7 +100,7 @@ app.get('/api/diag', requireAdmin, async (c) => {
 // ---------- Auth: signup ----------
 app.post('/api/auth/signup', authRateLimit, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await pickBody(c, ['email', 'username', 'displayName', 'password', 'pin', 'termsAccepted', 'termsVersion']);
     const { email, username, displayName, password, pin, termsAccepted, termsVersion } = body;
     if (!isEmail(email)) return c.json({ error: 'Invalid email' }, 400);
     if (!isUsername(username)) return c.json({ error: 'Username must be 3-24 chars (letters, numbers, _)' }, 400);
@@ -102,8 +143,9 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     if (reserved.has(usernameLower)) return c.json({ error: 'That username is reserved' }, 403);
 
     const [passwordHash, pinHash] = await Promise.all([
-      bcrypt.hash(password, PASSWORD_HASH_ROUNDS),
-      bcrypt.hash(pin, PASSWORD_HASH_ROUNDS)
+      hashPassword(password),
+      // The PIN uses a lower work factor on purpose — see PBKDF2_PIN_ITERATIONS.
+      hashPassword(pin, { iterations: PBKDF2_PIN_ITERATIONS })
     ]);
     const newUser = {
       id: uid('usr'), email: emailLower, username, displayName: cleanDN,
@@ -130,7 +172,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
 // ---------- Auth: login ----------
 app.post('/api/auth/login', authRateLimit, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await pickBody(c, ['identifier', 'password']);
     const { identifier, password } = body;
     const idLower = normalizeAuthIdentifier(identifier);
     if (!idLower || typeof password !== 'string' || password.length < 1 || password.length > 128) {
@@ -194,7 +236,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       return c.json({ error: 'Too many login attempts. Please wait and try again.' }, 429);
     }
     let matchUser = user;
-    // v66: cache bcrypt.compare result keyed by (uid, passwordHash, password).
+    // v66: cache the verify result keyed by (uid, passwordHash, password).
     // The same client usually re-logs in within seconds (page refresh,
     // back-button, etc.). Caching the result skips the ~20ms bcrypt
     // round and avoids a Turso read on the cached path. 5 min TTL
@@ -205,7 +247,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     if (cached && (Date.now() - cached.ts) < 300_000) {
       ok = cached.ok;
     } else {
-      ok = await bcrypt.compare(password, matchUser.passwordHash);
+      ok = await verifyPassword(password, matchUser.passwordHash);
       _bcryptVerifyCache.set(bcryptCacheKey, { ok, ts: Date.now() });
       if (_bcryptVerifyCache.size > 200) {
         const firstKey = _bcryptVerifyCache.keys().next().value;
@@ -225,7 +267,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       const freshUser = freshDb.users.find(u => u.id === user.id);
       if (freshUser && freshUser.passwordHash !== matchUser.passwordHash) {
         matchUser = freshUser;
-        ok = await bcrypt.compare(password, matchUser.passwordHash);
+        ok = await verifyPassword(password, matchUser.passwordHash);
       }
     }
     if (!ok) {
@@ -234,13 +276,22 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       return c.json({ error: AUTH_GENERIC_ERROR }, 401);
     }
     await clearLoginFails(user.id);
-    // v66: transparent bcrypt cost upgrade. If the stored hash is at an
-    // older cost, rehash at PASSWORD_HASH_ROUNDS in the background so the
-    // next login is fast. Never block the response on this.
-    try {
-      const m = (matchUser.passwordHash || '').match(/^\$2[aby]\$(\d{2})\$/);
-      if (m && Number(m[1]) !== PASSWORD_HASH_ROUNDS) {
-        const newHash = await bcrypt.hash(password, PASSWORD_HASH_ROUNDS);
+    // v154: transparent hash upgrade, now across SCHEMES as well as costs.
+    // Legacy bcrypt hashes verify fine above, and are re-hashed here with
+    // PBKDF2-SHA256 using the plaintext we already hold. Nobody is logged out;
+    // accounts migrate silently on their next successful login.
+    //
+    // This runs via ctx.waitUntil so it does NOT block the response. The
+    // re-hash costs a full 600k-iteration derivation on top of the verify the
+    // login already paid, and awaiting it would have made every legacy user's
+    // first login after this deploy roughly twice as slow — on a runtime that
+    // kills requests at the CPU limit (Cloudflare error 1102). Deferring it
+    // keeps the user-visible login fast and lets the migration happen after
+    // the response is already on its way.
+    const rehashIfNeeded = async () => {
+      try {
+        if (!needsRehash(matchUser.passwordHash)) return;
+        const newHash = await hashPassword(password);
         matchUser.passwordHash = newHash;
         matchUser.passwordChangedAt = nowMs();
         const db = await fetchPrimaryDatabase();
@@ -258,20 +309,29 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
             } catch (_) {}
           }
         }
-      }
-    } catch (_) { /* background upgrade is best-effort */ }
+      } catch (_) { /* background upgrade is best-effort */ }
+    };
+    try {
+      const ctx = c.executionCtx;
+      if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(rehashIfNeeded());
+      else rehashIfNeeded().catch(() => {});
+    } catch (_) {
+      rehashIfNeeded().catch(() => {});
+    }
     const token = await signToken(matchUser);
     return c.json({ token, user: sanitizeUser(matchUser, true) });
   } catch (e) {
     console.error('[login] full error:', e && e.message, e && e.stack);
-    return c.json({ error: 'Login failed: ' + (e && e.message || 'unknown') }, 500);
+    // Never echo the failure detail: it has previously included libSQL and
+    // internal hostname strings. The interceptor logs the real cause.
+    throw wrapUnexpected(e, 'Login failed. Please try again.');
   }
 });
 
 // ---------- Auth: reset by PIN ----------
 app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await pickBody(c, ['identifier', 'pin', 'newPassword']);
     const { identifier, pin, newPassword } = body;
     const idLower = normalizeAuthIdentifier(identifier);
     if (!idLower || !isPin(pin) || typeof newPassword !== 'string' || newPassword.length < 6 || newPassword.length > 128) {
@@ -309,7 +369,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       c.header('Retry-After', String(Math.ceil(lock.remaining / 1000)));
       return c.json({ error: 'Too many attempts. Please wait and try again.' }, 429);
     }
-    const pinOk = await bcrypt.compare(pin, user.pinHash);
+    const pinOk = await verifyPassword(pin, user.pinHash);
     if (!pinOk) {
       // SECURITY: account lockout must apply to wrong PINs too. Previously
       // only wrong passwords triggered recordLoginFail, so a small botnet
@@ -320,7 +380,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     }
     const oldHash = user.passwordHash;
     const oldTokenVersion = Number(user.tokenVersion || 0);
-    user.passwordHash = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
+    user.passwordHash = await hashPassword(newPassword);
     user.tokenVersion = oldTokenVersion + 1;
     user.passwordChangedAt = nowMs();
     // Invalidate the in-memory auth cache so the new tokenVersion is picked

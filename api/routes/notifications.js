@@ -8,6 +8,7 @@
 
 import { app } from '../lib/app.js';
 import { fetchDatabase, saveDatabase } from '../lib/db.js';
+import { wrapUnexpected } from '../lib/errors.js';
 import { nowMs, sanitizeUser } from '../lib/helpers.js';
 import { requireAuth } from '../lib/middleware.js';
 import { fetchTursoNotifications, isTursoConfigured, tursoClearNotificationsForUser, tursoUpsertNotifications } from '../lib/store-turso.js';
@@ -49,7 +50,7 @@ app.post('/api/notifications/seen', requireAuth, async (c) => {
     if (isTursoConfigured()) await tursoUpsertNotifications(touched);
   }
   return c.json({ ok: true, updated: n });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 app.post('/api/notifications/clear', requireAuth, async (c) => {
@@ -62,5 +63,5 @@ app.post('/api/notifications/clear', requireAuth, async (c) => {
     if (isTursoConfigured()) await tursoClearNotificationsForUser(c.get('userId'));
   }
   return c.json({ ok: true, removed: before - db.notifications.length });
-  } catch (e) { return c.json({error: e.message || 'Internal error'}, 500); }
+  } catch (e) { throw wrapUnexpected(e); }
 });
