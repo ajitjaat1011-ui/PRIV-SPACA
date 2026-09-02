@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v140';
+const APP_VERSION = 'priv-spaca-v141';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -1979,19 +1979,36 @@ function closeFollowRequestsSheet() {
   // stayed open forever, trapping the user.
   document.querySelectorAll('[id="followRequestsSheet"]').forEach(s => s.classList.add('hidden'));
 }
-async function respondToFollowRequest(requesterId, action) {
-  try {
-    const data = await api('/user/follow-requests/respond', { method: 'POST', body: { requesterId, action } });
-    State.followRequests = Array.isArray(data.incoming) ? data.incoming : [];
-    _lastFollowRequestsLoadedAt = Date.now();
-    updateFollowRequestsBanner();
-    renderFollowRequestsSheet();
-    loadMembers(true).catch(() => {});
-    if (State.currentTab === 'profile') renderOwnProfile();
-    toast(action === 'accept' ? 'Follow request accepted' : 'Follow request rejected', 'success');
-  } catch (e) {
-    toast(e.message || 'Request update failed', 'error');
-  }
+function respondToFollowRequest(requesterId, action) {
+  return optimistic({
+    snapshot: () => ({
+      requests: (State.followRequests || []).slice(),
+      loadedAt: _lastFollowRequestsLoadedAt,
+    }),
+    apply: () => {
+      // The row disappears the moment Accept/Reject is tapped.
+      State.followRequests = (State.followRequests || []).filter(u => u && u.id !== requesterId);
+      updateFollowRequestsBanner();
+      renderFollowRequestsSheet();
+    },
+    request: () => api('/user/follow-requests/respond', { method: 'POST', body: { requesterId, action } }),
+    commit: (data) => {
+      State.followRequests = Array.isArray(data.incoming) ? data.incoming : [];
+      _lastFollowRequestsLoadedAt = Date.now();
+      updateFollowRequestsBanner();
+      renderFollowRequestsSheet();
+      loadMembers(true).catch(() => {});
+      if (State.currentTab === 'profile') renderOwnProfile();
+      toast(action === 'accept' ? 'Follow request accepted' : 'Follow request rejected', 'success');
+    },
+    restore: (snap) => {
+      State.followRequests = snap.requests;
+      _lastFollowRequestsLoadedAt = snap.loadedAt;
+      updateFollowRequestsBanner();
+      renderFollowRequestsSheet();
+    },
+    errorMessage: 'Request update failed',
+  });
 }
 function renderFollowRequestsSheet() {
   const list = $id('#followRequestsList');
@@ -4125,6 +4142,95 @@ function _clearTopNotifBanner() {
 // this fix, a new/empty account never sees the "Your story" cell appear.
 let lastPostsSignature = null;
 let _loadPostsPromise = null;
+
+/* --- Optimistic post helpers --------------------------------------------
+   A refresh must never delete a post the user has just written but the
+   server has not acknowledged yet. Same merge-never-clobber rule the
+   message list uses. */
+const PENDING_POST_MAX_MS = 60000;
+let _tempPostSeq = 0;
+
+function makeTempPost(fields) {
+  const me = State.user || {};
+  return Object.assign({
+    id: 'tmp_p_' + Date.now() + '_' + (++_tempPostSeq),
+    _pending: true,
+    userId: me.id,
+    author: me,
+    authorSnapshot: me,
+    text: '', imageUrl: null, images: [], videoUrl: null,
+    likes: [], comments: [], likeCount: 0, commentCount: 0,
+    createdAt: Date.now(),
+  }, fields || {});
+}
+
+/** Pending posts that are still young enough to be worth keeping. */
+function _livePendingPosts() {
+  return (State.posts || []).filter(p =>
+    p && p._pending && (Date.now() - (p.createdAt || 0)) < PENDING_POST_MAX_MS);
+}
+
+/** Re-attach still-pending posts to the front of a freshly fetched list. */
+function _mergePendingPosts(list) {
+  const pend = _livePendingPosts();
+  if (!pend.length) return list;
+  const ids = new Set((list || []).map(p => p.id));
+  return [...pend.filter(p => !ids.has(p.id)), ...(list || [])];
+}
+
+/**
+ * Server confirmed a post: rename the temp id to the real one *in place* —
+ * in State, in the card cache, and on the DOM node — so the diff renderer
+ * sees the same card and never rebuilds it. No flicker, no re-mount.
+ */
+function confirmTempPost(tempId, real) {
+  if (!real || !real.id) return;
+  const patch = (arr) => {
+    if (!Array.isArray(arr)) return;
+    const i = arr.findIndex(x => x && x.id === tempId);
+    if (i !== -1) arr[i] = Object.assign({}, arr[i], real, { _pending: false });
+  };
+  patch(State.posts);
+  patch(State.feedPosts);
+  const cached = _postCardCache.get(tempId);
+  if (cached) {
+    _postCardCache.delete(tempId);
+    if (cached.card) {
+      cached.card.dataset.id = real.id;
+      cached.card.classList.remove('pending');
+    }
+    const fresh = (State.posts || []).find(x => x && x.id === real.id) || real;
+    _postCardCache.set(real.id, { card: cached.card, sig: _postCardSignature(fresh) });
+  }
+  // Keep the "is this new?" bookkeeping honest so the card isn't re-animated.
+  if (_previousPostIds && _previousPostIds.delete) {
+    _previousPostIds.delete(tempId);
+    _previousPostIds.add(real.id);
+  }
+  lastPostsSignature = null;
+}
+
+/** Post failed: take the optimistic card back out. */
+function removeTempPost(tempId) {
+  State.posts = (State.posts || []).filter(x => !x || x.id !== tempId);
+  if (Array.isArray(State.feedPosts)) State.feedPosts = State.feedPosts.filter(x => !x || x.id !== tempId);
+  const cached = _postCardCache.get(tempId);
+  if (cached && cached.card) cached.card.remove();
+  _postCardCache.delete(tempId);
+  if (_previousPostIds && _previousPostIds.delete) _previousPostIds.delete(tempId);
+  lastPostsSignature = null;
+  _lastStoriesSig = '';
+  renderPosts();
+}
+
+/** Put an optimistic post at the top of whichever list the feed is reading. */
+function prependTempPost(tp) {
+  State.posts = [tp, ...(State.posts || [])];
+  if (Array.isArray(State.feedPosts) && State.feedPosts.length) State.feedPosts = [tp, ...State.feedPosts];
+  lastPostsSignature = null;
+  _lastStoriesSig = '';
+  renderPosts();
+}
 async function loadPosts(force = false) {
   if (_loadPostsPromise) return _loadPostsPromise;
   if (!force && _lastPostsLoadedAt && (Date.now() - _lastPostsLoadedAt) < 2500 && lastPostsSignature !== null) {
@@ -4139,7 +4245,7 @@ async function loadPosts(force = false) {
       const sig = newPosts.map(p => p.id + ':' + p.likeCount + ':' + p.commentCount).join('|');
       if (lastPostsSignature !== null && sig === lastPostsSignature) return State.posts;
       lastPostsSignature = sig;
-      State.posts = newPosts;
+      State.posts = _mergePendingPosts(newPosts);
       renderPosts();
       return State.posts;
     } catch (_) {
@@ -4167,7 +4273,7 @@ async function loadFeed(force = false) {
       const data = await api('/feed');
       const feedPosts = data.posts || [];
       _lastFeedLoadedAt = Date.now();
-      State.feedPosts = feedPosts;
+      State.feedPosts = _mergePendingPosts(feedPosts);
       // Merge feed posts into State.posts so stories rail + profile still work
       const existingIds = new Set(State.posts.map(p => p.id));
       feedPosts.forEach(p => { if (!existingIds.has(p.id)) State.posts.push(p); });
@@ -4368,14 +4474,34 @@ function syncSuggestions() {
     fu.type = 'button';
     fu.className = 'suggest-fu';
     fu.textContent = 'Follow';
-    fu.addEventListener('click', async () => {
-      try {
-        await api('/user/follow', { method: 'POST', body: { targetId: m.id } });
-        m.iFollow = true;
-        fu.textContent = '✓'; fu.classList.add('done'); fu.disabled = true;
-        toast('Following ' + (m.displayName || m.username));
-        _suggestSig = ''; syncSuggestions();
-      } catch (e) { toast(e.message || 'Failed', 'error'); }
+    fu.addEventListener('click', () => {
+      if (fu.disabled) return;
+      optimistic({
+        snapshot: () => ({ iFollow: m.iFollow, label: fu.textContent, cls: fu.className }),
+        apply: () => {
+          // Button flips the instant it is tapped.
+          m.iFollow = true;
+          fu.textContent = '✓'; fu.classList.add('done'); fu.disabled = true;
+        },
+        request: () => api('/user/follow', { method: 'POST', body: { targetId: m.id } }),
+        commit: (data) => {
+          // A private account turns a follow into a pending request.
+          if (data && data.requested) {
+            m.iFollow = false; m.requestedByMe = true;
+            fu.textContent = 'Requested';
+            toast('Follow request sent');
+          } else {
+            if (data && Array.isArray(data.followingIds) && State.user) State.user.following = data.followingIds;
+            toast('Following ' + (m.displayName || m.username));
+          }
+          _suggestSig = ''; syncSuggestions();
+        },
+        restore: (snap) => {
+          m.iFollow = snap.iFollow;
+          fu.textContent = snap.label; fu.className = snap.cls; fu.disabled = false;
+        },
+        errorMessage: 'Could not follow',
+      });
     });
     row.appendChild(av); row.appendChild(nw); row.appendChild(fu);
     rows.appendChild(row);
@@ -4708,6 +4834,8 @@ function renderPost(p) {
   const card = document.createElement('article');
   card.className = 'post-card';
   card.dataset.id = p.id;
+  // Optimistic posts render exactly like real ones, just dimmed + inert.
+  if (p._pending) card.classList.add('pending');
 
   const author = resolveAuthor(p.author, p.userId, p.authorSnapshot);
   const meId = State.user && State.user.id;
@@ -5064,28 +5192,53 @@ function renderPost(p) {
   sb.type = 'submit'; sb.className = 'post-btn'; sb.textContent = 'Post'; sb.disabled = true;
   emoji.addEventListener('click', () => { inp.value += '😊'; inp.focus(); sb.disabled = !inp.value.trim(); });
   inp.addEventListener('input', () => { sb.disabled = !inp.value.trim(); });
-  const submit = async () => {
+  const submit = () => {
     const text = inp.value.trim();
     if (!text) return;
+    const temp = makeTempComment(text);
+    // Clear the box straight away — the comment is already "sent" as far as
+    // the user is concerned.
+    inp.value = '';
     sb.disabled = true;
-    try {
-      const data = await api('/posts/comment', { method: 'POST', body: { postId: p.id, text } });
-      inp.value = '';
-      p.comments = p.comments || [];
-      p.comments.push(data.comment);
-      p.commentCount = (p.commentCount || 0) + 1;
-      // Update the cached signature so the diff-renderer doesn't rebuild this card
-      // and destroy the focused composer mid-typing on the next refresh.
-      const cached = _postCardCache.get(p.id);
-      if (cached) cached.sig = _postCardSignature(p);
-      // Patch just the comment-related UI in place (no full rebuild)
-      patchCommentUI(card, p);
-      // If a comments sheet is open for this post, refresh it too
-      if (activeCommentsPost && activeCommentsPost.id === p.id) openCommentsSheet(p);
-      // Bump polling cadence so other clients see it quickly
-      boostPolling(20000);
-    } catch (e) { toast(e.message || 'Failed', 'error'); }
-    finally { sb.disabled = !inp.value.trim(); }
+    optimistic({
+      snapshot: () => ({ text, commentCount: p.commentCount || 0 }),
+      apply: () => {
+        p.comments = p.comments || [];
+        p.comments.push(temp);
+        p.commentCount = (p.commentCount || 0) + 1;
+        // Update the cached signature so the diff-renderer doesn't rebuild this card
+        // and destroy the focused composer mid-typing on the next refresh.
+        const cached = _postCardCache.get(p.id);
+        if (cached) cached.sig = _postCardSignature(p);
+        // Patch just the comment-related UI in place (no full rebuild)
+        patchCommentUI(card, p);
+        if (activeCommentsPost && activeCommentsPost.id === p.id) appendCommentToSheet(temp);
+      },
+      request: () => api('/posts/comment', { method: 'POST', body: { postId: p.id, text } }),
+      commit: (data) => {
+        // Silent swap: temp client id -> real DB id. No visible re-render.
+        swapTempComment(p, temp.id, data && data.comment);
+        const cached = _postCardCache.get(p.id);
+        if (cached) cached.sig = _postCardSignature(p);
+        patchCommentUI(card, p);
+        if (activeCommentsPost && activeCommentsPost.id === p.id) {
+          confirmCommentInSheet(temp.id, data && data.comment);
+        }
+        // Bump polling cadence so other clients see it quickly
+        boostPolling(20000);
+      },
+      restore: (snap) => {
+        dropTempComment(p, temp.id);
+        p.commentCount = snap.commentCount;
+        const cached = _postCardCache.get(p.id);
+        if (cached) cached.sig = _postCardSignature(p);
+        patchCommentUI(card, p);
+        if (activeCommentsPost && activeCommentsPost.id === p.id) removeCommentFromSheet(temp.id);
+        // Give the text back so nothing typed is ever lost.
+        if (!inp.value.trim()) { inp.value = snap.text; sb.disabled = false; }
+      },
+      errorMessage: 'Comment not posted',
+    });
   };
   sb.addEventListener('click', submit);
   inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
@@ -5097,30 +5250,44 @@ function renderPost(p) {
   return card;
 }
 
-async function toggleLike(p, card) {
+function toggleLike(p, card) {
   const meId = State.user && State.user.id;
   const wasLiked = Array.isArray(p.likes) && p.likes.includes(meId);
-  // === Optimistic UI: update local state + DOM in-place immediately (no flicker) ===
-  p.likes = Array.isArray(p.likes) ? p.likes.slice() : [];
-  if (wasLiked) p.likes = p.likes.filter(x => x !== meId);
-  else if (!p.likes.includes(meId)) p.likes.push(meId);
-  p.likeCount = p.likes.length;
-  patchLikeUI(card, p, meId);
-  try {
-    const data = await api('/posts/like', { method: 'POST', body: { postId: p.id } });
-    // Sync with server's authoritative count (in case of race)
-    p.likeCount = data.likeCount;
-    patchLikeUI(card, p, meId);
-    // Mark signature so the next poll comparison doesn't re-render unnecessarily
-    lastPostsSignature = _computePostsSignature(State.posts);
-  } catch (e) {
-    // Roll back optimistic change
-    if (wasLiked && !p.likes.includes(meId)) p.likes.push(meId);
-    else p.likes = p.likes.filter(x => x !== meId);
-    p.likeCount = p.likes.length;
-    patchLikeUI(card, p, meId);
-    toast(e.message || 'Failed', 'error');
-  }
+  // Pending optimistic posts have no server id yet — nothing to like.
+  if (p._pending) return Promise.resolve({ ok: false });
+  return optimistic({
+    snapshot: () => ({ likes: Array.isArray(p.likes) ? p.likes.slice() : [], likeCount: p.likeCount }),
+    apply: () => {
+      // Heart + count flip in-place immediately; no card rebuild, no flicker.
+      p.likes = Array.isArray(p.likes) ? p.likes.slice() : [];
+      if (wasLiked) p.likes = p.likes.filter(x => x !== meId);
+      else if (!p.likes.includes(meId)) p.likes.push(meId);
+      p.likeCount = p.likes.length;
+      patchLikeUI(card, p, meId);
+      // Keep the card cache in step so a background refresh doesn't rebuild it.
+      const cached = _postCardCache.get(p.id);
+      if (cached) cached.sig = _postCardSignature(p);
+    },
+    request: () => api('/posts/like', { method: 'POST', body: { postId: p.id } }),
+    commit: (data) => {
+      // Sync with the server's authoritative count (in case of a race).
+      if (data && typeof data.likeCount === 'number') p.likeCount = data.likeCount;
+      patchLikeUI(card, p, meId);
+      const cached = _postCardCache.get(p.id);
+      if (cached) cached.sig = _postCardSignature(p);
+      // Mark signature so the next poll comparison doesn't re-render unnecessarily
+      lastPostsSignature = _computePostsSignature(State.posts);
+    },
+    restore: (snap) => {
+      p.likes = snap.likes;
+      p.likeCount = snap.likeCount;
+      patchLikeUI(card, p, meId);
+      const cached = _postCardCache.get(p.id);
+      if (cached) cached.sig = _postCardSignature(p);
+    },
+    errorMessage: wasLiked ? 'Could not unlike' : 'Could not like',
+    retry: false,   // one tap away from trying again anyway
+  });
 }
 
 /** Update only the like button + "Liked by" row inside a post card; no full re-render. */
@@ -5345,6 +5512,106 @@ function openMoreMenu(p, isMine) {
 }
 
 let activeCommentsPost = null;
+/* --- Optimistic comment helpers ------------------------------------------ */
+
+let _tempCommentSeq = 0;
+
+/** Build the comment object we show before the server has seen it. */
+function makeTempComment(text) {
+  const me = State.user || {};
+  return {
+    id: 'tmp_c_' + Date.now() + '_' + (++_tempCommentSeq),
+    _pending: true,
+    text,
+    userId: me.id,
+    author: me,
+    authorSnapshot: me,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/** One comment <li> for the comments sheet. */
+function buildCommentLi(c) {
+  const cAuth = resolveAuthor(c.author, c.userId, c.authorSnapshot);
+  const li = document.createElement('li');
+  if (c.id) li.dataset.commentId = c.id;
+  if (c._pending) li.classList.add('pending');
+  const a = document.createElement('span'); a.className = 'avatar sm';
+  renderAvatar(a, cAuth);
+  const b = document.createElement('div'); b.className = 'body';
+  const txt = document.createElement('div'); txt.className = 'text';
+  const author = document.createElement('span'); author.className = 'author';
+  author.innerHTML = displayNameWithOwnerBadge(cAuth, cAuth.username || cAuth.displayName, 'inline');
+  txt.appendChild(author);
+  // Space between author and text (bug fix)
+  txt.appendChild(document.createTextNode(' ' + (c.text || '')));
+  const meta = document.createElement('div'); meta.className = 'meta-row';
+  meta.innerHTML = c._pending
+    ? '<span>Sending…</span>'
+    : `<span>${escapeHtml(timeAgo(c.createdAt))}</span><span>Reply</span>`;
+  b.appendChild(txt); b.appendChild(meta);
+  li.appendChild(a); li.appendChild(b);
+  return li;
+}
+
+/**
+ * Add one comment to an already-open sheet without rebuilding the list,
+ * so the composer keeps focus and nothing flickers.
+ */
+function appendCommentToSheet(c) {
+  const list = $id('#commentsList');
+  if (!list) return;
+  const empty = list.querySelector('li.empty');
+  if (empty) empty.remove();
+  const li = buildCommentLi(c);
+  list.appendChild(li);
+  popIn(li);
+  list.scrollTop = list.scrollHeight;
+}
+
+/**
+ * The server confirmed a comment: swap the temp id for the real one in place.
+ * Purely cosmetic — the user never sees a re-render.
+ */
+function confirmCommentInSheet(tempId, real) {
+  const list = $id('#commentsList');
+  if (!list) return;
+  const li = list.querySelector(`li[data-comment-id="${CSS.escape(tempId)}"]`);
+  if (!li) return;
+  if (real && real.id) li.dataset.commentId = real.id;
+  li.classList.remove('pending');
+  const meta = li.querySelector('.meta-row');
+  if (meta) meta.innerHTML = `<span>${escapeHtml(timeAgo((real && real.createdAt) || Date.now()))}</span><span>Reply</span>`;
+}
+
+/** Remove a failed optimistic comment from the sheet. */
+function removeCommentFromSheet(tempId) {
+  const list = $id('#commentsList');
+  if (!list) return;
+  const li = list.querySelector(`li[data-comment-id="${CSS.escape(tempId)}"]`);
+  if (li) li.remove();
+  if (!list.querySelector('li')) {
+    const e = document.createElement('li');
+    e.className = 'empty';
+    e.textContent = 'No comments yet. Be the first!';
+    list.appendChild(e);
+  }
+}
+
+/** Replace a temp comment with the server's copy inside a post object. */
+function swapTempComment(post, tempId, real) {
+  if (!post || !Array.isArray(post.comments)) return;
+  const i = post.comments.findIndex(c => c && c.id === tempId);
+  if (i === -1) return;
+  post.comments[i] = Object.assign({}, post.comments[i], real || {}, { _pending: false });
+}
+
+/** Drop a temp comment from a post object after a failure. */
+function dropTempComment(post, tempId) {
+  if (!post || !Array.isArray(post.comments)) return;
+  post.comments = post.comments.filter(c => !c || c.id !== tempId);
+}
+
 function openCommentsSheet(p) {
   activeCommentsPost = p;
   const list = $id('#commentsList');
@@ -5356,24 +5623,7 @@ function openCommentsSheet(p) {
     li.textContent = 'No comments yet. Be the first!';
     list.appendChild(li);
   }
-  cms.forEach(c => {
-    const cAuth = resolveAuthor(c.author, c.userId, c.authorSnapshot);
-    const li = document.createElement('li');
-    const a = document.createElement('span'); a.className = 'avatar sm';
-    renderAvatar(a, cAuth);
-    const b = document.createElement('div'); b.className = 'body';
-    const txt = document.createElement('div'); txt.className = 'text';
-    const author = document.createElement('span'); author.className = 'author';
-    author.innerHTML = displayNameWithOwnerBadge(cAuth, cAuth.username || cAuth.displayName, 'inline');
-    txt.appendChild(author);
-    // Space between author and text (bug fix)
-    txt.appendChild(document.createTextNode(' ' + (c.text || '')));
-    const meta = document.createElement('div'); meta.className = 'meta-row';
-    meta.innerHTML = `<span>${escapeHtml(timeAgo(c.createdAt))}</span><span>Reply</span>`;
-    b.appendChild(txt); b.appendChild(meta);
-    li.appendChild(a); li.appendChild(b);
-    list.appendChild(li);
-  });
+  cms.forEach(c => { list.appendChild(buildCommentLi(c)); });
   renderAvatar($id('#commentsMeAvatar'), State.user);
   $id('#commentsInput').value = '';
   const sheet = $id('#commentsSheet');
@@ -5394,31 +5644,53 @@ function closeCommentsSheet() {
 
 function bindCommentsSheet() {
   $$('[data-close-sheet]').forEach(b => b.addEventListener('click', closeCommentsSheet));
-  $id('#commentsForm').addEventListener('submit', async (e) => {
+  $id('#commentsForm').addEventListener('submit', (e) => {
     e.preventDefault();
     if (!activeCommentsPost) return;
     const inp = $id('#commentsInput');
     const text = inp.value.trim();
     if (!text) return;
     const sb = e.target.querySelector('.post-btn');
-    sb.disabled = true;
-    try {
-      const data = await api('/posts/comment', { method: 'POST', body: { postId: activeCommentsPost.id, text } });
-      inp.value = '';
-      activeCommentsPost.comments = activeCommentsPost.comments || [];
-      activeCommentsPost.comments.push(data.comment);
-      activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1;
-      // Re-render the sheet's comment list (keeps the composer focused)
-      openCommentsSheet(activeCommentsPost);
-      // Patch the original post card in-place (no flicker / no full feed rebuild)
-      const cached = _postCardCache.get(activeCommentsPost.id);
+    // Capture the post now: the sheet may be closed before the request lands.
+    const post = activeCommentsPost;
+    const temp = makeTempComment(text);
+    inp.value = '';
+    const patchCard = () => {
+      const cached = _postCardCache.get(post.id);
       if (cached) {
-        cached.sig = _postCardSignature(activeCommentsPost);
-        patchCommentUI(cached.card, activeCommentsPost);
+        cached.sig = _postCardSignature(post);
+        patchCommentUI(cached.card, post);
       }
-      boostPolling(20000);
-    } catch (e) { toast(e.message || 'Failed', 'error'); }
-    finally { sb.disabled = false; }
+    };
+    optimistic({
+      snapshot: () => ({ text, commentCount: post.commentCount || 0 }),
+      apply: () => {
+        post.comments = post.comments || [];
+        post.comments.push(temp);
+        post.commentCount = (post.commentCount || 0) + 1;
+        // Append only — never rebuild the list, so the composer keeps focus.
+        if (activeCommentsPost === post) appendCommentToSheet(temp);
+        patchCard();
+      },
+      request: () => api('/posts/comment', { method: 'POST', body: { postId: post.id, text } }),
+      commit: (data) => {
+        swapTempComment(post, temp.id, data && data.comment);
+        if (activeCommentsPost === post) confirmCommentInSheet(temp.id, data && data.comment);
+        patchCard();
+        boostPolling(20000);
+      },
+      restore: (snap) => {
+        dropTempComment(post, temp.id);
+        post.commentCount = snap.commentCount;
+        if (activeCommentsPost === post) {
+          removeCommentFromSheet(temp.id);
+          if (!inp.value.trim()) inp.value = snap.text;
+        }
+        patchCard();
+        sb.disabled = false;
+      },
+      errorMessage: 'Comment not posted',
+    });
   });
 }
 
@@ -5928,18 +6200,31 @@ function bindStoryReplyUI() {
     }
   }
   const lb = $id('#storyLikeBtn');
-  if (lb) lb.addEventListener('click', async (e) => {
+  if (lb) lb.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
     if (!_currentStoryItem) return;
+    const story = _currentStoryItem;      // may change while the request is in flight
     const liked = !lb.classList.contains('liked');
-    lb.classList.toggle('liked', liked);
-    if (liked && State.user) {
-      if (!Array.isArray(_currentStoryItem.likes)) _currentStoryItem.likes = [];
-      if (!_currentStoryItem.likes.includes(State.user.id)) _currentStoryItem.likes.push(State.user.id);
-    } else if (State.user && _currentStoryItem.likes) {
-      _currentStoryItem.likes = _currentStoryItem.likes.filter(id => id !== State.user.id);
-    }
-    try { await api('/posts/like', { method: 'POST', body: { postId: _currentStoryItem.id } }); } catch (_) {}
+    const meId = State.user && State.user.id;
+    optimistic({
+      snapshot: () => ({ likes: Array.isArray(story.likes) ? story.likes.slice() : [] }),
+      apply: () => {
+        lb.classList.toggle('liked', liked);
+        if (liked) pulseEl(lb.querySelector('i') || lb);
+        if (!meId) return;
+        story.likes = Array.isArray(story.likes) ? story.likes.slice() : [];
+        if (liked) { if (!story.likes.includes(meId)) story.likes.push(meId); }
+        else story.likes = story.likes.filter(id => id !== meId);
+      },
+      request: () => api('/posts/like', { method: 'POST', body: { postId: story.id } }),
+      restore: (snap) => {
+        story.likes = snap.likes;
+        // Only repaint the button if this story is still the one on screen.
+        if (_currentStoryItem === story) lb.classList.toggle('liked', !liked);
+      },
+      errorMessage: liked ? 'Could not like story' : 'Could not unlike story',
+      retry: false,   // a tap this cheap isn't worth nagging about
+    });
   });
   const cb = $id('#storyCommentIconBtn');
   if (cb) cb.addEventListener('click', (e) => {
@@ -7027,31 +7312,57 @@ window.publishStoryWithMusic = async (isCf = false) => {
   if (pubAll) pubAll.disabled = true;
   if (pubCf) pubCf.disabled = true;
   if (targetBtn) targetBtn.innerHTML = '<span class="story-pub-spinner"></span> Posting…';
-  try {
-    await api('/posts/create', {
-      method: 'POST',
-      body: {
-        text,
-        imageUrl,
-        images: storyImages,
-        videoUrl,
-        mediaType: videoUrl ? 'video' : ((imageUrl || storyImages.length) ? 'image' : 'text'),
-        music,
-        style,
-        story: true,
-        audience: isCf ? 'close_friends' : 'all',
-        storyExpiresAt: Date.now() + STORY_TTL_MS,
-      }
-    });
-    window.closeStoryCreator();
-    loadPosts();
-    toast(music ? `🎉 Story published with 30s background song "${music.title}"!` : '🎉 Story published!', 'success');
-  } catch (e) {
-    toast(e.message || 'Story publish failed', 'error');
-    if (pubAll) pubAll.disabled = false;
-    if (pubCf) pubCf.disabled = false;
-    if (targetBtn) targetBtn.innerHTML = originalHtml;
-  }
+  const storyBody = {
+    text,
+    imageUrl,
+    images: storyImages,
+    videoUrl,
+    mediaType: videoUrl ? 'video' : ((imageUrl || storyImages.length) ? 'image' : 'text'),
+    music,
+    style,
+    story: true,
+    audience: isCf ? 'close_friends' : 'all',
+    storyExpiresAt: Date.now() + STORY_TTL_MS,
+  };
+  const tp = makeTempPost({
+    text, imageUrl, images: storyImages, videoUrl, music, style,
+    story: true, storyExpiresAt: storyBody.storyExpiresAt,
+    audience: storyBody.audience,
+  });
+
+  // Editor closes instantly; the ring on the stories rail appears in the
+  // same frame because the temp story is already in State.posts.
+  window.closeStoryCreator();
+  if (pubAll) pubAll.disabled = false;
+  if (pubCf) pubCf.disabled = false;
+  if (targetBtn) targetBtn.innerHTML = originalHtml;
+
+  optimistic({
+    snapshot: () => null,
+    apply: () => {
+      State.posts = [tp, ...(State.posts || [])];
+      _lastStoriesSig = '';       // force the rail to pick up the new ring
+      lastPostsSignature = null;
+      renderStoriesRail();
+    },
+    request: () => api('/posts/create', { method: 'POST', body: storyBody }),
+    commit: (data) => {
+      confirmTempPost(tp.id, data && data.post);
+      _lastStoriesSig = '';
+      renderStoriesRail();
+      toast(music ? `🎉 Story published with 30s background song "${music.title}"!` : '🎉 Story published!', 'success');
+      bustApiCache('/posts', '/feed');
+      loadPosts(true);
+    },
+    restore: () => {
+      State.posts = (State.posts || []).filter(x => !x || x.id !== tp.id);
+      _lastStoriesSig = '';
+      lastPostsSignature = null;
+      renderStoriesRail();
+    },
+    errorMessage: 'Story not published',
+    retry: false,   // the editor is gone; its media refs would be stale
+  });
 };
 
 
@@ -7211,29 +7522,52 @@ function bindFeedComposer() {
     }
   });
   $id('#postCancelAttachBtn').addEventListener('click', clearPostAttach);
-  $id('#postSubmitBtn').addEventListener('click', async () => {
+  $id('#postSubmitBtn').addEventListener('click', () => {
     const text = $id('#postInput').value.trim();
     const validAttaches = (State.postAttaches || []).filter(a => a.url);
     if (!text && validAttaches.length === 0) { toast('Write something or attach up to 3 photos', 'error'); return; }
     const btn = $id('#postSubmitBtn');
-    btn.disabled = true;
-    try {
-      const images = validAttaches.map(a => a.url);
-      const imageUrl = images[0] || null;
-      const chk = $id('#postScratchCheckbox');
-      const isScratch = !!(chk && chk.checked);
-      await api('/posts/create', { method: 'POST', body: { text, imageUrl, images, isScratch, music: _postDraftMusic } });
-      $id('#postInput').value = '';
-      if (chk) chk.checked = false;
-      _postDraftMusic = null; updatePostMusicUI();
-      const picker = $id('#postSongPicker'); hide(picker);
-      clearPostAttach();
-      lastPostsSignature = null; // force next loadPosts() to re-render even if list becomes empty
-      loadPosts();
-      closePostComposer();
-      toast('Posted!', 'success');
-    } catch (e) { toast(e.message || 'Post failed', 'error'); }
-    finally { btn.disabled = false; }
+    const images = validAttaches.map(a => a.url);
+    const imageUrl = images[0] || null;
+    const chk = $id('#postScratchCheckbox');
+    const isScratch = !!(chk && chk.checked);
+    const music = _postDraftMusic;
+    const body = { text, imageUrl, images, isScratch, music };
+    const tp = makeTempPost({ text, imageUrl, images, isScratch, music });
+
+    // Close the composer and clear the draft right away: the post is already
+    // on screen, so there is nothing left for the user to wait for.
+    $id('#postInput').value = '';
+    if (chk) chk.checked = false;
+    _postDraftMusic = null; updatePostMusicUI();
+    hide($id('#postSongPicker'));
+    clearPostAttach();
+    closePostComposer();
+    btn.disabled = false;
+
+    optimistic({
+      snapshot: () => ({ text, images: images.slice(), isScratch, music }),
+      apply: () => { prependTempPost(tp); },
+      request: () => api('/posts/create', { method: 'POST', body }),
+      commit: (data) => {
+        // Silent id swap — the same DOM node just stops being pending.
+        confirmTempPost(tp.id, data && data.post);
+        toast('Posted!', 'success');
+        // Reconcile in the background; the card is already correct on screen.
+        bustApiCache('/posts', '/feed');
+        loadPosts(true);
+      },
+      restore: () => {
+        removeTempPost(tp.id);
+        // Hand the draft back rather than losing what was typed.
+        const inp = $id('#postInput');
+        if (inp && !inp.value.trim()) inp.value = text;
+        State.postAttaches = validAttaches.slice();
+        renderPostAttachGrid();
+        _postDraftMusic = music; updatePostMusicUI();
+      },
+      errorMessage: 'Post not published',
+    });
   });
 }
 
@@ -8201,6 +8535,9 @@ function ensurePrivateProfileNotice() {
   return notice;
 }
 
+/** Last-seen profile payloads, so re-opening a sheet is instant (SWR). */
+const _profileCache = new Map();
+
 async function openUserProfile(userId) {
   if (!userId || userId === (State.user && State.user.id)) {
     switchTab('profile'); return;
@@ -8208,24 +8545,55 @@ async function openUserProfile(userId) {
   const sheet = $id('#userProfileSheet');
   sheet.classList.remove('hidden');
   springIn(sheet);
-  // Show skeleton
-  $id('#upHeaderUsername').textContent = 'Loading…';
-  $id('#upDisplayName').textContent = '';
-  $id('#upBio').textContent = '';
-  $id('#upStatPosts').textContent = '·';
-  $id('#upStatFollowers').textContent = '·';
-  $id('#upStatFollowing').textContent = '·';
-  $id('#upPostsGrid').innerHTML = '';
+  // ===== Stale-while-revalidate =====
+  // We usually already know this person from State.members, so paint that
+  // immediately instead of a "Loading…" placeholder, then fetch the real
+  // profile and swap the numbers in underneath.
+  const cachedProfile = _profileCache.get(userId);
+  const member = (State.members || []).find(m => m.id === userId);
   const privateNotice = ensurePrivateProfileNotice();
-  hide(privateNotice);
-  renderAvatar($id('#upAvatar'), null);
+  let painted = false;
+  if (cachedProfile) {
+    _activeOtherProfile = cachedProfile;
+    renderOtherProfile(cachedProfile);
+    painted = true;
+  } else if (member) {
+    $id('#upHeaderUsername').innerHTML = displayNameWithProfileBadges(member, '@' + (member.username || ''), 'inline');
+    $id('#upDisplayName').textContent = member.displayName || '';
+    $id('#upBio').textContent = member.bio || '';
+    // Dots, not zeroes: an honest "not known yet" beats a wrong number.
+    $id('#upStatPosts').textContent = '·';
+    $id('#upStatFollowers').textContent = '·';
+    $id('#upStatFollowing').textContent = '·';
+    $id('#upPostsGrid').innerHTML = '';
+    hide(privateNotice);
+    renderAvatar($id('#upAvatar'), member);
+    painted = true;
+  } else {
+    $id('#upHeaderUsername').textContent = 'Loading…';
+    $id('#upDisplayName').textContent = '';
+    $id('#upBio').textContent = '';
+    $id('#upStatPosts').textContent = '·';
+    $id('#upStatFollowers').textContent = '·';
+    $id('#upStatFollowing').textContent = '·';
+    $id('#upPostsGrid').innerHTML = '';
+    hide(privateNotice);
+    renderAvatar($id('#upAvatar'), null);
+  }
+  refreshIcons();
   try {
     const data = await api('/user/' + encodeURIComponent(userId) + '/profile');
+    _profileCache.set(userId, data);
+    // Don't clobber a sheet the user has already closed or navigated away from.
+    if ($id('#userProfileSheet').classList.contains('hidden')) return;
     _activeOtherProfile = data;
     renderOtherProfile(data);
   } catch (e) {
-    $id('#upDisplayName').textContent = e.message || 'Could not load profile';
-    _activeOtherProfile = null;
+    // A stale-but-real profile on screen is better than an error message.
+    if (!painted) {
+      $id('#upDisplayName').textContent = e.message || 'Could not load profile';
+      _activeOtherProfile = null;
+    }
   }
   refreshIcons();
 }
@@ -8263,34 +8631,81 @@ function renderOtherProfile(data) {
     fb.textContent = data.relationship.followsMe ? 'Follow back' : 'Follow';
     fb.classList.add('primary'); fb.classList.remove('following');
   }
-  fb.onclick = async () => {
-    fb.disabled = true;
-    try {
-      const action = (data.relationship.iFollow || requestedByMe) ? 'unfollow' : 'follow';
-      const result = await api('/user/' + action, { method: 'POST', body: { targetId: u.id }});
-      State.user.following = Array.isArray(State.user.following) ? State.user.following : [];
-      if (action === 'follow' && !result.requested) {
-        if (!State.user.following.includes(u.id)) State.user.following.push(u.id);
-      } else if (action === 'unfollow') {
-        State.user.following = State.user.following.filter(id => id !== u.id);
-      }
-      const member = (State.members || []).find(m => m.id === u.id);
-      if (member) {
-        member.iFollow = action === 'follow' && !result.requested;
-        member.requestedByMe = action === 'follow' && !!result.requested;
-      }
-      if (Array.isArray(result.followingIds)) State.user.following = result.followingIds;
-      updateOwnProfileStatCounts(State.user);
-      // Reload
-      const fresh = await api('/user/' + encodeURIComponent(u.id) + '/profile');
-      _activeOtherProfile = fresh;
-      renderOtherProfile(fresh);
-      pollNotifications();
-      loadFollowRequests(true).catch(() => {});
-      const followMsg = result.requested ? 'Follow request sent' : (action === 'unfollow' && requestedByMe ? 'Follow request cancelled' : '');
-      if (followMsg) toast(followMsg, 'success');
-    } catch (e) { toast(e.message || 'Failed', 'error'); }
-    finally { fb.disabled = false; }
+  fb.onclick = () => {
+    if (fb.disabled) return;
+    const action = (data.relationship.iFollow || requestedByMe) ? 'unfollow' : 'follow';
+    const followersEl = $id('#upStatFollowers');
+    optimistic({
+      snapshot: () => ({
+        label: fb.textContent,
+        cls: fb.className,
+        followers: u.followers || 0,
+        rel: Object.assign({}, data.relationship),
+        following: Array.isArray(State.user.following) ? State.user.following.slice() : [],
+        member: Object.assign({}, (State.members || []).find(m => m.id === u.id) || {}),
+      }),
+      apply: () => {
+        // Flip the button and move the follower count in the same frame.
+        // A private account may downgrade this to "Requested" on commit.
+        State.user.following = Array.isArray(State.user.following) ? State.user.following : [];
+        if (action === 'follow') {
+          const willRequest = !!u.isPrivate;
+          data.relationship.iFollow = !willRequest;
+          data.relationship.requestedByMe = willRequest;
+          if (!willRequest) {
+            if (!State.user.following.includes(u.id)) State.user.following.push(u.id);
+            u.followers = (u.followers || 0) + 1;
+          }
+          fb.textContent = willRequest ? 'Requested' : 'Following';
+          fb.classList.remove('primary'); fb.classList.add('following');
+        } else {
+          data.relationship.iFollow = false;
+          data.relationship.requestedByMe = false;
+          State.user.following = State.user.following.filter(id => id !== u.id);
+          if (!requestedByMe) u.followers = Math.max(0, (u.followers || 0) - 1);
+          fb.textContent = data.relationship.followsMe ? 'Follow back' : 'Follow';
+          fb.classList.add('primary'); fb.classList.remove('following');
+        }
+        if (followersEl) followersEl.textContent = String(u.followers || 0);
+        const member = (State.members || []).find(m => m.id === u.id);
+        if (member) {
+          member.iFollow = !!data.relationship.iFollow;
+          member.requestedByMe = !!data.relationship.requestedByMe;
+        }
+        updateOwnProfileStatCounts(State.user);
+      },
+      request: () => api('/user/' + action, { method: 'POST', body: { targetId: u.id } }),
+      commit: async (result) => {
+        if (Array.isArray(result.followingIds)) State.user.following = result.followingIds;
+        const member = (State.members || []).find(m => m.id === u.id);
+        if (member) {
+          member.iFollow = action === 'follow' && !result.requested;
+          member.requestedByMe = action === 'follow' && !!result.requested;
+        }
+        updateOwnProfileStatCounts(State.user);
+        const followMsg = result.requested ? 'Follow request sent' : (action === 'unfollow' && requestedByMe ? 'Follow request cancelled' : '');
+        if (followMsg) toast(followMsg, 'success');
+        // Revalidate quietly behind the already-correct UI.
+        try {
+          const fresh = await api('/user/' + encodeURIComponent(u.id) + '/profile');
+          _activeOtherProfile = fresh;
+          if (!$id('#userProfileSheet').classList.contains('hidden')) renderOtherProfile(fresh);
+        } catch (_) {}
+        pollNotifications();
+        loadFollowRequests(true).catch(() => {});
+      },
+      restore: (snap) => {
+        fb.textContent = snap.label; fb.className = snap.cls; fb.disabled = false;
+        u.followers = snap.followers;
+        if (followersEl) followersEl.textContent = String(snap.followers);
+        data.relationship = snap.rel;
+        State.user.following = snap.following;
+        const member = (State.members || []).find(m => m.id === u.id);
+        if (member) { member.iFollow = snap.member.iFollow; member.requestedByMe = snap.member.requestedByMe; }
+        updateOwnProfileStatCounts(State.user);
+      },
+      errorMessage: action === 'follow' ? 'Could not follow' : 'Could not unfollow',
+    });
   };
   // Message
   const mb = $id('#upMessageBtn');
@@ -8784,20 +9199,46 @@ async function openProfileRelationSheet(kind) {
       renderAvatar(row.querySelector('.avatar'), u, { showStatus: true, online: !!u.online });
       row.querySelector('.profile-relation-meta').addEventListener('click', () => { sheet.remove(); openUserProfile(u.id); });
       const rm = row.querySelector('.profile-relation-remove');
-      if (rm) rm.addEventListener('click', async () => {
-        rm.disabled = true; rm.textContent = 'Removing…';
-        try {
-          const result = await api('/user/unfollow', { method: 'POST', body: { targetId: u.id } });
-          if (Array.isArray(result.followingIds)) State.user.following = result.followingIds;
-          else if (State.user.following) State.user.following = State.user.following.filter(id => id !== u.id);
-          const member = (State.members || []).find(m => m.id === u.id); if (member) member.iFollow = false;
-          row.remove();
-          updateOwnProfileStatCounts(State.user);
-          const remaining = list.querySelectorAll('.profile-relation-row').length;
-          const sg = $id('#statFollowing'); if (sg) sg.textContent = String(remaining);
-          if (!remaining) list.innerHTML = '<div class="profile-relation-empty">No following yet</div>';
-          renderDiscoverPeople();
-        } catch (e) { rm.disabled = false; rm.textContent = 'Remove'; toast(e.message || 'Remove failed', 'error'); }
+      if (rm) rm.addEventListener('click', () => {
+        if (rm.disabled) return;
+        const nextSibling = row.nextSibling;
+        optimistic({
+          snapshot: () => ({
+            following: Array.isArray(State.user.following) ? State.user.following.slice() : [],
+            memberFollowed: !!(State.members || []).find(m => m.id === u.id && m.iFollow),
+            listHtml: list.innerHTML,
+          }),
+          apply: () => {
+            // Row vanishes on tap; counts update in the same frame.
+            if (State.user.following) State.user.following = State.user.following.filter(id => id !== u.id);
+            const member = (State.members || []).find(m => m.id === u.id); if (member) member.iFollow = false;
+            row.remove();
+            updateOwnProfileStatCounts(State.user);
+            const remaining = list.querySelectorAll('.profile-relation-row').length;
+            const sg = $id('#statFollowing'); if (sg) sg.textContent = String(remaining);
+            if (!remaining) list.innerHTML = '<div class="profile-relation-empty">No following yet</div>';
+          },
+          request: () => api('/user/unfollow', { method: 'POST', body: { targetId: u.id } }),
+          commit: (result) => {
+            if (result && Array.isArray(result.followingIds)) State.user.following = result.followingIds;
+            updateOwnProfileStatCounts(State.user);
+            renderDiscoverPeople();
+          },
+          restore: (snap) => {
+            State.user.following = snap.following;
+            const member = (State.members || []).find(m => m.id === u.id);
+            if (member) member.iFollow = snap.memberFollowed;
+            updateOwnProfileStatCounts(State.user);
+            // The empty-state may have replaced the whole list: rebuild if so.
+            if (!list.querySelector('.profile-relation-row') && snap.listHtml) list.innerHTML = snap.listHtml;
+            else if (nextSibling && nextSibling.parentNode === list) list.insertBefore(row, nextSibling);
+            else list.appendChild(row);
+            const sg = $id('#statFollowing');
+            if (sg) sg.textContent = String(list.querySelectorAll('.profile-relation-row').length);
+            rm.disabled = false; rm.textContent = 'Remove';
+          },
+          errorMessage: 'Could not unfollow',
+        });
       });
       list.appendChild(row);
     });
@@ -8834,20 +9275,45 @@ function renderDiscoverPeople() {
       card.remove(); if (box.children.length === 0) sec.style.display = 'none';
     });
     const fb = card.querySelector('.discover-follow-btn');
-    fb.addEventListener('click', async () => {
-      fb.disabled = true; fb.textContent = 'Following...';
-      try {
-        const result = await api('/user/follow', { method: 'POST', body: { targetId: m.id } });
-        if (Array.isArray(result.followingIds)) State.user.following = result.followingIds;
-        else {
+    fb.addEventListener('click', () => {
+      if (fb.disabled) return;
+      const nextSibling = card.nextSibling;
+      optimistic({
+        snapshot: () => ({
+          following: Array.isArray(State.user.following) ? State.user.following.slice() : [],
+          memberFollowed: !!(State.members || []).find(x => x.id === m.id && x.iFollow),
+          secDisplay: sec.style.display,
+        }),
+        apply: () => {
+          // Card disappears immediately and the count moves right away.
           if (!State.user.following) State.user.following = [];
           if (!State.user.following.includes(m.id)) State.user.following.push(m.id);
-        }
-        const member = (State.members || []).find(x => x.id === m.id); if (member) member.iFollow = true;
-        updateOwnProfileStatCounts(State.user);
-        card.remove(); if (box.children.length === 0) sec.style.display = 'none';
-        toast('Followed ' + (m.displayName || m.username));
-      } catch (_) { fb.disabled = false; fb.textContent = 'Follow'; }
+          const member = (State.members || []).find(x => x.id === m.id); if (member) member.iFollow = true;
+          updateOwnProfileStatCounts(State.user);
+          card.remove();
+          if (box.children.length === 0) sec.style.display = 'none';
+        },
+        request: () => api('/user/follow', { method: 'POST', body: { targetId: m.id } }),
+        commit: (result) => {
+          if (result && Array.isArray(result.followingIds)) State.user.following = result.followingIds;
+          updateOwnProfileStatCounts(State.user);
+          toast(result && result.requested
+            ? 'Follow request sent'
+            : 'Followed ' + (m.displayName || m.username));
+        },
+        restore: (snap) => {
+          State.user.following = snap.following;
+          const member = (State.members || []).find(x => x.id === m.id);
+          if (member) member.iFollow = snap.memberFollowed;
+          updateOwnProfileStatCounts(State.user);
+          // Put the card back where it was.
+          sec.style.display = snap.secDisplay;
+          if (nextSibling && nextSibling.parentNode === box) box.insertBefore(card, nextSibling);
+          else box.appendChild(card);
+          fb.disabled = false; fb.textContent = 'Follow';
+        },
+        errorMessage: 'Could not follow',
+      });
     });
     box.appendChild(card);
   });
@@ -9084,6 +9550,101 @@ async function loadAll() {
 }
 
 /* ====== Toast with Undo button ====== */
+/* ============================================================================
+   Optimistic mutation engine
+   ----------------------------------------------------------------------------
+   One place that implements the pattern every optimistic interaction needs:
+
+     1. snapshot the state we are about to touch,
+     2. apply the change to the UI immediately,
+     3. fire the request in the background,
+     4. reconcile with whatever the server actually returned, or
+     5. roll back to the snapshot and offer a non-blocking Retry.
+
+   Written against this codebase's plain-DOM style: `apply` mutates State and
+   patches the DOM directly, and `snapshot`/`restore` are explicit so each call
+   site controls exactly how much is captured (a deep clone of the whole feed
+   per like would be wasteful).
+   ============================================================================ */
+
+// Non-blocking failure notice with a Retry button. Deliberately mirrors
+// undoToast() so failures feel like the same UI language as undo.
+function retryToast(msg, onRetry, durationMs = 7000) {
+  const t = $id('#toast');
+  if (!t) return;
+  t.innerHTML = `<span>${escapeHtml(msg)}</span>` + (onRetry ? `<button class="toast-undo">RETRY</button>` : '');
+  t.className = 'toast error' + (onRetry ? ' with-undo' : '');
+  t.classList.remove('hidden');
+  if (window.Motion && window.Motion.animate) {
+    try {
+      window.Motion.animate(t,
+        { opacity: [0, 1], transform: ['translate(-50%, 14px) scale(.94)', 'translate(-50%, 0) scale(1)'] },
+        { duration: 0.32, easing: [0.34, 1.4, 0.64, 1] });
+    } catch (_) {}
+  }
+  let resolved = false;
+  const btn = t.querySelector('.toast-undo');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(t._tm);
+      t.classList.add('hidden');
+      try { onRetry(); } catch (_) {}
+    });
+  }
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => {
+    if (resolved) return;
+    resolved = true;
+    t.classList.add('hidden');
+  }, durationMs);
+}
+
+// Turn an error into something a human can act on.
+function _optimisticErrorMessage(err, fallback) {
+  const m = (err && err.message) || '';
+  if (!m) return fallback;
+  if (m === 'Network timeout' || m === 'Network error') return 'No connection — not saved';
+  if (err && err.status === 500) return 'Server error — not saved';
+  if (err && err.status === 503) return 'Server busy — not saved';
+  return m;
+}
+
+/**
+ * Run an optimistic mutation.
+ *
+ * @param {object}   o
+ * @param {function} o.snapshot  Capture and return whatever `restore` needs.
+ * @param {function} o.apply     Mutate State + DOM immediately. Runs before the request.
+ * @param {function} o.request   Returns the promise for the server call.
+ * @param {function} [o.commit]  (serverData) => void. Reconcile with the server's copy.
+ * @param {function} o.restore   (snap) => void. Put everything back exactly as it was.
+ * @param {string}   [o.errorMessage]
+ * @param {boolean}  [o.retry=true] Offer a Retry button on failure.
+ * @returns {Promise<{ok:boolean, data?:any, error?:Error}>} Never rejects.
+ */
+async function optimistic(o) {
+  const snap = o.snapshot ? o.snapshot() : null;
+  if (o.apply) o.apply();
+  const run = async () => {
+    try {
+      const data = await o.request();
+      if (o.commit) o.commit(data);
+      return { ok: true, data };
+    } catch (err) {
+      // Roll back to the exact pre-mutation state, then tell the user
+      // without stealing focus or blocking anything.
+      try { if (o.restore) o.restore(snap); } catch (_) {}
+      const msg = _optimisticErrorMessage(err, o.errorMessage || 'Something went wrong');
+      if (o.retry === false) toast(msg, 'error');
+      else retryToast(msg, () => { optimistic(o); });
+      return { ok: false, error: err };
+    }
+  };
+  return run();
+}
+
 function undoToast(msg, onUndo, durationMs = 6000) {
   const t = $id('#toast');
   t.innerHTML = `<span>${escapeHtml(msg)}</span><button class="toast-undo">UNDO</button>`;

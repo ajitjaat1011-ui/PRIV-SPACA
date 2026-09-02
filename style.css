@@ -8886,3 +8886,53 @@ body{
 /* Pending (optimistic) bubble: shown instantly, dimmed until the server
    confirms. No layout shift when it resolves — only opacity changes. */
 .message.pending .bubble{opacity:.72}
+
+/* ============================================================================
+   v141 — Optimistic UI states
+   Appended at the end so these win over earlier blocks (project rule).
+   Everything here is opacity/colour only: a pending element occupies exactly
+   the same box as its confirmed self, so nothing reflows when it resolves.
+   ============================================================================ */
+
+/* --- Pending post card ---------------------------------------------------- */
+.post-card.pending{opacity:.66}
+.post-card.pending .post-actions,
+.post-card.pending .add-comment-row,
+.post-card.pending .view-comments{pointer-events:none;opacity:.5}
+.post-card.pending .post-time::after{
+  content:'· Posting…';
+  margin-left:6px;
+  font-weight:600;
+  letter-spacing:.02em;
+  color:var(--gold, #c9a227);
+}
+
+/* --- Pending comment (sheet + preview) ------------------------------------ */
+.comments-sheet-list li.pending{opacity:.62}
+.comments-sheet-list li.pending .meta-row{font-style:italic}
+
+/* --- Retry toast ---------------------------------------------------------- */
+.toast.error.with-undo .toast-undo{
+  color:#ffd7de;
+  border-color:rgba(238,106,128,.5);
+}
+.toast.error.with-undo .toast-undo:hover{
+  background:rgba(238,106,128,.18);
+  color:#fff;
+}
+
+/* --- Dark theme twins (both selectors required, project rule) -------------- */
+[data-theme="dark"] .post-card.pending{opacity:.6}
+[data-theme="dark"] .post-card.pending .post-time::after{color:#e8c860}
+[data-theme="dark"] .comments-sheet-list li.pending{opacity:.58}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]) .post-card.pending{opacity:.6}
+  html:not([data-theme="light"]) .post-card.pending .post-time::after{color:#e8c860}
+  html:not([data-theme="light"]) .comments-sheet-list li.pending{opacity:.58}
+}
+
+/* Respect users who don't want motion: no pulsing, just the dim. */
+@media (prefers-reduced-motion:reduce){
+  .post-card.pending,
+  .comments-sheet-list li.pending{transition:none}
+}
