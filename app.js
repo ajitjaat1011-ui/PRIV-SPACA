@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v143';
+const APP_VERSION = 'priv-spaca-v150';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -3997,7 +3997,9 @@ async function pollNotifications() {
   try {
     if (!_lastPostsLoadedAt || (Date.now() - _lastPostsLoadedAt) > 10000) {
       const r = await api('/posts');
-      State.posts = r.posts || State.posts;
+      // Merge, never clobber: this poll runs on a timer and its payload can
+      // be a read replica that predates a post or comment the user just made.
+      State.posts = r.posts ? _mergeRecentLikes(_mergeRecentComments(_mergePendingPosts(r.posts))) : State.posts;
       _lastPostsLoadedAt = Date.now();
     }
   } catch (_) {}
@@ -4164,6 +4166,108 @@ function makeTempPost(fields) {
   }, fields || {});
 }
 
+/* A confirmed comment can still be missing from the next /posts or /feed
+   payload — the read replica hasn't caught up with the write. Blind-assigning
+   that payload deletes a comment the user watched succeed.
+
+   Same lesson as the v140 unread-badge race: locally-known state that the
+   server also reports needs a suppression window, not just a local write. */
+const RECENT_COMMENT_MS = 30000;
+const _recentComments = new Map();   // postId -> [{ comment, at }]
+
+function rememberRecentComment(postId, comment) {
+  if (!postId || !comment || !comment.id) return;
+  const arr = _recentComments.get(postId) || [];
+  arr.push({ comment, at: Date.now() });
+  _recentComments.set(postId, arr);
+}
+
+/**
+ * Replace a remembered temp comment with the server's confirmed copy,
+ * keeping its position so nothing jumps.
+ */
+function upgradeRecentComment(postId, tempId, real) {
+  const arr = _recentComments.get(postId);
+  if (!arr) return;
+  const e = arr.find(x => x.comment && x.comment.id === tempId);
+  if (!e) { rememberRecentComment(postId, real); return; }
+  if (real && real.id) e.comment = Object.assign({}, e.comment, real, { _pending: false });
+  else e.comment._pending = false;
+  e.at = Date.now();
+}
+
+/* Likes have exactly the same payload-lag problem as comments: a refresh can
+   report the pre-like array moments after the server accepted the like. */
+const _recentLikes = new Map();   // postId -> { likes, likeCount, at }
+
+function rememberRecentLike(postId, likes, likeCount) {
+  if (!postId) return;
+  _recentLikes.set(postId, { likes: (likes || []).slice(), likeCount, at: Date.now() });
+}
+
+function forgetRecentLike(postId) { _recentLikes.delete(postId); }
+
+/** Re-apply recent local like state over a refresh payload. */
+function _mergeRecentLikes(list) {
+  if (!Array.isArray(list) || _recentLikes.size === 0) return list;
+  const now = Date.now();
+  for (const [postId, e] of Array.from(_recentLikes)) {
+    if ((now - e.at) >= RECENT_COMMENT_MS) { _recentLikes.delete(postId); continue; }
+    const post = list.find(p => p && p.id === postId);
+    if (!post) continue;
+    post.likes = e.likes.slice();
+    post.likeCount = e.likeCount;
+  }
+  return list;
+}
+
+/** Forget a comment that failed, so a later refresh doesn't resurrect it. */
+function forgetRecentComment(postId, commentId) {
+  const arr = _recentComments.get(postId);
+  if (!arr) return;
+  const left = arr.filter(x => !x.comment || x.comment.id !== commentId);
+  if (left.length) _recentComments.set(postId, left);
+  else _recentComments.delete(postId);
+}
+
+/**
+ * Re-apply the remembered comments to the lists State is holding RIGHT NOW.
+ *
+ * Needed because a refresh can land between the optimistic insert and the
+ * server's confirmation: State.posts is then a brand-new array of brand-new
+ * post objects, and the commit handler's captured post object is an orphan
+ * nothing renders from. Repairing live state closes that window.
+ */
+function reapplyRecentComments() {
+  if (_recentComments.size === 0 && _recentLikes.size === 0) return;
+  _mergeRecentLikes(_mergeRecentComments(State.posts));
+  if (Array.isArray(State.feedPosts)) _mergeRecentLikes(_mergeRecentComments(State.feedPosts));
+  // Force the diff renderer to notice the changed comment counts.
+  lastPostsSignature = null;
+  // Only repaint if the feed is actually on screen. Re-rendering the feed
+  // while the user is in chat is pure main-thread contention — the next
+  // switchTab() to 'feed' re-renders anyway.
+  if (State.currentTab === 'feed') renderPosts();
+}
+
+/** Re-attach recently-confirmed comments that a refresh payload still lacks. */
+function _mergeRecentComments(list) {
+  if (!Array.isArray(list) || _recentComments.size === 0) return list;
+  const now = Date.now();
+  for (const [postId, entries] of Array.from(_recentComments)) {
+    const live = entries.filter(e => (now - e.at) < RECENT_COMMENT_MS);
+    if (!live.length) { _recentComments.delete(postId); continue; }
+    _recentComments.set(postId, live);
+    const post = list.find(p => p && p.id === postId);
+    if (!post) continue;
+    post.comments = Array.isArray(post.comments) ? post.comments : [];
+    const have = new Set(post.comments.map(c => c && c.id));
+    live.forEach(e => { if (!have.has(e.comment.id)) post.comments.push(e.comment); });
+    post.commentCount = Math.max(post.commentCount || 0, post.comments.length);
+  }
+  return list;
+}
+
 /** Pending posts that are still young enough to be worth keeping. */
 function _livePendingPosts() {
   return (State.posts || []).filter(p =>
@@ -4245,7 +4349,7 @@ async function loadPosts(force = false) {
       const sig = newPosts.map(p => p.id + ':' + p.likeCount + ':' + p.commentCount).join('|');
       if (lastPostsSignature !== null && sig === lastPostsSignature) return State.posts;
       lastPostsSignature = sig;
-      State.posts = _mergePendingPosts(newPosts);
+      State.posts = _mergeRecentLikes(_mergeRecentComments(_mergePendingPosts(newPosts)));
       renderPosts();
       return State.posts;
     } catch (_) {
@@ -4273,7 +4377,7 @@ async function loadFeed(force = false) {
       const data = await api('/feed');
       const feedPosts = data.posts || [];
       _lastFeedLoadedAt = Date.now();
-      State.feedPosts = _mergePendingPosts(feedPosts);
+      State.feedPosts = _mergeRecentLikes(_mergeRecentComments(_mergePendingPosts(feedPosts)));
       // Merge feed posts into State.posts so stories rail + profile still work
       const existingIds = new Set(State.posts.map(p => p.id));
       feedPosts.forEach(p => { if (!existingIds.has(p.id)) State.posts.push(p); });
@@ -5233,11 +5337,17 @@ function renderPost(p) {
         // Patch just the comment-related UI in place (no full rebuild)
         patchCommentUI(card, p);
         if (activeCommentsPost && activeCommentsPost.id === p.id) appendCommentToSheet(temp);
+        // Protect it from a refresh that lands before the server confirms.
+        rememberRecentComment(p.id, temp);
       },
       request: () => api('/posts/comment', { method: 'POST', body: { postId: p.id, text } }),
       commit: (data) => {
         // Silent swap: temp client id -> real DB id. No visible re-render.
         swapTempComment(p, temp.id, data && data.comment);
+        upgradeRecentComment(p.id, temp.id, data && data.comment);
+        // If a refresh swapped the underlying objects mid-flight, repair them.
+        const livePost = (State.posts || []).find(x => x && x.id === p.id);
+        if (livePost && livePost !== p) reapplyRecentComments();
         const cached = _postCardCache.get(p.id);
         if (cached) cached.sig = _postCardSignature(p);
         patchCommentUI(card, p);
@@ -5249,13 +5359,23 @@ function renderPost(p) {
       },
       restore: (snap) => {
         dropTempComment(p, temp.id);
+        forgetRecentComment(p.id, temp.id);
         p.commentCount = snap.commentCount;
         const cached = _postCardCache.get(p.id);
         if (cached) cached.sig = _postCardSignature(p);
         patchCommentUI(card, p);
         if (activeCommentsPost && activeCommentsPost.id === p.id) removeCommentFromSheet(temp.id);
-        // Give the text back so nothing typed is ever lost.
-        if (!inp.value.trim()) { inp.value = snap.text; sb.disabled = false; }
+        // Give the text back so nothing typed is ever lost. The card may have
+        // been rebuilt while the request was in flight, which would leave our
+        // captured input detached — always write to the one on screen now.
+        const liveCard = (_postCardCache.get(p.id) || {}).card;
+        const liveInp = (liveCard && liveCard.isConnected ? liveCard : (inp.isConnected ? card : null));
+        const target = liveInp ? liveInp.querySelector('.post-add-comment input') : inp;
+        const btn = liveInp ? liveInp.querySelector('.post-add-comment .post-btn') : sb;
+        if (target && !target.value.trim()) {
+          target.value = snap.text;
+          if (btn) btn.disabled = false;
+        }
       },
       errorMessage: 'Comment not posted',
     });
@@ -5284,6 +5404,8 @@ function toggleLike(p, card) {
       else if (!p.likes.includes(meId)) p.likes.push(meId);
       p.likeCount = p.likes.length;
       patchLikeUI(card, p, meId);
+      // Protect it from a refresh whose payload predates this like.
+      rememberRecentLike(p.id, p.likes, p.likeCount);
       // Keep the card cache in step so a background refresh doesn't rebuild it.
       const cached = _postCardCache.get(p.id);
       if (cached) cached.sig = _postCardSignature(p);
@@ -5292,6 +5414,10 @@ function toggleLike(p, card) {
     commit: (data) => {
       // Sync with the server's authoritative count (in case of a race).
       if (data && typeof data.likeCount === 'number') p.likeCount = data.likeCount;
+      rememberRecentLike(p.id, p.likes, p.likeCount);
+      // A refresh may have swapped the post objects mid-flight.
+      const live = (State.posts || []).find(x => x && x.id === p.id);
+      if (live && live !== p) reapplyRecentComments();
       patchLikeUI(card, p, meId);
       const cached = _postCardCache.get(p.id);
       if (cached) cached.sig = _postCardSignature(p);
@@ -5301,6 +5427,7 @@ function toggleLike(p, card) {
     restore: (snap) => {
       p.likes = snap.likes;
       p.likeCount = snap.likeCount;
+      forgetRecentLike(p.id);
       patchLikeUI(card, p, meId);
       const cached = _postCardCache.get(p.id);
       if (cached) cached.sig = _postCardSignature(p);
@@ -5691,16 +5818,21 @@ function bindCommentsSheet() {
         // Append only — never rebuild the list, so the composer keeps focus.
         if (activeCommentsPost === post) appendCommentToSheet(temp);
         patchCard();
+        rememberRecentComment(post.id, temp);
       },
       request: () => api('/posts/comment', { method: 'POST', body: { postId: post.id, text } }),
       commit: (data) => {
         swapTempComment(post, temp.id, data && data.comment);
+        upgradeRecentComment(post.id, temp.id, data && data.comment);
+        const livePost2 = (State.posts || []).find(x => x && x.id === post.id);
+        if (livePost2 && livePost2 !== post) reapplyRecentComments();
         if (activeCommentsPost === post) confirmCommentInSheet(temp.id, data && data.comment);
         patchCard();
         boostPolling(20000);
       },
       restore: (snap) => {
         dropTempComment(post, temp.id);
+        forgetRecentComment(post.id, temp.id);
         post.commentCount = snap.commentCount;
         if (activeCommentsPost === post) {
           removeCommentFromSheet(temp.id);
