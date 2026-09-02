@@ -9,6 +9,7 @@
  */
 
 export const cfg = {
+  FIELD_KEY: '',
   // ---------- Config (refreshed on every request from c.env) ----------
   // SECURITY: never default to a known public secret. isDefaultJwtSecret() +
   // the global middleware (below) refuses to serve /api/* when this is empty
@@ -93,6 +94,9 @@ export function loadConfig(env) {
   if (!env) return;
   // Always overwrite — values can change per-deploy
   if (env.JWT_SECRET) cfg.JWT_SECRET = env.JWT_SECRET;
+  // Field-level PII encryption key. Absent = encryption disabled (plaintext),
+  // which is the pre-v155 behaviour and must keep working.
+  if (env.FIELD_KEY) cfg.FIELD_KEY = String(env.FIELD_KEY);
   if (env.GITHUB_PAT) cfg.GITHUB_PAT = env.GITHUB_PAT;
   if (env.TURSO_DATABASE_URL) cfg.TURSO_DATABASE_URL = String(env.TURSO_DATABASE_URL).trim();
   if (env.TURSO_AUTH_TOKEN) cfg.TURSO_AUTH_TOKEN = String(env.TURSO_AUTH_TOKEN).trim();

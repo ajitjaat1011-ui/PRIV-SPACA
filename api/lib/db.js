@@ -9,6 +9,7 @@
 import { state } from './state.js';
 import { CACHE_TTL_MS, EPHEMERAL_WRITE_INTERVAL_MS } from './config.js';
 import { isRepo, nowMs, safeJson, sleepMs } from './helpers.js';
+import { decryptUserPII } from './crypto-fields.js';
 import { mergeDatabase, normalizeDb, runScheduler } from './schema.js';
 import { repoRead, repoWrite } from './store-github.js';
 import { isTursoConfigured, isTursoPrimary, tursoClient, tursoReadDbVersioned, tursoWriteDbCAS } from './store-turso.js';
@@ -41,7 +42,12 @@ export async function fetchPrimaryDatabase() {
       const baseDb = safeJson(String(kvRow || '{}'), normalizeDb(state.localCache || {}));
       const uRows = (batchRs[1] && batchRs[1].rows) || [];
       const pRows = (batchRs[2] && batchRs[2].rows) || [];
-      const users = uRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
+      // db.js has its own ps_users parse paths, separate from store-turso.js,
+        // and these are the ones most requests actually go through. They have to
+        // decrypt too, or every profile read hands back ciphertext.
+        const users = await Promise.all(
+          uRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean).map(decryptUserPII)
+        );
       const posts = pRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
       if (users.length > 0) baseDb.users = users;
       if (posts.length > 0) baseDb.posts = posts;
@@ -90,7 +96,9 @@ export async function fetchDatabase({ fresh = false, includeTurso = true } = {})
         state.localCache = normalizeDb(safeJson(String(kvRow || '{}'), normalizeDb(state.localCache || {})));
         const uRows = (batchRs[1] && batchRs[1].rows) || [];
         const pRows = (batchRs[2] && batchRs[2].rows) || [];
-        const users = uRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
+        const users = await Promise.all(
+          uRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean).map(decryptUserPII)
+        );
         const posts = pRows.map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
         if (users.length > 0) state.localCache.users = users;
         if (posts.length > 0) state.localCache.posts = posts;

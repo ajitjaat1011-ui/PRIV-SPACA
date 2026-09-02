@@ -9,6 +9,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createClient as createTursoClient } from '@libsql/client/http';
 import { cfg } from './config.js';
+import { decryptUserPII, emailIndex, encryptUserPII } from './crypto-fields.js';
 import { state } from './state.js';
 import { nowMs, safeJson } from './helpers.js';
 import { normalizeDb } from './schema.js';
@@ -286,9 +287,12 @@ export async function syncTursoMirror(db) {
   try {
     const statements = [{ sql: 'DELETE FROM ps_users' }];
     for (const u of src.users || []) {
+      // PII is encrypted at the storage boundary, and email_lower becomes a
+      // blind index so login can still look it up. See crypto-fields.js.
+      const encU = await encryptUserPII(u);
       statements.push({
         sql: 'INSERT INTO ps_users (id, username_lower, email_lower, created_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?)',
-        args: [u.id, String(u.username || '').toLowerCase(), String(u.email || '').toLowerCase(), Number(u.createdAt || 0), ts, JSON.stringify(u)],
+        args: [u.id, String(u.username || '').toLowerCase(), await emailIndex(u.email), Number(u.createdAt || 0), ts, JSON.stringify(encU)],
       });
     }
     statements.push({ sql: 'DELETE FROM ps_posts' });
@@ -380,7 +384,9 @@ export async function fetchTursoMirror(fallbackDb = null) {
       postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300');
     }
     return normalizeDb({
-      users: (usersRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
+      users: await Promise.all(
+        (usersRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean).map(decryptUserPII)
+      ),
       posts: (postsRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
     });
   } catch (e) {
@@ -394,7 +400,7 @@ export async function fetchTursoUserById(userId) {
   await tursoEnsure();
   const row = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1', args: [userId] }).catch(() => ({ rows: [] }));
   if (!row.rows || row.rows.length === 0) return null;
-  return safeJson(String(row.rows[0].data_json || '{}'), null);
+  return await decryptUserPII(safeJson(String(row.rows[0].data_json || '{}'), null));
 }
 
 export async function fetchTursoNotifications(userId) {
@@ -439,7 +445,7 @@ export async function tursoUpsertUser(user) {
   try {
     await tursoClient().execute({
       sql: 'INSERT INTO ps_users (id, username_lower, email_lower, created_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET username_lower=excluded.username_lower, email_lower=excluded.email_lower, updated_at=excluded.updated_at, data_json=excluded.data_json',
-      args: [user.id, String(user.username || '').toLowerCase(), String(user.email || '').toLowerCase(), Number(user.createdAt || 0), ts, JSON.stringify(user)],
+      args: [user.id, String(user.username || '').toLowerCase(), await emailIndex(user.email), Number(user.createdAt || 0), ts, JSON.stringify(await encryptUserPII(user))],
     });
     return true;
   } catch (e) {

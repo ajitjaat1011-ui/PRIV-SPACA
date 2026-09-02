@@ -16,6 +16,7 @@ import { wrapUnexpected } from '../lib/errors.js';
 import { isEmail, isPin, isRepo, isUsername, normalizeAuthIdentifier, nowMs, safeJson, sanitizeText, sanitizeUser, uid } from '../lib/helpers.js';
 import { breakerSnapshot, loadSnapshot, withTimeout } from '../lib/resilience.js';
 import { pickBody } from '../lib/validate.js';
+import { decryptUserPII, emailIndex } from '../lib/crypto-fields.js';
 import { requireAdmin, requireAuth } from '../lib/middleware.js';
 import { AUTH_GENERIC_ERROR, authFailureDelay, authRateLimit, authSubjectRateLimit, checkAccountLock, clearLoginFails, recordLoginFail } from '../lib/ratelimit.js';
 import { repoRead } from '../lib/store-github.js';
@@ -204,11 +205,15 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
         if (isTursoConfigured()) {
           const turso = tursoClient();
           const r = await turso.execute({
+            // email_lower holds a blind index once FIELD_KEY is set, so the
+            // email arm of this lookup must be hashed the same way. The
+            // username arm stays plain. emailIndex() returns the lowercased
+            // input unchanged when encryption is off, so this is a no-op then.
             sql: "SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1",
-            args: [idLower, idLower]
+            args: [idLower, await emailIndex(idLower)]
           });
           if (r.rows && r.rows.length > 0) {
-            const parsed = safeJson(String(r.rows[0].data_json || ''), null);
+            const parsed = await decryptUserPII(safeJson(String(r.rows[0].data_json || ''), null));
             if (parsed && parsed.id) {
               user = parsed;
               _loginUserCache.set(userCacheKey, { _user: user, _cachedAt: Date.now() });
@@ -350,10 +355,10 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
         const turso = tursoClient();
         const r = await turso.execute({
           sql: "SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1",
-          args: [idLower, idLower]
+          args: [idLower, await emailIndex(idLower)]
         });
         if (r.rows && r.rows.length > 0) {
-          const parsed = safeJson(String(r.rows[0].data_json || ''), null);
+          const parsed = await decryptUserPII(safeJson(String(r.rows[0].data_json || ''), null));
           if (parsed && parsed.id) user = parsed;
         }
       }
