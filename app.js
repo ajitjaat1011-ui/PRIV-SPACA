@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v142';
+const APP_VERSION = 'priv-spaca-v143';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -4572,8 +4572,15 @@ function renderPosts() {
       // Unchanged — reuse
       card = cached.card;
     } else {
-      // Changed (or new) — build (or rebuild) the card
+      // Changed (or new) — build (or rebuild) the card.
       card = renderPost(p);
+      // A rebuild produces a NEW node while the old one is still in the list.
+      // Drop it here, at the moment it is superseded — cleaning up on the
+      // next render is too late: if no further render happens the post stays
+      // on screen twice, the stale copy still showing its old state.
+      if (cached && cached.card && cached.card !== card && cached.card.parentNode === list) {
+        cached.card.remove();
+      }
       _postCardCache.set(p.id, { card, sig });
     }
     // Ensure correct position in DOM
