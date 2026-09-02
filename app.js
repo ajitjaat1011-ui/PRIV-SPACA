@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v150';
+const APP_VERSION = 'priv-spaca-v153';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -4221,6 +4221,20 @@ function _mergeRecentLikes(list) {
   return list;
 }
 
+/**
+ * The post object State is CURRENTLY rendering from.
+ *
+ * A refresh can replace State.posts/State.feedPosts with new objects while a
+ * request is in flight, orphaning the object a handler captured. Rollbacks
+ * have to repair the live one or the UI keeps the failed change.
+ */
+function livePostObjects(postId) {
+  const out = [];
+  ((State.posts || [])).forEach(x => { if (x && x.id === postId) out.push(x); });
+  if (Array.isArray(State.feedPosts)) State.feedPosts.forEach(x => { if (x && x.id === postId) out.push(x); });
+  return out;
+}
+
 /** Forget a comment that failed, so a later refresh doesn't resurrect it. */
 function forgetRecentComment(postId, commentId) {
   const arr = _recentComments.get(postId);
@@ -5316,6 +5330,15 @@ function renderPost(p) {
   sb.type = 'submit'; sb.className = 'post-btn'; sb.textContent = 'Post'; sb.disabled = true;
   emoji.addEventListener('click', () => { inp.value += '😊'; inp.focus(); sb.disabled = !inp.value.trim(); });
   inp.addEventListener('input', () => { sb.disabled = !inp.value.trim(); });
+  // A rebuild swaps in a brand-new composer node. Re-hydrate any draft that
+  // was returned by a failed send, otherwise the text silently vanishes the
+  // next time the feed refreshes.
+  const savedDraft = _commentDrafts.get(p.id);
+  if (savedDraft) { inp.value = savedDraft; sb.disabled = false; }
+  inp.addEventListener('input', () => {
+    if (inp.value.trim()) _commentDrafts.set(p.id, inp.value);
+    else _commentDrafts.delete(p.id);
+  });
   const submit = () => {
     const text = inp.value.trim();
     if (!text) return;
@@ -5323,6 +5346,7 @@ function renderPost(p) {
     // Clear the box straight away — the comment is already "sent" as far as
     // the user is concerned.
     inp.value = '';
+    _commentDrafts.delete(p.id);
     sb.disabled = true;
     optimistic({
       snapshot: () => ({ text, commentCount: p.commentCount || 0 }),
@@ -5358,20 +5382,31 @@ function renderPost(p) {
         boostPolling(20000);
       },
       restore: (snap) => {
-        dropTempComment(p, temp.id);
         forgetRecentComment(p.id, temp.id);
+        dropTempComment(p, temp.id);
+        livePostObjects(p.id).forEach(lp => {
+          if (lp === p) return;
+          dropTempComment(lp, temp.id);
+          lp.commentCount = snap.commentCount;
+        });
         p.commentCount = snap.commentCount;
         const cached = _postCardCache.get(p.id);
         if (cached) cached.sig = _postCardSignature(p);
-        patchCommentUI(card, p);
+        const rbCard = document.querySelector(`#feedList .post-card[data-id="${CSS.escape(p.id)}"]`)
+          || (cached && cached.card) || card;
+        patchCommentUI(rbCard, p);
         if (activeCommentsPost && activeCommentsPost.id === p.id) removeCommentFromSheet(temp.id);
         // Give the text back so nothing typed is ever lost. The card may have
         // been rebuilt while the request was in flight, which would leave our
         // captured input detached — always write to the one on screen now.
-        const liveCard = (_postCardCache.get(p.id) || {}).card;
-        const liveInp = (liveCard && liveCard.isConnected ? liveCard : (inp.isConnected ? card : null));
-        const target = liveInp ? liveInp.querySelector('.post-add-comment input') : inp;
-        const btn = liveInp ? liveInp.querySelector('.post-add-comment .post-btn') : sb;
+        // Park the draft first: it must survive even if a refresh rebuilds
+        // this card a moment from now.
+        _commentDrafts.set(p.id, snap.text);
+        const liveCard = document.querySelector(`#feedList .post-card[data-id="${CSS.escape(p.id)}"]`)
+          || ((_postCardCache.get(p.id) || {}).card)
+          || (inp.isConnected ? card : null);
+        const target = liveCard ? liveCard.querySelector('.post-add-comment input') : null;
+        const btn = liveCard ? liveCard.querySelector('.post-add-comment .post-btn') : null;
         if (target && !target.value.trim()) {
           target.value = snap.text;
           if (btn) btn.disabled = false;
@@ -5425,10 +5460,22 @@ function toggleLike(p, card) {
       lastPostsSignature = _computePostsSignature(State.posts);
     },
     restore: (snap) => {
+      // Re-arm the protection with the PRE-CLICK state rather than dropping
+      // it. That state is itself locally-known-good (an earlier like the
+      // server accepted), and a lagging replica would otherwise undo it the
+      // moment the next refresh lands.
+      rememberRecentLike(p.id, snap.likes, snap.likeCount);
       p.likes = snap.likes;
       p.likeCount = snap.likeCount;
-      forgetRecentLike(p.id);
-      patchLikeUI(card, p, meId);
+      // Repair whatever State is rendering from, not just our captured copy.
+      livePostObjects(p.id).forEach(lp => {
+        if (lp === p) return;
+        lp.likes = snap.likes.slice();
+        lp.likeCount = snap.likeCount;
+      });
+      const liveCard = document.querySelector(`#feedList .post-card[data-id="${CSS.escape(p.id)}"]`)
+        || ((_postCardCache.get(p.id) || {}).card) || card;
+      patchLikeUI(liveCard, p, meId);
       const cached = _postCardCache.get(p.id);
       if (cached) cached.sig = _postCardSignature(p);
     },
@@ -5663,6 +5710,9 @@ let activeCommentsPost = null;
 
 let _tempCommentSeq = 0;
 
+/** Unsent comment text per post, so it survives a card rebuild. */
+const _commentDrafts = new Map();
+
 /** Build the comment object we show before the server has seen it. */
 function makeTempComment(text) {
   const me = State.user || {};
@@ -5831,8 +5881,13 @@ function bindCommentsSheet() {
         boostPolling(20000);
       },
       restore: (snap) => {
-        dropTempComment(post, temp.id);
         forgetRecentComment(post.id, temp.id);
+        dropTempComment(post, temp.id);
+        livePostObjects(post.id).forEach(lp => {
+          if (lp === post) return;
+          dropTempComment(lp, temp.id);
+          lp.commentCount = snap.commentCount;
+        });
         post.commentCount = snap.commentCount;
         if (activeCommentsPost === post) {
           removeCommentFromSheet(temp.id);
