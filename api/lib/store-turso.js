@@ -159,8 +159,62 @@ export async function tursoEnsure() {
     );
     CREATE INDEX IF NOT EXISTS idx_ps_user_feeds_user_created ON ps_user_feeds (user_id, created_at DESC);
   `);
+  await tursoMigrate();
   state._tursoReady = true;
   return true;
+}
+
+/**
+ * Additive column migrations.
+ *
+ * CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists, even
+ * if the existing table is missing columns the schema above declares. So a
+ * table created by an older build keeps its old shape forever and every query
+ * touching a newer column fails at runtime.
+ *
+ * That is not hypothetical: ps_rate_limits in production was created with only
+ * (key, count, reset_at, updated_at). The schema above also declares
+ * locked_until and first_at, which the brute-force lockout in ratelimit.js
+ * needs — so checkAccountLock() and recordLoginFail() were throwing
+ *   "no such column: first_at"
+ * on every login and silently falling back to per-isolate memory. The lockout
+ * still worked within one isolate, but an attacker spreading attempts across
+ * isolates was never durably locked out. Found by the structured error logging
+ * added in v154.
+ *
+ * Each entry is idempotent: we read the live column list and only add what is
+ * missing. Adding a column with a constant DEFAULT is a fast metadata-only
+ * operation in SQLite, so this is safe to run on every cold start.
+ */
+async function tursoMigrate() {
+  const wanted = {
+    ps_rate_limits: {
+      locked_until: 'INTEGER DEFAULT 0',
+      first_at: 'INTEGER DEFAULT 0',
+    },
+  };
+  const c = tursoClient();
+  for (const [table, columns] of Object.entries(wanted)) {
+    try {
+      const info = await c.execute({ sql: `PRAGMA table_info(${table})` });
+      const have = new Set((info.rows || []).map((r) => String(r.name)));
+      if (have.size === 0) continue; // table absent; CREATE TABLE above owns it
+      for (const [col, decl] of Object.entries(columns)) {
+        if (have.has(col)) continue;
+        try {
+          await c.execute({ sql: `ALTER TABLE ${table} ADD COLUMN ${col} ${decl}` });
+          console.log(JSON.stringify({ level: 'info', msg: 'schema_migrated', table, column: col }));
+        } catch (e) {
+          // A concurrent isolate may have added it first — that is fine.
+          if (!/duplicate column/i.test(String((e && e.message) || ''))) {
+            console.warn('[tursoMigrate] failed', table, col, e && e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[tursoMigrate] table_info failed for', table, e && e.message);
+    }
+  }
 }
 
 // ---------- Turso/libSQL full JSON primary storage ----------
