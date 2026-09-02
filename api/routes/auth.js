@@ -36,7 +36,7 @@ app.get('/api/health', (c) => c.json({
   // Those two are the frontend cache-busting pair and bumping them forces every
   // client to reload — pointless for a change that ships no new frontend asset.
   // This field is how we confirm which worker build is actually live.
-  apiVersion: 'security-phase1',
+  apiVersion: 'security-phase2',
   time: nowMs(), version: 'phase2-turso-json-primary',
   ...(cfg.APP_MIN_VERSION ? { minVersion: cfg.APP_MIN_VERSION } : {}),
 }));
