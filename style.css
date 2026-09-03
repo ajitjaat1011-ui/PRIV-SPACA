@@ -8936,3 +8936,28 @@ body{
   .post-card.pending,
   .comments-sheet-list li.pending{transition:none}
 }
+
+
+/* ===== Frontend audit fixes v156 ===== */
+.data-load-state{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  margin:12px 14px;padding:14px 16px;border:1px solid rgba(132,155,194,.3);
+  border-radius:16px;background:linear-gradient(145deg,#f8fbff,#eef4fc);
+  color:#30415f;box-shadow:0 8px 24px rgba(59,83,125,.08)
+}
+.data-load-state>div{display:flex;flex-direction:column;gap:3px}.data-load-state strong{font-size:14px}.data-load-state span{font-size:12.5px;color:#65748e}
+.data-load-state button{border:0;border-radius:999px;padding:8px 13px;background:#3f76d4;color:#fff;font:inherit;font-size:12px;font-weight:750;cursor:pointer}
+.data-load-state.compact{margin:8px 12px;padding:10px 12px}.profile-load-state{margin:10px 0}
+.comment-reply-btn{appearance:none;border:0;background:transparent;color:inherit;font:inherit;font-weight:700;padding:2px 4px;cursor:pointer;border-radius:6px}
+.comment-reply-btn:hover,.comment-reply-btn:focus-visible{text-decoration:underline;outline:2px solid currentColor;outline-offset:2px}
+button.story-tool-item{appearance:none;border:0;background:transparent;color:inherit;font:inherit;padding:0}
+button.story-font-pill,button.dur-pill,button.story-pill,button.color-swatch{font:inherit}
+button.story-sheet-handle{display:block;border:0;padding:0;cursor:pointer}
+[role="button"]:focus-visible,.story-tool-item:focus-visible,.story-font-pill:focus-visible,.dur-pill:focus-visible,.story-pill:focus-visible,.color-swatch:focus-visible{outline:3px solid #8fbcff;outline-offset:3px}
+.is-busy{cursor:wait!important;opacity:.72}
+[data-theme="dark"] .data-load-state{background:linear-gradient(145deg,#172238,#111a2b);border-color:rgba(143,188,255,.26);color:#eef5ff;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+[data-theme="dark"] .data-load-state span{color:#a9b9d3}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .data-load-state{background:linear-gradient(145deg,#172238,#111a2b);border-color:rgba(143,188,255,.26);color:#eef5ff;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+  :root:not([data-theme="light"]) .data-load-state span{color:#a9b9d3}
+}

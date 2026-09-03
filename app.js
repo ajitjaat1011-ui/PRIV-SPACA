@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v153';
+const APP_VERSION = 'priv-spaca-v156';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -81,6 +81,25 @@ const $id = (id) => {
   return el;
 };
 function invalidateDomCache(id) { if (id) { const key = id && id.charAt(0) === '#' ? id.slice(1) : id; _domCache.delete(key); } else _domCache.clear(); }
+
+function bindKeyboardActivation(el, activate) {
+  if (!el || el.dataset.keyboardActivationBound === '1') return;
+  el.dataset.keyboardActivationBound = '1';
+  el.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    activate(e);
+  });
+}
+
+function setActionBusy(control, busy, label) {
+  if (!control) return;
+  control.disabled = !!busy;
+  control.setAttribute('aria-busy', busy ? 'true' : 'false');
+  control.classList.toggle('is-busy', !!busy);
+  if (busy && label) control.setAttribute('aria-label', label);
+  if (!busy && control.dataset.idleLabel) control.setAttribute('aria-label', control.dataset.idleLabel);
+}
 
 // ====== Robust file-type detection (HEIC/HEIF fix) ======
 // Browsers frequently report file.type as an EMPTY STRING for HEIC/HEIF
@@ -716,9 +735,10 @@ function showApp() {
   _callConnected = false;
   _callConnecting = false;
   window._rtcPendingOffer = null;
-  switchTab('feed');
+  switchTab(readAppRoute().tab, { history: 'replace', preserveContent: true });
   startPolls();
   loadAll();
+  queueDeepLinkResolution();
   loadCloseFriends().catch(() => {});
   loadFollowRequests(true).catch(() => {});
   // Part 3: publish E2E public key so peers can DM us with Secret Chat
@@ -1099,7 +1119,7 @@ function acceptSession(data) {
 // ====== New-post composer (top "+" button) ======
 // Reuses the inline composer card already built into the feed view.
 function openPostComposer() {
-  switchTab('feed');
+  switchTab('feed', { history: 'push' });
   const card = $id('#inlineComposerCard');
   if (card) {
     card.classList.remove('hidden');
@@ -1186,10 +1206,10 @@ function restoreScrollForTab(tab) {
 }
 
 function bindTabs() {
-  $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+  $$('.bn-btn[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab, { history: 'push' })));
   const bw = $id('#brandWordmarkBtn') || $id('#brandWordmark');
   if (bw) bw.addEventListener('click', () => {
-    switchTab('feed');
+    switchTab('feed', { history: 'push' });
     const fv = $id('#feedView');
     if (fv) fv.scrollTo({ top: 0, behavior: 'smooth' });
     _scrollMemory.feed = 0;
@@ -1198,7 +1218,7 @@ function bindTabs() {
   });
   // Legacy top-chat button is gone; keep guard in case markup is cached
   const tc = $id('#topChatBtn');
-  if (tc) tc.addEventListener('click', () => switchTab('chat'));
+  if (tc) tc.addEventListener('click', () => switchTab('chat', { history: 'push' }));
   const tn = $id('#topNotifBtn');
   if (tn) tn.addEventListener('click', openNotifications);
   // New IG-style top "+" — jump to feed, focus composer, open photo picker
@@ -1237,7 +1257,69 @@ function suppressSearchAutofillPrompt() {
   }, 650);
 }
 
-function switchTab(tab) {
+const APP_TABS = new Set(['feed', 'search', 'chat', 'groups', 'profile']);
+
+function readAppRoute() {
+  const url = new URL(location.href);
+  const hashParams = new URLSearchParams((url.hash || '').replace(/^#/, ''));
+  const requestedTab = url.searchParams.get('tab');
+  return {
+    tab: APP_TABS.has(requestedTab) ? requestedTab : 'feed',
+    post: url.searchParams.get('post') || hashParams.get('post') || '',
+    story: url.searchParams.get('story') || hashParams.get('story') || '',
+  };
+}
+
+function syncTabRoute(tab, mode = 'none', preserveContent = false) {
+  if (mode !== 'push' && mode !== 'replace') return;
+  const url = new URL(location.href);
+  if (tab === 'feed') url.searchParams.delete('tab');
+  else url.searchParams.set('tab', tab);
+  if (!preserveContent) {
+    url.searchParams.delete('post');
+    url.searchParams.delete('story');
+    const hashParams = new URLSearchParams((url.hash || '').replace(/^#/, ''));
+    if (hashParams.has('post') || hashParams.has('story')) url.hash = '';
+  }
+  const next = url.pathname + url.search + url.hash;
+  const current = location.pathname + location.search + location.hash;
+  const state = { ...(history.state || {}), tab };
+  if (mode === 'replace') history.replaceState(state, '', next);
+  else if (next !== current || history.state?.tab !== tab) history.pushState(state, '', next);
+}
+
+let _deepLinkRun = 0;
+async function resolveDeepLink() {
+  if (!State.token || !State.user) return;
+  const run = ++_deepLinkRun;
+  const route = readAppRoute();
+  if (!route.post && !route.story) return;
+  await Promise.allSettled([loadMembers(), loadPosts(true)]);
+  if (run !== _deepLinkRun) return;
+  if (route.story) {
+    const story = (State.posts || []).find(p => p && p.id === route.story && isActiveStoryPost(p));
+    if (!story) { toast('This story is unavailable, expired, or private.', 'error'); return; }
+    const user = (State.members || []).find(u => u && u.id === story.userId)
+      || (State.user && State.user.id === story.userId ? State.user : null)
+      || story.author || story.authorSnapshot;
+    if (!user || !user.id) { toast('This story is unavailable or private.', 'error'); return; }
+    const sequence = getStorySequence(user.id);
+    const index = sequence.findIndex(p => p && p.id === story.id);
+    if (index < 0) { toast('This story is unavailable, expired, or private.', 'error'); return; }
+    openStoryFor(user, index);
+    return;
+  }
+  const post = [...(State.posts || []), ...(State.feedPosts || [])].find(p => p && p.id === route.post && !isStoryRecord(p));
+  if (!post) { toast('This post is unavailable, deleted, or private.', 'error'); return; }
+  openPostDetail(post, { history: 'none' });
+}
+
+function queueDeepLinkResolution() {
+  setTimeout(() => { resolveDeepLink().catch(() => toast('Could not open the shared link.', 'error')); }, 0);
+}
+
+function switchTab(tab, options = {}) {
+  const historyMode = options.history || 'none';
   rememberCurrentScroll();
   State.currentTab = tab;
   // Stop post music when leaving the feed — the user is no longer
@@ -1305,6 +1387,7 @@ function switchTab(tab) {
     if (feedView) { feedView.classList.add('active'); activeView = feedView; }
     tab = 'feed';
   }
+  syncTabRoute(tab, historyMode, !!options.preserveContent);
   updateTopbarHeader(tab);
   updateChatThreadChrome();
   restoreScrollForTab(tab);
@@ -1347,6 +1430,14 @@ function switchTab(tab) {
   }, 0);
 }
 
+window.addEventListener('popstate', () => {
+  const route = readAppRoute();
+  if (!route.post) closePostDetail({ history: 'none' });
+  if (!route.story && !$id('#storyViewer')?.classList.contains('hidden')) closeStory();
+  switchTab(route.tab, { history: 'none', preserveContent: true });
+  if (route.post || route.story) queueDeepLinkResolution();
+});
+
 // Show the centered app name wordmark only on the home page (feed tab).
 // Hide it on all other tabs (chat, search, profile, groups, etc.).
 function updateTopbarHeader(tab) {
@@ -1374,6 +1465,29 @@ function updateTopbarHeader(tab) {
 }
 
 // ====== Rooms & Members ======
+function clearMembersLoadError() {
+  const el = $id('#membersLoadError');
+  if (el) el.remove();
+}
+
+function showMembersLoadError(error) {
+  const list = $id('#membersList');
+  if (!list || !list.parentElement) return;
+  let card = $id('#membersLoadError');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'membersLoadError';
+    card.className = 'data-load-state compact';
+    card.setAttribute('role', 'status');
+    card.setAttribute('aria-live', 'polite');
+    list.parentElement.insertBefore(card, list);
+  }
+  const stale = Array.isArray(State.members) && State.members.length > 0;
+  card.innerHTML = `<span>${stale ? 'Showing saved conversations. Could not refresh.' : 'Could not load conversations.'}</span><button type="button">Retry</button>`;
+  card.querySelector('button').addEventListener('click', () => { clearMembersLoadError(); loadMembers(true); });
+  if (error) card.title = error.message || 'Load failed';
+}
+
 let _lastMembersLoadedAt = 0;
 let _loadMembersPromise = null;
 async function loadMembers(force = false) {
@@ -1388,13 +1502,15 @@ async function loadMembers(force = false) {
     try {
       const data = await api('/users');
       State.members = _applyLocalReadState(data.users || []);
+      clearMembersLoadError();
       _unreadByRoom = data.unreadByRoom || {};
       _lastMembersLoadedAt = Date.now();
       renderMembers();
       renderStoriesRail();
       syncSuggestions();
       return State.members;
-    } catch (_) {
+    } catch (error) {
+      showMembersLoadError(error);
       return State.members;
     } finally {
       _loadMembersPromise = null;
@@ -1907,6 +2023,7 @@ function ensureFollowRequestsUi() {
     sheet.className = 'comments-sheet hidden';
     sheet.setAttribute('role', 'dialog');
     sheet.setAttribute('aria-modal', 'true');
+    sheet.setAttribute('aria-label', 'Follow requests');
     sheet.innerHTML = `<div class="sheet-backdrop" data-close-follow-requests></div><div class="sheet-card"><div class="sheet-handle"></div><div class="sheet-head"><h3><i data-lucide="user-plus"></i> Follow requests</h3><button class="ghost-btn" data-close-follow-requests aria-label="Close"><i data-lucide="x"></i></button></div><div class="sheet-body"><div class="follow-requests-copy">Approve the people who can follow your private account.</div><ul id="followRequestsList" class="follow-requests-list"></ul></div></div>`;
     document.body.appendChild(sheet);
     sheet.querySelectorAll('[data-close-follow-requests]').forEach(btn => btn.addEventListener('click', closeFollowRequestsSheet));
@@ -2046,20 +2163,27 @@ function bindNotes() {
   if (clear) clear.addEventListener('click', () => { _noteDraftMusic = null; saveNote('', null); closeNoteModal(); });
   // Music row toggles the song picker.
   const musicRow = $id('#noteMusicRow');
-  if (musicRow) musicRow.addEventListener('click', (e) => {
-    if (e.target && e.target.id === 'noteMusicRemove') return;
+  const toggleMusicPicker = () => {
     const picker = $id('#noteSongPicker'); if (!picker) return;
-    const show = picker.classList.contains('hidden');
-    picker.classList.toggle('hidden', !show);
-    const chev = $id('#noteMusicChev'); if (chev) chev.style.transform = show ? 'rotate(180deg)' : '';
-    if (show) { renderNoteSongResults([]); const s = $id('#noteSongSearch'); if (s) setTimeout(() => s.focus(), 80); }
+    const shouldShow = picker.classList.contains('hidden');
+    picker.classList.toggle('hidden', !shouldShow);
+    const chev = $id('#noteMusicChev'); if (chev) chev.style.transform = shouldShow ? 'rotate(180deg)' : '';
+    if (shouldShow) { renderNoteSongResults([]); const s = $id('#noteSongSearch'); if (s) setTimeout(() => s.focus(), 80); }
     else stopNotePreviewAudio();
-  });
+  };
+  if (musicRow) {
+    musicRow.addEventListener('click', (e) => { if (!(e.target && e.target.id === 'noteMusicRemove')) toggleMusicPicker(); });
+    bindKeyboardActivation(musicRow, toggleMusicPicker);
+  }
   const removeBtn = $id('#noteMusicRemove');
-  if (removeBtn) removeBtn.addEventListener('click', (e) => {
-    e.stopPropagation(); stopNotePreviewAudio(); _noteDraftMusic = null; updateNoteMusicRow(); updateNotePreview();
+  const removeNoteMusic = (e) => {
+    if (e) e.stopPropagation(); stopNotePreviewAudio(); _noteDraftMusic = null; updateNoteMusicRow(); updateNotePreview();
     const clearBtn = $id('#noteClearBtn'); if (clearBtn && !(input && input.value.trim())) clearBtn.style.display = 'none';
-  });
+  };
+  if (removeBtn) {
+    removeBtn.addEventListener('click', removeNoteMusic);
+    bindKeyboardActivation(removeBtn, removeNoteMusic);
+  }
   const searchInp = $id('#noteSongSearch');
   if (searchInp) searchInp.addEventListener('input', () => {
     clearTimeout(_noteSearchTimer);
@@ -2273,11 +2397,15 @@ function bindRooms() {
     else { $id('#chatView').classList.toggle('show-rooms'); updateChatThreadChrome(); }
   });
   const headerTap = $id('#chatHeaderProfileTap');
-  if (headerTap) headerTap.addEventListener('click', () => {
+  const openChatPeerProfile = () => {
     if (State.currentRoom && State.currentRoom.kind === 'dm' && State.currentRoom.target) {
       openUserProfile(State.currentRoom.target.id);
     }
-  });
+  };
+  if (headerTap) {
+    headerTap.addEventListener('click', openChatPeerProfile);
+    bindKeyboardActivation(headerTap, openChatPeerProfile);
+  }
 }
 
 // Switch the inbox side-pane between the Groups and Primary segments.
@@ -3263,6 +3391,13 @@ function bindComposer() {
     e.preventDefault();
     const text = input.value.trim();
     if (!text && !State.attach) return;
+    if (form.dataset.submitting === 'true') return;
+    form.dataset.submitting = 'true';
+    const sendBtn = $id('#sendBtn') || form.querySelector('button[type="submit"]');
+    if (sendBtn && !sendBtn.dataset.idleLabel) sendBtn.dataset.idleLabel = sendBtn.getAttribute('aria-label') || 'Send message';
+    setActionBusy(sendBtn, true, 'Sending message');
+    form.setAttribute('aria-busy', 'true');
+    try {
     const room = State.currentRoom;
     const secretOn = isSecretChatOn(room.id);
     const disappearMs = secretOn ? getDisappearMs(room.id) : 0;
@@ -3357,6 +3492,11 @@ function bindComposer() {
         $id('#replyToText').textContent = sentReply.text;
         $id('#replyBanner').classList.remove('hidden');
       }
+    }
+    } finally {
+      delete form.dataset.submitting;
+      form.setAttribute('aria-busy', 'false');
+      setActionBusy(sendBtn, false);
     }
   });
 
@@ -4349,6 +4489,29 @@ function prependTempPost(tp) {
   _lastStoriesSig = '';
   renderPosts();
 }
+function clearFeedLoadError() {
+  const el = $id('#feedLoadError');
+  if (el) el.remove();
+}
+
+function showFeedLoadError(error) {
+  const list = $id('#feedList');
+  if (!list) return;
+  let card = $id('#feedLoadError');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'feedLoadError';
+    card.className = 'data-load-state';
+    card.setAttribute('role', 'status');
+    card.setAttribute('aria-live', 'polite');
+  }
+  const hasStale = getFeedPosts().length > 0;
+  card.innerHTML = `<div><strong>${hasStale ? 'Feed may be out of date' : 'Could not load your feed'}</strong><span>${hasStale ? 'Showing saved posts while the connection recovers.' : 'Check your connection and try again.'}</span></div><button type="button">Retry</button>`;
+  card.querySelector('button').addEventListener('click', () => { clearFeedLoadError(); loadFeed(true); });
+  if (error) card.title = error.message || 'Load failed';
+  list.prepend(card);
+}
+
 async function loadPosts(force = false) {
   if (_loadPostsPromise) return _loadPostsPromise;
   if (!force && _lastPostsLoadedAt && (Date.now() - _lastPostsLoadedAt) < 2500 && lastPostsSignature !== null) {
@@ -4358,6 +4521,7 @@ async function loadPosts(force = false) {
   _loadPostsPromise = (async () => {
     try {
       const data = await api('/posts');
+      clearFeedLoadError();
       const newPosts = data.posts || [];
       _lastPostsLoadedAt = Date.now();
       const sig = newPosts.map(p => p.id + ':' + p.likeCount + ':' + p.commentCount).join('|');
@@ -4366,7 +4530,8 @@ async function loadPosts(force = false) {
       State.posts = _mergeRecentLikes(_mergeRecentComments(_mergePendingPosts(newPosts)));
       renderPosts();
       return State.posts;
-    } catch (_) {
+    } catch (error) {
+      showFeedLoadError(error);
       return State.posts;
     } finally {
       _loadPostsPromise = null;
@@ -4389,6 +4554,7 @@ async function loadFeed(force = false) {
   _loadFeedPromise = (async () => {
     try {
       const data = await api('/feed');
+      clearFeedLoadError();
       const feedPosts = data.posts || [];
       _lastFeedLoadedAt = Date.now();
       State.feedPosts = _mergeRecentLikes(_mergeRecentComments(_mergePendingPosts(feedPosts)));
@@ -4397,9 +4563,10 @@ async function loadFeed(force = false) {
       feedPosts.forEach(p => { if (!existingIds.has(p.id)) State.posts.push(p); });
       renderPosts();
       return feedPosts;
-    } catch (_) {
-      // Fallback: if /api/feed fails, loadPosts() covers us
+    } catch (error) {
+      // Fallback: if /api/feed fails, /posts may still provide a fresh feed.
       if (!State.posts.length) await loadPosts(true);
+      if (!getFeedPosts().length || _lastPostsLoadedAt < Date.now() - 5000) showFeedLoadError(error);
       return State.feedPosts || State.posts;
     } finally {
       _loadFeedPromise = null;
@@ -5581,7 +5748,20 @@ function patchCommentUI(card, p) {
 }
 
 
-function openPostDetail(post) {
+function closePostDetail(options = {}) {
+  const wrap = $id('#postDetailViewer');
+  if (wrap) wrap.remove();
+  if (options.history === 'none') return;
+  const route = readAppRoute();
+  if (!route.post) return;
+  const url = new URL(location.href);
+  url.searchParams.delete('post');
+  const hashParams = new URLSearchParams((url.hash || '').replace(/^#/, ''));
+  if (hashParams.has('post')) url.hash = '';
+  history.replaceState({ ...(history.state || {}), tab: route.tab }, '', url.pathname + url.search + url.hash);
+}
+
+function openPostDetail(post, options = {}) {
   const p = normalizeProfilePost(post);
   if (!p) return;
   const existing = $id('#postDetailViewer');
@@ -5589,17 +5769,30 @@ function openPostDetail(post) {
   const wrap = document.createElement('div');
   wrap.id = 'postDetailViewer';
   wrap.className = 'post-detail-viewer';
+  wrap.setAttribute('role', 'dialog');
+  wrap.setAttribute('aria-modal', 'true');
+  wrap.setAttribute('aria-label', 'Post details');
   wrap.innerHTML = `
     <div class="post-detail-top">
       <button type="button" id="postDetailBack" class="ghost-btn" aria-label="Back"><i data-lucide="arrow-left"></i></button>
-      <strong>Posts</strong>
+      <strong>Post</strong>
     </div>
     <div class="post-detail-body" id="postDetailBody"></div>`;
   document.body.appendChild(wrap);
   const body = $id('#postDetailBody');
   const fullPost = (State.posts || []).find(x => x.id === p.id) || p;
   body.appendChild(renderPost({ ...fullPost, ...p }));
-  $id('#postDetailBack').addEventListener('click', () => wrap.remove());
+  if ((options.history || 'push') === 'push') {
+    const url = new URL(location.href);
+    url.searchParams.delete('post');
+    url.searchParams.delete('story');
+    url.hash = 'post=' + encodeURIComponent(p.id);
+    history.pushState({ ...(history.state || {}), tab: State.currentTab, post: p.id }, '', url.pathname + url.search + url.hash);
+  }
+  $id('#postDetailBack').addEventListener('click', () => {
+    if (readAppRoute().post === p.id && history.length > 1) history.back();
+    else closePostDetail();
+  });
   refreshIcons();
 }
 
@@ -5613,6 +5806,9 @@ async function openSavedPostsSheet() {
   const sheet = document.createElement('div');
   sheet.id = 'savedPostsSheet';
   sheet.className = 'sheet saved-posts-sheet';
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('aria-label', 'Saved posts');
   sheet.innerHTML = `
     <div class="sheet-card saved-posts-card">
       <div class="sheet-handle"></div>
@@ -5727,6 +5923,37 @@ function makeTempComment(text) {
   };
 }
 
+function populateCommentReply(c, author) {
+  const input = $id('#commentsInput');
+  if (!input) return;
+  const username = author && (author.username || author.displayName);
+  const mention = username ? '@' + username.replace(/^@/, '') + ' ' : '';
+  input.value = mention;
+  input.dataset.replyToComment = c && c.id ? c.id : '';
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function renderCommentMeta(meta, c, author, createdAt) {
+  meta.innerHTML = '';
+  if (c._pending) {
+    const pending = document.createElement('span');
+    pending.textContent = 'Sending…';
+    meta.appendChild(pending);
+    return;
+  }
+  const time = document.createElement('span');
+  time.textContent = timeAgo(createdAt || c.createdAt);
+  const reply = document.createElement('button');
+  reply.type = 'button';
+  reply.className = 'comment-reply-btn';
+  reply.textContent = 'Reply';
+  reply.setAttribute('aria-label', 'Reply to ' + ((author && (author.username || author.displayName)) || 'comment'));
+  reply.addEventListener('click', () => populateCommentReply(c, author));
+  meta.appendChild(time);
+  meta.appendChild(reply);
+}
+
 /** One comment <li> for the comments sheet. */
 function buildCommentLi(c) {
   const cAuth = resolveAuthor(c.author, c.userId, c.authorSnapshot);
@@ -5743,9 +5970,7 @@ function buildCommentLi(c) {
   // Space between author and text (bug fix)
   txt.appendChild(document.createTextNode(' ' + (c.text || '')));
   const meta = document.createElement('div'); meta.className = 'meta-row';
-  meta.innerHTML = c._pending
-    ? '<span>Sending…</span>'
-    : `<span>${escapeHtml(timeAgo(c.createdAt))}</span><span>Reply</span>`;
+  renderCommentMeta(meta, c, cAuth, c.createdAt);
   b.appendChild(txt); b.appendChild(meta);
   li.appendChild(a); li.appendChild(b);
   return li;
@@ -5778,7 +6003,11 @@ function confirmCommentInSheet(tempId, real) {
   if (real && real.id) li.dataset.commentId = real.id;
   li.classList.remove('pending');
   const meta = li.querySelector('.meta-row');
-  if (meta) meta.innerHTML = `<span>${escapeHtml(timeAgo((real && real.createdAt) || Date.now()))}</span><span>Reply</span>`;
+  if (meta) {
+    const confirmed = Object.assign({}, real || {}, { _pending: false, id: (real && real.id) || tempId });
+    const author = resolveAuthor(confirmed.author, confirmed.userId, confirmed.authorSnapshot);
+    renderCommentMeta(meta, confirmed, author, confirmed.createdAt || Date.now());
+  }
 }
 
 /** Remove a failed optimistic comment from the sheet. */
@@ -5847,6 +6076,7 @@ function bindCommentsSheet() {
     const inp = $id('#commentsInput');
     const text = inp.value.trim();
     if (!text) return;
+    delete inp.dataset.replyToComment;
     const sb = e.target.querySelector('.post-btn');
     // Capture the post now: the sheet may be closed before the request lands.
     const post = activeCommentsPost;
@@ -6684,6 +6914,46 @@ let activeStickerScales = { storyStageMusicSticker: 1.0, storyStageTextOverlay: 
 let activeMusicClipDur = 30;
 let activeStoryMusicLayout = 'pill';
 
+function resizeStoryStickerFromKeyboard(handle, direction) {
+  const sticker = handle && handle.closest('.sticker');
+  if (!sticker || !sticker.id) return;
+  const next = Math.max(0.5, Math.min(2.5, (activeStickerScales[sticker.id] || 1) + (direction * 0.1)));
+  activeStickerScales[sticker.id] = next;
+  sticker.style.transform = `translate(-50%, -50%) scale(${next.toFixed(2)})`;
+  if (sticker.id === 'storyStageMusicSticker') State.musicScale = next;
+  if (sticker.id === 'storyStageTextOverlay') State.textScale = next;
+}
+
+function enhanceStoryKeyboardControls(root = document) {
+  const controls = root.querySelectorAll('.story-tool-item, .story-font-pill, .dur-pill, .story-pill, .color-swatch, .story-stage-text-overlay, .story-music-sticker, .sticker-del-handle, .story-resize-handle');
+  controls.forEach((el) => {
+    if (el.matches('button, input, select, textarea, a[href]')) return;
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    if (!el.getAttribute('aria-label')) {
+      let label = (el.textContent || '').trim().replace(/\s+/g, ' ');
+      if (el.classList.contains('color-swatch')) label = 'Choose story text color ' + (el.style.background || '');
+      if (el.classList.contains('story-resize-handle')) label = 'Resize story sticker';
+      if (el.classList.contains('story-music-sticker')) label = 'Select music sticker';
+      if (el.classList.contains('story-stage-text-overlay')) label = 'Select text sticker';
+      el.setAttribute('aria-label', label || 'Activate control');
+    }
+    if (el.dataset.storyKeyboardBound === '1') return;
+    el.dataset.storyKeyboardBound = '1';
+    el.addEventListener('keydown', (e) => {
+      if (el.classList.contains('story-resize-handle') && ['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'].includes(e.key)) {
+        e.preventDefault();
+        resizeStoryStickerFromKeyboard(el, (e.key === 'ArrowUp' || e.key === 'ArrowRight') ? 1 : -1);
+        return;
+      }
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      if (el.classList.contains('story-resize-handle')) resizeStoryStickerFromKeyboard(el, 1);
+      else el.click();
+    });
+  });
+}
+
 /**
  * Single source of truth for the text overlay's background/fill styling —
  * used identically by the live editor stage, the live editor textarea preview,
@@ -7037,6 +7307,7 @@ window.openStoryCreator = () => {
   const mod = $id('#storyEditorModal');
   if (!mod) return;
   mod.classList.remove('hidden');
+  enhanceStoryKeyboardControls(mod);
   const inp = $id('#storyEditorFileInput');
   const ph = $id('#storyEditorPlaceholder');
   const prev = $id('#storyEditorPreviewImg');
@@ -7291,6 +7562,7 @@ window.promptStoryMention = () => {
 window.openStoryMusicSheet = () => {
   const sh = $id('#storyMusicSheet');
   show(sh);
+  enhanceStoryKeyboardControls(sh);
   window.filterStorySongs();
 };
 
@@ -7930,6 +8202,8 @@ function bindSchedule() {
     if (e.target.id === 'scheduleModal') $id('#scheduleModal').classList.add('hidden');
   });
   $id('#scheduleSubmit').addEventListener('click', async () => {
+    const submit = $id('#scheduleSubmit');
+    if (submit.dataset.submitting === 'true') return;
     const text = $id('#scheduleText').value.trim();
     const when = $id('#scheduleAt').value;
     const err = $id('#scheduleError');
@@ -7938,6 +8212,9 @@ function bindSchedule() {
     if (!when) { err.textContent = 'Pick a date/time'; return; }
     const ts = new Date(when).getTime();
     if (!ts || ts < Date.now() + 5000) { err.textContent = 'Must be at least 5s in future'; return; }
+    submit.dataset.submitting = 'true';
+    if (!submit.dataset.idleLabel) submit.dataset.idleLabel = submit.getAttribute('aria-label') || 'Schedule message';
+    setActionBusy(submit, true, 'Scheduling message');
     try {
       await api('/messages/schedule', { method: 'POST', body: {
         roomId: State.currentRoom.id, text, deliverAt: ts
@@ -7946,6 +8223,7 @@ function bindSchedule() {
       toast('Scheduled!', 'success');
       loadScheduled();
     } catch (e) { err.textContent = e.message || 'Failed'; }
+    finally { delete submit.dataset.submitting; setActionBusy(submit, false); }
   });
 }
 
@@ -9249,7 +9527,29 @@ function renderOwnProfileFromCache() {
 // v93.3 PERF: TTL cache for the own-profile network fetch
 let _lastOwnProfileFetchedAt = 0;
 
-async function renderOwnProfile() {
+function clearProfileLoadError() {
+  const el = $id('#profileLoadError');
+  if (el) el.remove();
+}
+
+function showProfileLoadError(error) {
+  const meta = $id('#profileBio')?.parentElement || $id('#profileViewMode');
+  if (!meta) return;
+  let card = $id('#profileLoadError');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'profileLoadError';
+    card.className = 'data-load-state compact profile-load-state';
+    card.setAttribute('role', 'status');
+    card.setAttribute('aria-live', 'polite');
+    meta.appendChild(card);
+  }
+  card.innerHTML = '<span>Could not refresh profile. Showing saved details.</span><button type="button">Retry</button>';
+  card.querySelector('button').addEventListener('click', () => renderOwnProfile(true));
+  if (error) card.title = error.message || 'Profile refresh failed';
+}
+
+async function renderOwnProfile(force = false) {
   if (!State.user) return;
   // v93.3 PERF: Cache the network fetch for 5s — previously every profile tab
   // visit triggered a fresh GET /user/{id}/profile, which on a slow network
@@ -9258,7 +9558,7 @@ async function renderOwnProfile() {
   // appears immediately; the network refresh only happens past TTL.
   const OWN_PROFILE_TTL_MS = 5000;
   const now = Date.now();
-  const cacheValid = _lastOwnProfileFetchedAt && (now - _lastOwnProfileFetchedAt) < OWN_PROFILE_TTL_MS;
+  const cacheValid = !force && _lastOwnProfileFetchedAt && (now - _lastOwnProfileFetchedAt) < OWN_PROFILE_TTL_MS;
   const cachedUsername = State.user.username || State.user.displayName || 'me';
   const titleU = $id('#profileTitleUsername');
   // Never leave the design placeholder visible while fresh profile data loads.
@@ -9290,20 +9590,26 @@ async function renderOwnProfile() {
       persistUser()
     }
     const realUsername = u.username || State.user.username || cachedUsername;
-    $id('#profileDisplayName').innerHTML = displayNameWithOwnerBadge(u, u.displayName || State.user.displayName || '', 'inline');
+    const displayNameEl = $id('#profileDisplayName');
+    if (displayNameEl) displayNameEl.innerHTML = displayNameWithOwnerBadge(u, u.displayName || State.user.displayName || '', 'inline');
     syncPolaroidCaption(u.displayName || State.user.displayName || u.username || '');
-    $id('#profileUsername').textContent = '@' + realUsername + (u.bio ? '' : '');
+    const usernameEl = $id('#profileUsername');
+    if (usernameEl) usernameEl.innerHTML = displayNameWithOwnerBadge(u, '@' + realUsername, 'inline');
     if (titleU) titleU.innerHTML = displayNameWithProfileBadges(u, realUsername, 'title');
     const mb = $id('#profileMoodBubble');
     if (mb) {
       const note = activeNote(u);
       mb.innerHTML = note ? escapeHtml(note.text).slice(0, 30) : 'Current<br/>mood...';
     }
-    $id('#profileBio').textContent = u.bio || '';
-    renderAvatar($id('#profileAvatarPreview'), u);
+    const bioEl = $id('#profileBio');
+    if (bioEl) bioEl.textContent = u.bio || '';
+    const avatarEl = $id('#profileAvatarPreview');
+    if (avatarEl) renderAvatar(avatarEl, u);
     renderDiscoverPeople();
+    clearProfileLoadError();
     // Grid
     const grid = $id('#profilePostsGrid');
+    if (!grid) return;
     grid.innerHTML = '';
     if (_profileTab === 'card') {
       updateOwnProfileStatCounts({ ...u, postsCount: u.postsCount || ((data.posts || []).length) });
@@ -9330,6 +9636,7 @@ async function renderOwnProfile() {
     refreshIcons();
   } catch (e) {
     console.warn('renderOwnProfile failed', e.message);
+    showProfileLoadError(e);
   }
 }
 
@@ -9378,6 +9685,9 @@ async function openProfileRelationSheet(kind) {
   const sheet = document.createElement('div');
   sheet.id = 'profileRelationSheet';
   sheet.className = 'sheet profile-relation-sheet';
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('aria-label', title);
   sheet.innerHTML = `
     <div class="sheet-card profile-relation-card">
       <div class="sheet-handle"></div>
@@ -9531,7 +9841,7 @@ function bindProfileView() {
   const pap = $id('#profileAddPostBtn');
   if (pap) pap.addEventListener('click', openPostComposer);
   const pas = $id('#profileAddStoryBtn');
-  if (pas) pas.addEventListener('click', openPostComposer);
+  if (pas) pas.addEventListener('click', openStoryCreator);
   const pan = $id('#profileAddNoteBtn');
   if (pan) pan.addEventListener('click', openNoteModal);
   const pmb = $id('#profileMoodBubble');
@@ -9542,7 +9852,7 @@ function bindProfileView() {
     if (sec) sec.style.display = sec.style.display === 'none' ? '' : 'none';
   });
   const dsa = $id('#discoverSeeAllBtn');
-  if (dsa) dsa.addEventListener('click', () => switchTab('search'));
+  if (dsa) dsa.addEventListener('click', () => switchTab('search', { history: 'push' }));
   // Edit toggle
   const edit = $id('#editProfileBtn');
   if (edit) edit.addEventListener('click', () => {
@@ -9729,20 +10039,47 @@ function bindLightbox() {
   $id('#lightboxClose').addEventListener('click', closeLightbox);
   $id('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      if (!$id('#lightbox').classList.contains('hidden')) closeLightbox();
-      if (!$id('#scheduleModal').classList.contains('hidden')) $id('#scheduleModal').classList.add('hidden');
-      if (!$id('#termsModal').classList.contains('hidden')) $id('#termsModal').classList.add('hidden');
-      if (!$id('#commentsSheet').classList.contains('hidden')) closeCommentsSheet();
-      if (!$id('#notifSheet').classList.contains('hidden')) closeNotifications();
-      if (!$id('#settingsSheet').classList.contains('hidden')) closeSettings();
-      if (!$id('#closeFriendsSheet').classList.contains('hidden')) closeCloseFriendsSheet();
-      if (!$id('#storyManageSheet').classList.contains('hidden')) closeStoryManageSheet();
-      if (!$id('#userProfileSheet').classList.contains('hidden')) closeUserProfile();
-      if (!$id('#storyViewer').classList.contains('hidden')) closeStory();
-      const mm = document.querySelector('.more-menu'); if (mm) mm.remove();
+    if (e.key !== 'Escape') return;
+    if (closeTopSurface()) {
+      e.preventDefault();
+      e.stopPropagation();
     }
   });
+}
+
+function closeTopSurface() {
+  const moreMenu = document.querySelector('.more-menu');
+  if (moreMenu) { moreMenu.remove(); return true; }
+  const surfaces = [
+    ['#storyMusicSheet', () => window.closeStoryMusicSheet()],
+    ['#storyViewersSheet', closeStoryViewersSheet],
+    ['#profileCardSheet', closeProfileCard],
+    ['#profileRelationSheet', () => $id('#profileRelationSheet')?.remove()],
+    ['#followRequestsSheet', closeFollowRequestsSheet],
+    ['#noteViewerModal', closeNoteViewer],
+    ['#noteModal', closeNoteModal],
+    ['#savedPostsSheet', () => $id('#savedPostsSheet')?.remove()],
+    ['#postDetailViewer', () => closePostDetail()],
+    ['#lightbox', closeLightbox],
+    ['#scheduleModal', () => $id('#scheduleModal')?.classList.add('hidden')],
+    ['#termsModal', () => $id('#termsModal')?.classList.add('hidden')],
+    ['#commentsSheet', closeCommentsSheet],
+    ['#notifSheet', closeNotifications],
+    ['#settingsSheet', closeSettings],
+    ['#closeFriendsSheet', closeCloseFriendsSheet],
+    ['#storyManageSheet', closeStoryManageSheet],
+    ['#postComposerModal', closePostComposer],
+    ['#userProfileSheet', closeUserProfile],
+    ['#storyViewer', closeStory],
+    ['#storyEditorModal', () => window.closeStoryCreator()],
+  ];
+  for (const [selector, close] of surfaces) {
+    const el = document.querySelector(selector);
+    if (!el || !el.isConnected || el.classList.contains('hidden')) continue;
+    close();
+    return true;
+  }
+  return false;
 }
 
 function closeLightbox() {
@@ -9987,7 +10324,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=92').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=93').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
@@ -10475,6 +10812,7 @@ function boot() {
   }, 5000);
 
   bindAuth();
+  enhanceStoryKeyboardControls(document);
   // Wrap each UI-binding step so a bug in any single one (e.g. a missing
   // handler function) can't crash the whole boot sequence and silently skip
   // session restore below — that was causing "logged out on every refresh".
