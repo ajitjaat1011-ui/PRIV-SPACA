@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v156';
+const APP_VERSION = 'priv-spaca-v157';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -1748,6 +1748,13 @@ function renderMembers() {
 }
 
 // ===== Notes rail (Instagram-style 24h statuses on the DM inbox) =====
+function activeNote(user) {
+  const note = user && user.note;
+  if (!note) return null;
+  const expiresAt = Number(note.expiresAt) || ((Number(note.createdAt) || 0) + 24 * 60 * 60 * 1000);
+  return expiresAt > Date.now() ? note : null;
+}
+
 function renderNotesRail() {
   const rail = $id('#notesRail');
   if (!rail || _inboxSeg !== 'primary' || _inboxShowRequests) { if (rail) rail.innerHTML = ''; return; }
@@ -10324,7 +10331,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=93').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=94').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
