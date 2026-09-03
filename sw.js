@@ -5,15 +5,16 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v157';
-const STATIC_CACHE = 'priv-spaca-static-v127';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v127';
+const SW_VERSION = 'priv-spaca-v158';
+const STATIC_CACHE = 'priv-spaca-static-v128';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v128';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=176',
-  '/app.min.js?v=180',
+  '/style.min.css?v=177',
+  '/app.min.js?v=181',
+  '/auth.react.min.js?v=181',
   '/vendor/local-fonts.css?v=1',
   '/vendor/lucide.min.js?v=1',
   '/vendor/motion.min.js?v=1',
@@ -60,7 +61,7 @@ self.addEventListener('fetch', (event) => {
   // and users always see the latest code. Only fall back to cache when
   // the network fails (e.g. offline).
   if (url.pathname === '/' || url.pathname === '/index.html' ||
-      /\/(app|style)(?:\.min)?\.js(\?|$)/i.test(url.pathname) ||
+      /\/(app|auth\.react|style)(?:\.min)?\.js(\?|$)/i.test(url.pathname) ||
       /\/style(?:\.min)?\.css(\?|$)/i.test(url.pathname) ||
       /\/sw\.js(\?|$)/i.test(url.pathname)) {
     event.respondWith(

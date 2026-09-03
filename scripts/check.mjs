@@ -35,7 +35,7 @@ appV && swV && appV === swV
   : bad(`APP_VERSION (v${appV}) !== SW_VERSION (v${swV}) — causes the reload loop`);
 
 const html = read('index.html'), sw = read('sw.js');
-for (const asset of ['style.min.css', 'app.min.js']) {
+for (const asset of ['style.min.css', 'app.min.js', 'auth.react.min.js']) {
   const re = new RegExp(asset.replace('.', '\\.') + '\\?v=(\\d+)', 'g');
   const inHtml = [...new Set([...html.matchAll(re)].map((m) => m[1]))];
   const inSw = [...new Set([...sw.matchAll(re)].map((m) => m[1]))];

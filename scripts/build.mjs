@@ -87,11 +87,13 @@ if (nextApp !== current || nextCss !== cssV) {
   swJs = swJs.replace(/priv-spaca-runtime-v\d+/g, `priv-spaca-runtime-v${nextCache}`);
   swJs = swJs.replace(/style\.min\.css\?v=\d+/g, `style.min.css?v=${nextCss}`);
   swJs = swJs.replace(/app\.min\.js\?v=\d+/g, `app.min.js?v=${nextJs}`);
+  swJs = swJs.replace(/auth\.react\.min\.js\?v=\d+/g, `auth.react.min.js?v=${nextJs}`);
   write('sw.js', swJs);
 
   // index.html — single line, so do exact string swaps
   html = html.replace(/style\.min\.css\?v=\d+/g, `style.min.css?v=${nextCss}`);
   html = html.replace(/app\.min\.js\?v=\d+/g, `app.min.js?v=${nextJs}`);
+  html = html.replace(/auth\.react\.min\.js\?v=\d+/g, `auth.react.min.js?v=${nextJs}`);
   write('index.html', html);
 }
 
@@ -112,10 +114,12 @@ const finalHtml = read('index.html');
 const okVersions = finalApp === finalSw;
 const okCss = finalHtml.includes(`style.min.css?v=${nextCss}`) && read('sw.js').includes(`style.min.css?v=${nextCss}`);
 const okJs = finalHtml.includes(`app.min.js?v=${nextJs}`) && read('sw.js').includes(`app.min.js?v=${nextJs}`);
+const okAuth = finalHtml.includes(`auth.react.min.js?v=${nextJs}`) && read('sw.js').includes(`auth.react.min.js?v=${nextJs}`);
 
 console.log('\nverification');
 console.log(`  ${okVersions ? '✅' : '❌'} APP_VERSION === SW_VERSION (v${finalApp})`);
 console.log(`  ${okCss ? '✅' : '❌'} css ?v=${nextCss} in index.html + sw.js`);
 console.log(`  ${okJs ? '✅' : '❌'} js  ?v=${nextJs} in index.html + sw.js`);
-if (!okVersions || !okCss || !okJs) process.exit(1);
+console.log(`  ${okAuth ? '✅' : '❌'} auth.react.min.js ?v=${nextJs} in index.html + sw.js`);
+if (!okVersions || !okCss || !okJs || !okAuth) process.exit(1);
 console.log('\nbuild complete.\n');

@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v157';
+const APP_VERSION = 'priv-spaca-v158';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -716,10 +716,21 @@ function showAuth() {
   $id('#appShell').classList.add('hidden');
   hideSplash();
   refreshIcons();
+  // React-owned auth UI (Glass One UI, wordmark-only): mount when the auth
+  // shell becomes visible — covers first boot (no session), logout and the
+  // slow-startup fallback. Unmounts via showApp().
+  try {
+    if (window.__PSAuthReact && window.__PSAuthReact.mount) {
+      window.__PSAuthReact.mount($id('#psAuthRoot'));
+    }
+  } catch (e) { console.error('[auth] react mount failed:', e && e.message); }
 }
 
 function showApp() {
   if (typeof startupFallback !== 'undefined') try { clearTimeout(startupFallback); } catch (_) {}
+  try {
+    if (window.__PSAuthReact && window.__PSAuthReact.unmount) window.__PSAuthReact.unmount();
+  } catch (_) {}
   $id('#authShell').classList.add('hidden');
   $id('#appShell').classList.remove('hidden');
   hideSplash();
@@ -1008,6 +1019,11 @@ function bindAuth() {
     });
   }
 
+  // React-owned auth UI: when the classic auth forms are not in the DOM
+  // (auth.react.min.js renders them into #psAuthRoot), the vanilla form
+  // wiring below is inert — bail before touching missing nodes.
+  if (!$id('#loginForm') && !$id('#signupForm')) return;
+
   $id('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -1113,6 +1129,13 @@ function acceptSession(data) {
   showApp();
   toast('Welcome, ' + (State.user.displayName || State.user.username) + '!', 'success');
 }
+
+// React-owned auth UI handoff: the React auth module calls this after a
+// successful login/signup so the session flows through the exact same path
+// as the legacy forms (persist + shell switch). Also expose the app version
+// so React requests send the same X-App-Version header as app.js.
+window.__psAcceptSession = acceptSession;
+window.__PS_APP_VERSION = APP_VERSION;
 
 
 // ====== Tabs ======
