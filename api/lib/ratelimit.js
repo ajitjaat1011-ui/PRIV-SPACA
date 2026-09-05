@@ -76,38 +76,18 @@ export async function authRateLimit(c, next) {
 }
 
 export async function globalRateLimit(c, next) {
-  // v77-bugfix: Use a hybrid approach for global rate limiting:
-  // 1. Fast in-memory check first (400 req/min per IP) for quick rejection of obvious abuse
-  // 2. For paths that don't need DB checks (/api/health, /api/push/vapid-public), skip shared check
-  // 3. For all other paths, the auth rate limiting is handled by authRateLimit + authSubjectRateLimit
-  //
-  // This balances performance (no DB round-trip for every request) with security
-  // (auth endpoints are still protected by sharedRateLimit via authRateLimit middleware).
+  // Omni already applies tighter per-user and per-IP token buckets before this
+  // guard. Keep this broad 400/minute abuse ceiling isolate-local so a normal
+  // Tier 1 read does not pay two remote Turso operations merely to increment a
+  // counter. Authentication has its own durable sharedRateLimit + account
+  // lockout below and is intentionally not weakened by this fast path.
   const ip = clientIp(c);
-  const path = c.req.path;
-  
-  // Fast paths that don't need shared rate limiting
-  const fastPaths = ['/api/health', '/api/push/vapid-public', '/api/stream'];
-  const isFastPath = fastPaths.some(p => path === p || path.startsWith(p));
-  
-  if (isFastPath) {
-    // In-memory only for fast paths
-    const r = rateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
-    c.header('X-RateLimit-Limit', '400');
-    c.header('X-RateLimit-Remaining', String(r.remaining));
-    if (!r.allowed) {
-      c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
-      return c.json({ error: 'Too many requests. Please slow down.' }, 429);
-    }
-  } else {
-    // Use shared rate limiting for other paths (writes are batched/async in sharedRateLimit)
-    const r = await sharedRateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
-    c.header('X-RateLimit-Limit', '400');
-    c.header('X-RateLimit-Remaining', String(r.remaining));
-    if (!r.allowed) {
-      c.header('Retry-After', String(Math.ceil((r.resetAt - Date.now()) / 1000)));
-      return c.json({ error: 'Too many requests. Please slow down.' }, 429);
-    }
+  const r = rateLimit({ key: 'global:' + ip, limit: 400, windowMs: 60_000 });
+  c.header('X-RateLimit-Limit', '400');
+  c.header('X-RateLimit-Remaining', String(r.remaining));
+  if (!r.allowed) {
+    c.header('Retry-After', String(Math.max(1, Math.ceil((r.resetAt - Date.now()) / 1000))));
+    return c.json({ error: 'Too many requests. Please slow down.' }, 429);
   }
   await next();
 }
