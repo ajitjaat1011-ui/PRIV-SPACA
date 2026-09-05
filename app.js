@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v161';
+const APP_VERSION = 'priv-spaca-v162';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -11840,9 +11840,18 @@ function _initSpringTabs() {
   try {
     document.querySelectorAll('.bn-btn[data-tab]').forEach(btn => {
       btn.addEventListener('pointerdown', () => {
-        const s = SpringEngine.create('tab_' + btn.dataset.tab, { stiffness: 400, damping: 22, mass: 0.8 });
-        SpringEngine.snap(s, 0.92);
+        const s = SpringEngine.create('tab_' + btn.dataset.tab, { stiffness: 300, damping: 15, mass: 1 });
+        SpringEngine.snap(s, 0.85);
         SpringEngine.bindEl(s, btn, 'scale');
+        SpringEngine.setTarget(s, 1);
+      });
+    });
+    // Spring on story items
+    document.querySelectorAll('.story-item').forEach(el => {
+      el.addEventListener('pointerdown', () => {
+        const s = SpringEngine.create('story_' + Math.random().toString(36).slice(2, 6), { stiffness: 350, damping: 18, mass: 0.9 });
+        SpringEngine.snap(s, 0.88);
+        SpringEngine.bindEl(s, el, 'scale');
         SpringEngine.setTarget(s, 1);
       });
     });
@@ -11855,7 +11864,7 @@ const AmbientShader = {
   _running: false, _t0: 0, _paused: false,
   _ptrX: 0.5, _ptrY: 0.5, _curX: 0.5, _curY: 0.5,
   _gyroX: 0, _gyroY: 0,
-  _c1: [0.31, 0.42, 1.0], _c2: [0.62, 0.29, 1.0], _c3: [0.96, 0.47, 0.62],
+  _c1: [0.31, 0.50, 1.0], _c2: [0.55, 0.29, 1.0], _c3: [1.0, 0.40, 0.55],
   _fc: 0, _fpsT: 0, _scale: 1,
 
   init() {
@@ -11907,7 +11916,7 @@ const AmbientShader = {
       '  col+=glow*mix(u_c1,u_c3,0.5+0.5*sin(u_time*0.4));',
       '  col+=spec*vec3(1.0,0.97,0.94);',
       '  float edge=smoothstep(0.0,0.06,uv.x)*smoothstep(1.0,0.94,uv.x)*smoothstep(0.0,0.06,uv.y)*smoothstep(1.0,0.94,uv.y);',
-      '  gl_FragColor=vec4(col,0.13*edge);',
+      '  gl_FragColor=vec4(col,0.22*edge);',
       '}'
     ].join('\n');
 
@@ -12422,7 +12431,7 @@ function _initAdvancedEngines() {
   try { Predictive.init(); } catch(e) { console.warn('[Predictive] init:', e); }
   try { BioLock.init(); } catch(e) { console.warn('[BioLock] init:', e); }
   try { _bindEngineSettings(); } catch(e) { console.warn('[Settings] bind:', e); }
-  console.log('[v160] ✅ All advanced engines initialized');
+  console.log('[v161] ✅ All advanced engines initialized: Spring(RK4), AmbientShader(WebGL), Predictive, BioLock(WebAuthn), EphemeralMedia');
 }
 
 

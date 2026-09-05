@@ -9284,3 +9284,13 @@ button.story-sheet-handle{display:block;border:0;padding:0;cursor:pointer}
   border-radius: 4px;
   pointer-events: none;
 }
+
+/* ── v161 — Enhanced ambient visibility ── */
+#ambientCanvas {
+  opacity: 1 !important;
+}
+/* Ensure shader visible on dark theme */
+[data-theme="dark"] #ambientCanvas,
+@media (prefers-color-scheme: dark) {
+  #ambientCanvas { opacity: 1 !important; }
+}
