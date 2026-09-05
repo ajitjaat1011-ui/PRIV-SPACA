@@ -155,6 +155,33 @@ function LoginPanel({ onSwitch, identifier, setIdentifier, password, setPassword
     setBusy(true);
     try {
       const data = await api('/auth/login', { method: 'POST', body: { identifier: identifier.trim(), password } });
+      // Check if server requires passkey/biometric verification (2FA)
+      if (data && data.challenge) {
+        setErr('Verifying biometric…');
+        try {
+          if (!window.PublicKeyCredential) throw new Error('Biometric not supported');
+          const rawId = Uint8Array.from(atob(data.credentialId), c => c.charCodeAt(0));
+          const assertion = await navigator.credentials.get({
+            publicKey: {
+              challenge: crypto.getRandomValues(new Uint8Array(32)),
+              timeout: 120000, rpId: location.hostname,
+              allowCredentials: [{ id: rawId, type: 'public-key', transports: ['internal'] }],
+              userVerification: 'required', authenticatorAttachment: 'platform'
+            }
+          });
+          if (!assertion) throw new Error('Biometric scan cancelled');
+          const authData = btoa(String.fromCharCode(...new Uint8Array(assertion.response.authenticatorData)));
+          const sig = btoa(String.fromCharCode(...new Uint8Array(assertion.response.signature)));
+          const verified = await api('/auth/passkey/verify', {
+            method: 'POST', body: { userId: data.userId, challengeId: data.challengeId, signature: sig, authenticatorData: authData }
+          });
+          acceptSessionHook(verified);
+        } catch (bioErr) {
+          setErr(bioErr.message || 'Biometric verification failed');
+          setBusy(false);
+        }
+        return;
+      }
       acceptSessionHook(data);
     } catch (ex) { setErr(ex.message || 'Login failed. Please try again.'); setBusy(false); }
   };

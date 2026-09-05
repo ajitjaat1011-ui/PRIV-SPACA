@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v164';
+const APP_VERSION = 'priv-spaca-v165';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -1031,12 +1031,24 @@ function bindAuth() {
     errEl.textContent = '';
     const btn = e.target.querySelector('button[type=submit]');
     const orig = btn.innerHTML;
+    const identifier = String(fd.get('identifier') || '').trim();
+    const password = String(fd.get('password') || '');
     btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Signing in…';
     try {
-      const data = await api('/auth/login', { method: 'POST', body: {
-        identifier: String(fd.get('identifier') || '').trim(),
-        password: String(fd.get('password') || ''),
-      }});
+      const data = await api('/auth/login', { method: 'POST', body: { identifier, password }});
+      // Check if server requires passkey verification (2FA)
+      if (data && data.challenge) {
+        btn.innerHTML = '<span class="spinner"></span> Verify biometrics…';
+        try {
+          const verified = await _passkeyLoginFlow(data, identifier, password);
+          if (verified) acceptSession(verified);
+          else { errEl.textContent = 'Biometric verification failed'; btn.disabled = false; btn.innerHTML = orig; }
+        } catch (bioErr) {
+          errEl.textContent = bioErr.message || 'Biometric verification failed';
+          btn.disabled = false; btn.innerHTML = orig;
+        }
+        return;
+      }
       acceptSession(data);
     } catch (err) { errEl.textContent = err.message || 'Login failed'; }
     finally { btn.disabled = false; btn.innerHTML = orig; }
@@ -12316,6 +12328,29 @@ const BioLock = {
         localStorage.setItem('ps_biometric_lock', '1');
         localStorage.setItem('ps_biometric_cred', idB64);
 
+        // Register passkey credential with server for 2FA enforcement
+        try {
+          const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
+          if (token && cred.response && cred.response.getPublicKey) {
+            const pubKey = cred.response.getPublicKey();
+            if (pubKey) {
+              const pubKeyBuf = new Uint8Array(pubKey.buffer || pubKey);
+              const pubKeyB64 = btoa(String.fromCharCode(...pubKeyBuf));
+              await fetch('/api/auth/passkey/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({
+                  credentialId: idB64,
+                  publicKey: pubKeyB64,
+                  algorithm: cred.response.getPublicKeyAlgorithm ? cred.response.getPublicKeyAlgorithm() : -7
+                })
+              });
+            }
+          }
+        } catch (regErr) {
+          console.warn('[BioLock] server registration failed (lock still works locally):', regErr);
+        }
+
         // Setup auto-lock
         document.addEventListener('visibilitychange', () => {
           if (document.hidden && this.enabled) this._lock();
@@ -12323,7 +12358,7 @@ const BioLock = {
         this._resetIdle();
 
         if (bioStatus) { bioStatus.textContent = 'On'; bioStatus.className = 'settings-chip on'; }
-        if (typeof toast === 'function') toast('✅ Biometric lock activated!', 'success');
+        if (typeof toast === 'function') toast('✅ Biometric 2FA activated!', 'success');
       }
     } catch (err) {
       console.error('[BioLock] enable error:', err);
@@ -12347,6 +12382,16 @@ const BioLock = {
     this._credId = null;
     this._hideOverlay();
     clearTimeout(this._idleTimer);
+    // Notify server to disable passkey 2FA
+    try {
+      const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
+      if (token) {
+        fetch('/api/auth/passkey/disable', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }
+        }).catch(() => {});
+      }
+    } catch(_) {}
   }
 };
 
@@ -12476,6 +12521,47 @@ function _bindEngineSettings() {
       });
     }
   } catch(e) { console.warn('[EngineSettings]', e); }
+}
+
+// ─── Passkey Login Flow (2-step verification) ────────────────────────────────
+async function _passkeyLoginFlow(challengeData, identifier, password) {
+  const { challengeId, credentialId, userId } = challengeData;
+  
+  if (!window.PublicKeyCredential) {
+    throw new Error('Biometric authentication not supported in this browser');
+  }
+
+  // Get biometric assertion
+  const rawCredId = Uint8Array.from(atob(credentialId), c => c.charCodeAt(0));
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      timeout: 120000,
+      rpId: location.hostname,
+      allowCredentials: [{ id: rawCredId, type: 'public-key', transports: ['internal'] }],
+      userVerification: 'required',
+      authenticatorAttachment: 'platform'
+    }
+  });
+
+  if (!assertion) throw new Error('Biometric scan cancelled');
+
+  // Extract signature data
+  const authData = btoa(String.fromCharCode(...new Uint8Array(assertion.response.authenticatorData)));
+  const sig = btoa(String.fromCharCode(...new Uint8Array(assertion.response.signature)));
+
+  // Send to server for verification
+  const result = await api('/auth/passkey/verify', {
+    method: 'POST',
+    body: {
+      userId,
+      challengeId,
+      signature: sig,
+      authenticatorData: authData
+    }
+  });
+
+  return result;
 }
 
 // ─── MASTER INIT ─────────────────────────────────────────────────────────────
