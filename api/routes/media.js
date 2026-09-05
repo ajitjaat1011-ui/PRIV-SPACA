@@ -9,10 +9,12 @@
 import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
 import { isRepo, uid } from '../lib/helpers.js';
-import { MEDIA_MAX_BYTES, MEDIA_MIME_EXT, _mediaKindFromMime, isCloudinaryConfigured, uploadToCloudinary } from '../lib/media.js';
+import { MEDIA_MAX_BYTES, MEDIA_MIME_EXT, _mediaKindFromMime, base64DecodedSize, decodeBase64Chunked, isCloudinaryConfigured, uploadToCloudinary } from '../lib/media.js';
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
+import { wrapUnexpected } from '../lib/errors.js';
+import { omniFetch, withFaultDomain } from '../lib/omni-engine.js';
 
 app.post('/api/upload-media', requireAuth, async (c) => {
   try {
@@ -26,9 +28,9 @@ app.post('/api/upload-media', requireAuth, async (c) => {
     const ext = MEDIA_MIME_EXT[mime];
     const kind = _mediaKindFromMime(mime);
     if (!ext || !kind) return c.json({ error: 'Unsupported media type' }, 415);
-    const bin = Uint8Array.from(atob(m[2]), ch => ch.charCodeAt(0));
-    if (!bin.length) return c.json({ error: 'Empty media' }, 400);
-    if (bin.length > MEDIA_MAX_BYTES) return c.json({ error: 'Media too large (24MB max)' }, 413);
+    const decodedBytes = base64DecodedSize(m[2]);
+    if (!decodedBytes) return c.json({ error: 'Empty media' }, 400);
+    if (decodedBytes > MEDIA_MAX_BYTES) return c.json({ error: 'Media too large (24MB max)' }, 413);
     const safeName = String((body && body.name) || 'media').replace(/[^a-z0-9_.-]+/gi, '-').slice(-64) || ('media.' + ext);
     const key = `media/${Date.now()}-${uid('m')}-${safeName.replace(/\.[^.]+$/, '')}.${ext}`;
 
@@ -36,35 +38,38 @@ app.post('/api/upload-media', requireAuth, async (c) => {
     // no binding yet, but this goes live automatically once MEDIA_BUCKET is bound
     // and MEDIA_PUBLIC_BASE_URL points at its public/custom domain.
     if (c.env && c.env.MEDIA_BUCKET && typeof c.env.MEDIA_BUCKET.put === 'function') {
-      await c.env.MEDIA_BUCKET.put(key, bin, {
-        httpMetadata: { contentType: mime, cacheControl: 'public, max-age=31536000, immutable' },
-        customMetadata: { uploader: String(me || ''), type: kind },
-      });
+      await withFaultDomain('media.r2', async () => {
+        const bin = await decodeBase64Chunked(m[2]);
+        await c.env.MEDIA_BUCKET.put(key, bin, {
+          httpMetadata: { contentType: mime, cacheControl: 'public, max-age=31536000, immutable' },
+          customMetadata: { uploader: String(me || ''), type: kind },
+        });
+      }, { idempotent: false, timeoutMs: 10_000 });
       const base = String(c.env.MEDIA_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
       const url = base ? `${base}/${key}` : `/media/${key}`;
-      return c.json({ url, mediaUrl: url, type: kind, mimeType: mime, bytes: bin.length, storage: 'cloudflare-r2' });
+      return c.json({ url, mediaUrl: url, type: kind, mimeType: mime, bytes: decodedBytes, storage: 'cloudflare-r2' });
     }
 
-    if (repoStorageConfigured()) {
+    if (isRepo()) {
       const ghUrl = `https://api.github.com/repos/${cfg.GH_REPO}/contents/${key}`;
-      const r = await fetch(ghUrl, {
+      const r = await omniFetch('media.github', ghUrl, {
         method: 'PUT',
         headers: { 'Authorization': `token ${cfg.GITHUB_PAT}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'PRIV-SPACA' },
         body: JSON.stringify({ message: `upload media ${key}`, content: m[2], branch: cfg.GH_BRANCH }),
-      });
+      }, { idempotent: false, timeoutMs: 12_000 });
       if (!r.ok) {
         const txt = await r.text().catch(() => '');
         console.error('[upload-media] GitHub write failed', r.status, txt.slice(0, 160));
         return c.json({ error: 'Media storage failed' }, 502);
       }
       const rawUrl = `https://raw.githubusercontent.com/${cfg.GH_REPO}/${cfg.GH_BRANCH}/${key}`;
-      return c.json({ url: rawUrl, mediaUrl: rawUrl, type: kind, mimeType: mime, bytes: bin.length, storage: 'github-media' });
+      return c.json({ url: rawUrl, mediaUrl: rawUrl, type: kind, mimeType: mime, bytes: decodedBytes, storage: 'github-media' });
     }
 
     return c.json({ error: 'Media storage not configured' }, 503);
   } catch (e) {
     console.error('[upload-media]', e && e.stack || e);
-    return c.json({ error: 'Upload failed' }, 500);
+    throw wrapUnexpected(e, 'Upload failed. Please try again.');
   }
 });
 
@@ -100,18 +105,18 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     if (!isRepo()) return c.json({ url: dataUrl, persisted: false });
     let priorSha = null;
     try {
-      const h = await fetch(`https://api.github.com/repos/${cfg.GH_REPO}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.GH_BRANCH)}`, {
+      const h = await omniFetch('media.github', `https://api.github.com/repos/${cfg.GH_REPO}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.GH_BRANCH)}`, {
         headers: { Authorization: 'token ' + cfg.GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json' },
-      });
+      }, { idempotent: true, timeoutMs: 5000 });
       if (h.ok) { const j = await h.json(); priorSha = j.sha || null; }
     } catch (_) {}
     const putBody = { message: `upload ${safeKind} ${id}`, content: b64, branch: cfg.GH_BRANCH };
     if (priorSha) putBody.sha = priorSha;
-    const put = await fetch(`https://api.github.com/repos/${cfg.GH_REPO}/contents/${encodeURIComponent(path)}`, {
+    const put = await omniFetch('media.github', `https://api.github.com/repos/${cfg.GH_REPO}/contents/${encodeURIComponent(path)}`, {
       method: 'PUT',
       headers: { Authorization: 'token ' + cfg.GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
       body: JSON.stringify(putBody),
-    });
+    }, { idempotent: false, timeoutMs: 12_000 });
     if (!put.ok) {
       const t = await put.text().catch(() => '');
       console.error('[upload]', put.status, t.slice(0, 200));
@@ -121,6 +126,6 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     return c.json({ url: cdn, persisted: true });
   } catch (e) {
     console.error('[upload]', e);
-    return c.json({ error: 'Upload failed' }, 500);
+    throw wrapUnexpected(e, 'Upload failed. Please try again.');
   }
 });

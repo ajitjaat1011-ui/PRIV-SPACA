@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v167';
+const APP_VERSION = 'priv-spaca-v168';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -207,11 +207,113 @@ const _apiInflight = new Map();   // key -> Promise
 const API_CACHE_TTL_MS = 5000;
 let startupFallback = null;
 
+// Browser-side companion to the Worker Omni-Engine. Tier 0 starts immediately;
+// only standard/background calls enter these small per-tab pools. The server is
+// still authoritative for user/IP partitioning and load shedding.
+const ClientOmni = (() => {
+  const running = [0, 0, 0];
+  const queues = [[], [], []];
+  let eventLoopDelayMs = 0;
+  let expected = performance.now() + 1000;
+
+  function monitor() {
+    const now = performance.now();
+    const rawDelay = Math.max(0, now - expected);
+    // A suspended/background tab is not an overloaded event loop. Reset that
+    // discontinuity instead of throttling the user for minutes after resume.
+    const sample = rawDelay > 5000 ? 0 : Math.min(rawDelay, 500);
+    eventLoopDelayMs = eventLoopDelayMs ? (eventLoopDelayMs * 0.75 + sample * 0.25) : sample;
+    expected = now + 1000;
+    setTimeout(monitor, 1000);
+  }
+  setTimeout(monitor, 1000);
+
+  function classify(path, method) {
+    const p = String(path || '/').split('?')[0];
+    const m = String(method || 'GET').toUpperCase();
+    if (p.startsWith('/auth/') || p.startsWith('/rtc/') || p === '/stream' || p === '/stream/token'
+        || p === '/messages' || p === '/messages/send' || p === '/user/typing' || p === '/user/heartbeat') return 0;
+    if (p === '/messages/read' || p === '/messages/read-batch' || p === '/notifications/seen'
+        || p.startsWith('/push/') || (m === 'POST' && /^\/stories\/[^/]+\/view$/.test(p))) return 2;
+    return 1;
+  }
+
+  function correlationId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+    const h = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  function transient(error) {
+    const status = Number(error && error.status);
+    return [408, 425, 429, 502, 503, 504].includes(status)
+      || /network|timeout|temporar|connection/i.test(String(error && error.message || ''));
+  }
+  async function execute(task, idempotent) {
+    const delays = [200, 800, 2000];
+    for (let attempt = 0; ; attempt++) {
+      try { return await task(); }
+      catch (error) {
+        if (!idempotent || attempt >= delays.length || !transient(error)) throw error;
+        await sleep(Math.max(1, Math.floor(Math.random() * delays[attempt])));
+      }
+    }
+  }
+
+  function limits() {
+    if (eventLoopDelayMs > 100) return { standard: 2, background: 0 };
+    if (eventLoopDelayMs > 50) return { standard: 4, background: 1 };
+    return { standard: 6, background: 2 };
+  }
+  function loadRatio() {
+    return Math.max((running[1] + running[2] + queues[1].length + queues[2].length) / 8, eventLoopDelayMs / 100);
+  }
+  function drain(tier) {
+    const limit = tier === 1 ? limits().standard : limits().background;
+    while (queues[tier].length && running[tier] < limit) {
+      const entry = queues[tier].shift();
+      if (Date.now() > entry.deadline) { entry.reject(new Error('Request queue timeout')); continue; }
+      running[tier]++;
+      execute(entry.task, entry.idempotent).then(entry.resolve, entry.reject).finally(() => {
+        running[tier]--;
+        drain(1); drain(2);
+      });
+    }
+  }
+  function run(path, method, task, tierOverride) {
+    const tier = tierOverride === 2 ? 2 : classify(path, method);
+    const idempotent = String(method || 'GET').toUpperCase() === 'GET';
+    if (tier === 0) return execute(task, idempotent); // never scheduler-queued
+    if (tier === 2 && (loadRatio() >= 0.75 || queues[2].length >= 20)) {
+      const error = new Error('Background request deferred by client load control');
+      error.code = 'OMNI_BACKGROUND_DEFERRED';
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      queues[tier].push({ task, idempotent, resolve, reject, deadline: Date.now() + (tier === 1 ? 6000 : 1500) });
+      drain(1); drain(2);
+    });
+  }
+  return { classify, correlationId, run };
+})();
+
 async function api(path, options = {}) {
   const opts = Object.assign({ method: 'GET', headers: {} }, options);
+  const omniTierOverride = options.omniTier === 2 ? 2 : null;
+  delete opts.omniTier;
+  delete opts.correlationId;
+  delete opts.timeoutMs;
   opts.headers = Object.assign({}, opts.headers, authHeaders());
-  // v90: Tell the server our version so it can 426-reject stale clients
+  // v90: Tell the server our version so it can 426-reject stale clients.
   if (APP_VERSION) opts.headers['X-App-Version'] = APP_VERSION;
+  // One cryptographic id follows this logical call through client retries,
+  // Worker scheduling, database/outbound operations, logs and realtime events.
+  opts.headers['X-Correlation-ID'] = options.correlationId || ClientOmni.correlationId();
+  if (omniTierOverride === 2) opts.headers['X-Omni-Intent'] = 'speculative';
   if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(opts.body);
@@ -227,15 +329,16 @@ async function api(path, options = {}) {
     if (cached && Date.now() - cached.ts < API_CACHE_TTL_MS) return cached.data;
     if (_apiInflight.has(cacheKey)) return _apiInflight.get(cacheKey);
   }
-  const fetchPromise = (async () => {
+  const fetchPromise = ClientOmni.run(path, opts.method, async () => {
     let res;
+    const requestOpts = Object.assign({}, opts);
     const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     let timeoutId = null;
     if (controller) {
-      opts.signal = controller.signal;
-      timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 12000);
+      requestOpts.signal = controller.signal;
+      timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || (isGet ? 5000 : 12000));
     }
-    try { res = await fetch(API_BASE + path, opts); }
+    try { res = await fetch(API_BASE + path, requestOpts); }
     catch (e) { throw new Error(e && e.name === 'AbortError' ? 'Network timeout' : 'Network error'); }
     finally { if (timeoutId) clearTimeout(timeoutId); }
     let data = null;
@@ -285,7 +388,7 @@ async function api(path, options = {}) {
       }
     }
     return data;
-  })();
+  }, omniTierOverride);
   if (cacheKey) {
     _apiInflight.set(cacheKey, fetchPromise);
     fetchPromise.finally(() => _apiInflight.delete(cacheKey));
@@ -1639,6 +1742,32 @@ function bumpConversationToTop(roomId, msg, incrementUnread) {
 // cleared. Within this window the local zero wins.
 const _readAtByRoom = new Map();
 const READ_SUPPRESS_MS = 15000;
+const _pendingReadReceipts = new Map();
+let _readReceiptTimer = null;
+
+function queueReadReceipt(roomId, at) {
+  _pendingReadReceipts.set(roomId, Math.max(Number(at) || 0, _pendingReadReceipts.get(roomId) || 0));
+  if (_readReceiptTimer) return;
+  _readReceiptTimer = setTimeout(flushReadReceipts, 300);
+}
+
+async function flushReadReceipts() {
+  if (_readReceiptTimer) { clearTimeout(_readReceiptTimer); _readReceiptTimer = null; }
+  if (!_pendingReadReceipts.size || !State.token) return;
+  const receipts = Array.from(_pendingReadReceipts, ([roomId, at]) => ({ roomId, at })).slice(0, 50);
+  receipts.forEach(({ roomId }) => _pendingReadReceipts.delete(roomId));
+  try {
+    await api('/messages/read-batch', { method: 'POST', body: { receipts }, keepalive: true });
+    bustApiCache('/users');
+  } catch (error) {
+    // Deliberate Tier-2 shedding is final. Network failures get one naturally
+    // de-herded retry because every tab uses a different full-jitter delay.
+    if (error && error.code === 'OMNI_BACKGROUND_DEFERRED') return;
+    receipts.forEach(({ roomId, at }) => _pendingReadReceipts.set(roomId, Math.max(at, _pendingReadReceipts.get(roomId) || 0)));
+    if (!_readReceiptTimer) _readReceiptTimer = setTimeout(flushReadReceipts, 500 + Math.floor(Math.random() * 1500));
+  }
+}
+window.addEventListener('pagehide', () => { flushReadReceipts().catch(() => {}); });
 
 function markRoomRead(roomId, peerId) {
   if (!roomId) return;
@@ -1650,9 +1779,7 @@ function markRoomRead(roomId, peerId) {
   if (_unreadByRoom && _unreadByRoom[roomId]) _unreadByRoom[roomId] = 0;
   // Drop any cached /users body so the next read goes to the network.
   bustApiCache('/users');
-  api('/messages/read', { method: 'POST', body: { roomId, at: Date.now() } })
-    .then(() => { bustApiCache('/users'); })
-    .catch(() => {});
+  queueReadReceipt(roomId, Date.now());
 }
 
 // Zero out counts for rooms the user just opened, before the list is rendered.
@@ -3901,6 +4028,7 @@ function connectSSE() {
   if (_sseUnsupported) return;
   disconnectSSE();
   const url = '/api/stream?token=' + encodeURIComponent(State.token)
+            + '&correlationId=' + encodeURIComponent(ClientOmni.correlationId())
             + (_sseLastEventId ? '&lastEventId=' + encodeURIComponent(_sseLastEventId) : '');
   try {
     _sseSource = new EventSource(url);
@@ -3942,7 +4070,8 @@ function connectSSE() {
     if (_sseSource) { try { _sseSource.close(); } catch (_) {} _sseSource = null; }
     if (_sseUnsupported) return;
     _sseAttempts = Math.min(_sseAttempts + 1, 5);
-    const backoff = Math.min(8000, 500 * Math.pow(2, _sseAttempts));
+    const backoffCap = Math.min(8000, 500 * Math.pow(2, _sseAttempts));
+    const backoff = Math.max(100, Math.floor(Math.random() * backoffCap));
     if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
     _sseReconnectTimer = setTimeout(connectSSE, backoff);
   });
@@ -10366,7 +10495,7 @@ function registerServiceWorker() {
   // Skip on localhost without https — SW needs secure context
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=94').then((reg) => {
+    navigator.serviceWorker.register('/sw.js?v=95').then((reg) => {
       try { reg.update(); } catch (_) {}
       // Listen for updates and activate quickly to remove any old stuck loader cache
       reg.addEventListener('updatefound', () => {
@@ -12117,11 +12246,9 @@ const Predictive = {
     try {
       const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
       if (!token) return;
-      const headers = { Authorization: 'Bearer ' + token };
       if (t.type === 'tab') {
-        if (t.tab === 'chat') fetch('/api/rooms', { headers }).catch(() => {});
-        else if (t.tab === 'feed') fetch('/api/feed', { headers }).catch(() => {});
-        else if (t.tab === 'profile') fetch('/api/auth/me', { headers }).catch(() => {});
+        const request = t.tab === 'chat' ? '/users' : t.tab === 'feed' ? '/feed' : t.tab === 'profile' ? '/auth/me' : null;
+        if (request) api(request, { omniTier: 2 }).catch(() => {});
       }
     } catch(_) {}
   },
@@ -12189,14 +12316,13 @@ const BioLock = {
           if (token) {
             const pubKey = cred.response.getPublicKey ? cred.response.getPublicKey() : null;
             const pubKeyB64 = pubKey ? btoa(String.fromCharCode(...new Uint8Array(pubKey.buffer || pubKey))) : '';
-            await fetch('/api/auth/passkey/register', {
+            await api('/auth/passkey/register', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-              body: JSON.stringify({
+              body: {
                 credentialId: idB64,
                 publicKey: pubKeyB64,
                 algorithm: cred.response.getPublicKeyAlgorithm ? cred.response.getPublicKeyAlgorithm() : -7
-              })
+              }
             });
           }
         } catch (regErr) { console.warn('[BioLock] server register:', regErr); }
@@ -12224,7 +12350,7 @@ const BioLock = {
     // Remove from server
     try {
       const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
-      if (token) fetch('/api/auth/passkey/disable', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } }).catch(() => {});
+      if (token) api('/auth/passkey/disable', { method: 'POST' }).catch(() => {});
     } catch(_) {}
   }
 };

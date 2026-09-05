@@ -9,12 +9,19 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 
-const APP_VERSION = (typeof window !== 'undefined' && window.__PS_APP_VERSION) || '';
+function correlationId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
 
 /* ============================== tiny API client (mirrors app.js api()) ============================== */
 async function api(path, { method = 'GET', body } = {}) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (APP_VERSION) headers['X-App-Version'] = APP_VERSION;
+  const headers = { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId() };
+  // app.js loads after this bundle and publishes its version at runtime, so
+  // read it per request rather than capturing an empty value at script parse.
+  const appVersion = (typeof window !== 'undefined' && window.__PS_APP_VERSION) || '';
+  if (appVersion) headers['X-App-Version'] = appVersion;
   const res = await fetch('/api' + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = {};
   try { data = await res.json(); } catch (_) { /* empty body */ }

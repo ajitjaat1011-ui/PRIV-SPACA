@@ -137,7 +137,7 @@ app.post('/api/posts/create', requireAuth, async (c) => {
       if (isPersist() && !persisted) return c.json({ error: 'Post storage unavailable. Please retry.' }, 503);
     }
     return c.json({ post: enriched });
-  } catch (e) { return c.json({ error: 'Create post failed' }, 500); }
+  } catch (e) { throw wrapUnexpected(e, 'Create post failed. Please try again.'); }
 });
 
 app.post('/api/posts/like', requireAuth, async (c) => {

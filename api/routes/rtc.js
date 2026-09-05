@@ -15,6 +15,7 @@ import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dedupeRtcSignals, normalizeRtcSignalRow } from '../lib/rtc.js';
 import { isTursoConfigured, tursoClient } from '../lib/store-turso.js';
+import { getOmniContext, supervisedTask } from '../lib/omni-engine.js';
 
 app.post('/api/rtc/signal', requireAuth, async (c) => {
   const body = await vbody(c, S.RtcSignalBody);
@@ -42,7 +43,7 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
 
   if (isTursoConfigured()) {
     const rtcId = uid('rtc');
-    const fullRow = { id: rtcId, createdAt: now, signalType, ...payload };
+    const fullRow = { id: rtcId, createdAt: now, signalType, correlationId: getOmniContext()?.correlationId || null, ...payload };
     // A silently-dropped INSERT here is exactly the "caller rings forever,
     // callee never sees the popup" failure, so retry once and then tell the
     // caller the truth (503) instead of a fake { ok: true }.
@@ -57,7 +58,10 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
       }).then(() => true).catch(e => { console.warn('[rtc] event insert retry failed:', e && e.message); return false; });
     }
     if (Math.random() < 0.1) {
-      tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ? AND kind = ?', args: [now - 60000, 'rtc_signal'] }).catch(() => {});
+      supervisedTask(c, tursoClient().execute({
+        sql: 'DELETE FROM ps_events WHERE created_at < ? AND kind = ?',
+        args: [now - 60000, 'rtc_signal'],
+      }), 'rtc.event-cleanup');
     }
     if (!wrote) return c.json({ error: 'Call signal storage unavailable. Please retry.' }, 503);
     return c.json({ ok: true });

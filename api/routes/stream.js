@@ -14,6 +14,7 @@ import { fetchPrimaryDatabase } from '../lib/db.js';
 import { _eventQueues, _eventSubscribers } from '../lib/events.js';
 import { requireAuth } from '../lib/middleware.js';
 import { isTursoPrimary, tursoClient, tursoEnsure } from '../lib/store-turso.js';
+import { supervisedTask } from '../lib/omni-engine.js';
 
 // ---------- GetStream.io integration endpoints ----------
 app.get('/api/stream/config', (c) => {
@@ -114,7 +115,9 @@ app.get('/api/stream', async (c) => {
           }
           if (Math.random() < 0.03) {
             const oldTs = Date.now() - 300_000;
-            tursoClient().execute({ sql: 'DELETE FROM ps_events WHERE created_at < ?', args: [oldTs] }).catch(() => {});
+            supervisedTask(c, tursoClient().execute({
+              sql: 'DELETE FROM ps_events WHERE created_at < ?', args: [oldTs],
+            }), 'stream.event-cleanup');
           }
         } catch (e) { console.warn('[SSE primaryPoller] error:', e && e.message); }
       }, 1500) : null;

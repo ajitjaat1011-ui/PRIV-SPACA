@@ -72,8 +72,9 @@ export function applyCors(c) {
     c.header('Access-Control-Allow-Origin', origin);
     c.header('Vary', 'Origin');
   }
-  c.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Last-Event-ID');
+  c.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Last-Event-ID, X-App-Version, X-Request-Id, X-Correlation-ID, X-Omni-Intent, Idempotency-Key');
+  c.header('Access-Control-Expose-Headers', 'X-Request-Id, X-Correlation-ID, X-Omni-Tier, X-Omni-Domain, X-Omni-Load-Step, X-Omni-Degraded, Retry-After');
   c.header('Access-Control-Max-Age', '86400');
 }
 

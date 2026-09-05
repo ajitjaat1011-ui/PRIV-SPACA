@@ -55,7 +55,7 @@ app.post('/api/user/update', requireAuth, async (c) => {
     await saveDatabase(db, false);
     if (isTursoConfigured()) await tursoUpsertUser(user);
     return c.json({ user: sanitizeUser(user, true) });
-  } catch (e) { console.error('[user/update]', e); return c.json({ error: 'Update failed' }, 500); }
+  } catch (e) { console.error('[user/update]', e); throw wrapUnexpected(e, 'Update failed. Please try again.'); }
 });
 
 app.post('/api/user/vip/redeem', requireAuth, async (c) => {
@@ -72,7 +72,7 @@ app.post('/api/user/vip/redeem', requireAuth, async (c) => {
     await saveDatabase(db, false);
     if (isTursoConfigured()) await tursoUpsertUser(user);
     return c.json({ ok: true, user: sanitizeUser(user, true) });
-  } catch (e) { console.error('[vip/redeem]', e); return c.json({ error: 'VIP activation failed' }, 500); }
+  } catch (e) { console.error('[vip/redeem]', e); throw wrapUnexpected(e, 'VIP activation failed. Please try again.'); }
 });
 
 app.get('/api/user/close-friends', requireAuth, async (c) => {
@@ -104,7 +104,7 @@ app.post('/api/user/close-friends', requireAuth, async (c) => {
     await saveDatabase(db, false);
     if (isTursoConfigured()) await tursoUpsertUser(me);
     return c.json({ ids: me.closeFriends, added: me.closeFriends.includes(targetId) });
-  } catch (e) { console.error('[close-friends]', e); return c.json({ error: 'Update failed' }, 500); }
+  } catch (e) { console.error('[close-friends]', e); throw wrapUnexpected(e, 'Update failed. Please try again.'); }
 });
 
 // ---------- Users list ----------
@@ -194,7 +194,7 @@ app.post('/api/user/public-key', requireAuth, async (c) => {
     u.publicKeyUpdatedAt = nowMs();
     await saveDatabase(db, false);
     return c.json({ ok: true });
-  } catch (e) { console.error('[public-key]', e); return c.json({ error: 'Save failed' }, 500); }
+  } catch (e) { console.error('[public-key]', e); throw wrapUnexpected(e, 'Save failed. Please try again.'); }
 });
 
 app.get('/api/user/public-key', requireAuth, async (c) => {

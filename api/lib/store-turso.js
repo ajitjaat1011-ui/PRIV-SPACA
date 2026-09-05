@@ -13,6 +13,58 @@ import { decryptUserPII, emailIndex, encryptUserPII } from './crypto-fields.js';
 import { state } from './state.js';
 import { nowMs, safeJson } from './helpers.js';
 import { normalizeDb } from './schema.js';
+import { withFaultDomain } from './omni-engine.js';
+
+function sqlText(statement) {
+  if (typeof statement === 'string') return statement;
+  return String(statement?.sql || '');
+}
+
+function isReadOnlyStatement(statement) {
+  return /^\s*(SELECT|PRAGMA|EXPLAIN|WITH\s+[^]*?\bSELECT\b)/i.test(sqlText(statement));
+}
+
+/**
+ * Wrap every libSQL network operation in the database fault domain. Correlation
+ * context is retained by Omni's AsyncLocalStorage even though the libSQL SDK
+ * does not expose a portable custom-header hook.
+ */
+function instrumentTursoClient(client) {
+  return new Proxy(client, {
+    get(target, property, receiver) {
+      if (property === '__omniInstrumented') return true;
+      if (property === 'execute') {
+        return (statement) => {
+          const readOnly = isReadOnlyStatement(statement);
+          return withFaultDomain('database.turso', () => target.execute(statement), {
+            idempotent: readOnly,
+            timeoutMs: readOnly ? 2500 : 7000,
+          });
+        };
+      }
+      if (property === 'batch') {
+        return (statements, mode) => {
+          const readOnly = Array.isArray(statements) && statements.every(isReadOnlyStatement);
+          return withFaultDomain('database.turso', () => target.batch(statements, mode), {
+            idempotent: readOnly,
+            timeoutMs: readOnly ? 3000 : 8000,
+          });
+        };
+      }
+      if (property === 'executeMultiple') {
+        return (sql) => withFaultDomain('database.turso',
+          () => target.executeMultiple(sql),
+          { idempotent: false, timeoutMs: 10_000 });
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+function createInstrumentedTursoClient() {
+  return instrumentTursoClient(createTursoClient({ url: cfg.TURSO_DATABASE_URL, authToken: cfg.TURSO_AUTH_TOKEN }));
+}
 
 // ---------- Persistence routing (Turso primary, GitHub fallback) ----------
 // Neon Postgres has been removed from this build. Turso is the only primary
@@ -37,13 +89,12 @@ export function isTursoConfigured() {
 export function tursoClient() {
   const store = _tursoAls.getStore();
   if (store) {
-    if (!store.client) store.client = createTursoClient({ url: cfg.TURSO_DATABASE_URL, authToken: cfg.TURSO_AUTH_TOKEN });
+    if (!store.client) store.client = createInstrumentedTursoClient();
     return store.client;
   }
-  // Fallback for any code path that runs outside the per-request ALS context
-  // (e.g. scheduled/background work). Still request-scoped in spirit: a new
-  // client each time, never cached at module level.
-  return createTursoClient({ url: cfg.TURSO_DATABASE_URL, authToken: cfg.TURSO_AUTH_TOKEN });
+  // Background work gets a fresh instrumented client; never a module-global
+  // socket/client whose lifecycle outlives a Worker request.
+  return createInstrumentedTursoClient();
 }
 
 // Runs `fn` inside a fresh per-request Turso-client scope. Wired into the
@@ -642,19 +693,25 @@ export async function fetchTursoUnreadCounts(myId) {
 
 /** Stamp a room as read up to `ts` for one user. */
 export async function tursoMarkRoomRead(myId, roomId, ts = nowMs()) {
-  if (!isTursoConfigured() || !myId || !roomId) return false;
+  return tursoMarkRoomsRead(myId, [{ roomId, at: ts }]);
+}
+
+export async function tursoMarkRoomsRead(myId, receipts) {
+  if (!isTursoConfigured() || !myId || !Array.isArray(receipts) || receipts.length === 0) return false;
   await tursoEnsure();
+  const updatedAt = nowMs();
+  const statements = receipts.slice(0, 50).map((receipt) => ({
+    sql: `INSERT INTO ps_read_state (owner_user_id, room_id, last_read_at, updated_at) VALUES (?, ?, ?, ?)
+          ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
+            last_read_at = MAX(ps_read_state.last_read_at, excluded.last_read_at),
+            updated_at = excluded.updated_at`,
+    args: [myId, receipt.roomId, Number(receipt.at) || updatedAt, updatedAt],
+  }));
   try {
-    await tursoClient().execute({
-      sql: `INSERT INTO ps_read_state (owner_user_id, room_id, last_read_at, updated_at) VALUES (?, ?, ?, ?)
-            ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
-              last_read_at = MAX(ps_read_state.last_read_at, excluded.last_read_at),
-              updated_at = excluded.updated_at`,
-      args: [myId, roomId, Number(ts) || nowMs(), nowMs()],
-    });
+    await tursoClient().batch(statements, 'write');
     return true;
   } catch (e) {
-    console.warn('[turso] mark read failed', e && e.message);
+    console.warn('[turso] mark read batch failed', e && e.message);
     return false;
   }
 }

@@ -8,6 +8,7 @@
 
 import { cfg } from './config.js';
 import { isSafeImageUrl, isSafeMediaUrl, sanitizeText } from './helpers.js';
+import { omniFetch } from './omni-engine.js';
 
 // ---------- Cloudinary upload helper ----------
 // When CLOUDINARY_* env vars are set, uploads go to Cloudinary (faster, has
@@ -55,11 +56,11 @@ export function isCloudinaryConfigured() {
 }
 
 export async function uploadToCloudinary(dataUrl, folder, publicId) {
-  // 1) Decode data URL to a binary buffer
+  // Cloudinary accepts a data URI directly. Avoid decoding/re-encoding a large
+  // payload in this isolate; that synchronous transform could stall real-time
+  // chat/RTC work sharing the event loop.
   const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!m) return null;
-  const mime = m[1];
-  const bytes = Uint8Array.from(atob(m[2]), c => c.charCodeAt(0));
   // 2) Build signed-form params. Cloudinary signature = SHA-1 of
   //    sorted-key-joined "k=v" pairs + api_secret, all as a single string.
   const timestamp = Math.floor(Date.now() / 1000);
@@ -75,7 +76,7 @@ export async function uploadToCloudinary(dataUrl, folder, publicId) {
   const signature = await sha1Hex(toSign);
   // 3) Build multipart/form-data
   const form = new FormData();
-  form.append('file', new Blob([bytes], { type: mime }), 'upload');
+  form.append('file', dataUrl);
   form.append('api_key', cfg.CLOUDINARY_API_KEY);
   form.append('timestamp', String(timestamp));
   form.append('signature', signature);
@@ -84,7 +85,10 @@ export async function uploadToCloudinary(dataUrl, folder, publicId) {
   form.append('overwrite', 'true');
   // 4) POST to Cloudinary upload endpoint
   const url = `https://api.cloudinary.com/v1_1/${cfg.CLOUDINARY_CLOUD_NAME}/auto/upload`;
-  const r = await fetch(url, { method: 'POST', body: form });
+  const r = await omniFetch('media.cloudinary', url, { method: 'POST', body: form }, {
+    idempotent: false,
+    timeoutMs: 12_000,
+  });
   if (!r.ok) {
     const t = await r.text().catch(() => '');
     console.error('[cloudinary]', r.status, t.slice(0, 300));
@@ -106,6 +110,26 @@ export const MEDIA_MIME_EXT = {
 };
 
 export const MEDIA_MAX_BYTES = 24 * 1024 * 1024;
+
+export function base64DecodedSize(base64) {
+  const value = String(base64 || '').replace(/\s/g, '');
+  if (!value) return 0;
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor(value.length * 3 / 4) - padding);
+}
+
+/** Yield between decode chunks so large R2 uploads do not monopolize the loop. */
+export async function decodeBase64Chunked(base64, chunkChars = 256 * 1024) {
+  const value = String(base64 || '').replace(/\s/g, '');
+  const output = new Uint8Array(base64DecodedSize(value));
+  let offset = 0;
+  for (let start = 0; start < value.length; start += chunkChars) {
+    const bin = atob(value.slice(start, Math.min(value.length, start + chunkChars)));
+    for (let i = 0; i < bin.length; i++) output[offset++] = bin.charCodeAt(i);
+    if (start + chunkChars < value.length) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return output;
+}
 
 export function _mediaKindFromMime(mime) {
   mime = String(mime || '').toLowerCase();

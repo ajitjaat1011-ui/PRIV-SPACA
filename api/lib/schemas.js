@@ -144,6 +144,10 @@ export const MessageReadBody = o({
   at: opt(number()),
 });
 
+export const MessageReadBatchBody = o({
+  receipts: array(o({ roomId, at: opt(number()) })).check(maxLength(50)),
+});
+
 /* -------------------------------------------------------------------- media */
 
 export const UploadMediaBody = o({

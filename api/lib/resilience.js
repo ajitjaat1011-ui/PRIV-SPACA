@@ -1,248 +1,308 @@
 /**
- * PRIV SPACA — Library — resilience
+ * PRIV SPACA — isolate-local resilience primitives.
  *
- * Load shedding, request correlation ids, structured logging, timeouts and a
- * circuit breaker for third-party calls.
- *
- * RUNTIME REALITY CHECK
- * ---------------------
- * On Cloudflare Workers there is no shared process holding a global concurrency
- * counter: each isolate handles its own requests and isolates come and go. So
- * "adaptive concurrency shedding" here means PER-ISOLATE in-flight accounting.
- * That is genuinely useful — the failure mode we actually hit in production is
- * CPU exhaustion inside one isolate (Cloudflare `error code: 1102`), which is
- * exactly what a per-isolate limit protects against — but it is not a global
- * cluster-wide limit, and it is not pretending to be one. Cross-isolate limits
- * are already handled by the Turso-backed rate limiters in ratelimit.js.
- *
- * Part of the modular Hono API (api/). Entry point: api/cf-worker.js
+ * Cloudflare Workers do not expose an immortal master process, a shared
+ * process-wide queue, or a worker restart API. Everything in this module is
+ * deliberately isolate-local; durable abuse limits remain in ratelimit.js.
  */
 
-import { AppError, ErrorCodes } from './errors.js';
+import { AppError, ErrorCodes, wrapUnexpected } from './errors.js';
 
-/* --------------------------------------------------------- correlation ids */
+const startedAt = Date.now();
+const breakerState = new Map();
+const WINDOW_MS = 10_000;
+const DEFAULT_MIN_SAMPLES = 5;
 
-/**
- * Per-request id. Prefers Cloudflare's ray id so a log line can be matched
- * against the Cloudflare dashboard, falling back to a random id locally.
- */
+function uuid() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const h = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+export function isValidCorrelationId(value) {
+  return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{15,127}$/.test(value);
+}
+
+/** Generate/accept the end-to-end correlation id at API entry. */
 export function requestId(c) {
-  const ray = c.req.header('cf-ray');
-  if (ray) return ray;
-  const existing = c.req.header('x-request-id');
-  if (existing && /^[A-Za-z0-9_.:-]{1,128}$/.test(existing)) return existing;
-  return 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+  // EventSource cannot set custom headers, so the SSE client may use the same
+  // validated query parameter. It contains no credential or user data.
+  const incoming = c.req.header('x-correlation-id') || c.req.query('correlationId');
+  return isValidCorrelationId(incoming) ? incoming : uuid();
 }
 
-/* -------------------------------------------------------------- structured logging */
-
-/**
- * One JSON object per line — the Workers equivalent of Winston/Pino.
- * `console.log` output is what `wrangler tail` and Logpush ingest, so emitting
- * JSON here is what makes those searchable by requestId.
- */
-export function log(level, msg, fields = {}) {
-  const line = { level, msg, t: new Date().toISOString(), ...fields };
-  for (const k of Object.keys(line)) if (line[k] === undefined) delete line[k];
-  const s = JSON.stringify(line);
-  if (level === 'error') console.error(s);
-  else if (level === 'warn') console.warn(s);
-  else console.log(s);
-}
-
-/* ------------------------------------------------------------- load shedding */
-
-/**
- * In-flight request accounting for THIS isolate.
- *
- * Thresholds are deliberately generous. The goal is to shed traffic only when
- * an isolate is genuinely saturated, because shedding too eagerly turns a slow
- * request into a failed one for no benefit.
- */
-const loadState = {
-  inFlight: 0,
-  // Reads are cheap and are the bulk of traffic; writes are the ones that can
-  // pile up behind Turso latency.
-  maxInFlight: 120,
-  maxInFlightWrites: 40,
-  inFlightWrites: 0,
-  shedCount: 0,
-  peakInFlight: 0,
-};
-
-/** Endpoints that must never be shed — they are how we detect the outage. */
-const NEVER_SHED = new Set(['/api/health', '/api/ready', '/api/version']);
-
-export function loadSnapshot() {
-  return {
-    inFlight: loadState.inFlight,
-    inFlightWrites: loadState.inFlightWrites,
-    maxInFlight: loadState.maxInFlight,
-    maxInFlightWrites: loadState.maxInFlightWrites,
-    peakInFlight: loadState.peakInFlight,
-    shedCount: loadState.shedCount,
-  };
-}
-
-/**
- * Decide whether to shed, and if not, register the request as in-flight.
- * @returns a release function the caller MUST invoke in a finally block
- */
-export function admit(c) {
-  const path = c.req.path;
-  const method = c.req.method;
-  const isWrite = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
-
-  if (NEVER_SHED.has(path)) {
-    return () => {};
-  }
-
-  if (loadState.inFlight >= loadState.maxInFlight ||
-      (isWrite && loadState.inFlightWrites >= loadState.maxInFlightWrites)) {
-    loadState.shedCount++;
-    log('warn', 'load_shed', {
-      requestId: c.get('requestId'), path, method,
-      inFlight: loadState.inFlight, inFlightWrites: loadState.inFlightWrites,
-    });
-    throw new AppError(
-      ErrorCodes.OVERLOADED,
-      'The server is busy right now. Please try again in a moment.',
-      { status: 503 }
-    );
-  }
-
-  loadState.inFlight++;
-  if (isWrite) loadState.inFlightWrites++;
-  if (loadState.inFlight > loadState.peakInFlight) loadState.peakInFlight = loadState.inFlight;
-
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    loadState.inFlight--;
-    if (isWrite) loadState.inFlightWrites--;
-  };
-}
-
-/* ------------------------------------------------------------------ timeouts */
-
-/**
- * Race a promise against a deadline.
- *
- * The Turso client speaks HTTP, so there is no TCP pool to size and no
- * pool-level query timeout to configure — the equivalent control is bounding
- * how long we are willing to wait, which is what this does.
- */
-export function withTimeout(promise, ms, label = 'operation') {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(
-      () => reject(new AppError(ErrorCodes.TIMEOUT, `The ${label} took too long.`, { status: 504 })),
-      ms
-    );
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-/** An AbortSignal that trips after `ms`, for fetch calls to third parties. */
-export function timeoutSignal(ms) {
-  if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) return AbortSignal.timeout(ms);
-  const ac = new AbortController();
-  setTimeout(() => ac.abort(), ms);
-  return ac.signal;
-}
-
-/* ----------------------------------------------------------- circuit breaker */
-
-/**
- * Per-isolate circuit breaker around an outbound dependency.
- *
- * States: closed (normal) -> open (failing fast) -> half-open (one trial) ->
- * closed or back to open. Same caveat as load shedding: the state is
- * per-isolate, so this bounds the damage one isolate can do to a sick upstream
- * rather than coordinating a global trip.
- */
-const breakers = new Map();
-
-export function getBreaker(name, { failureThreshold = 5, resetMs = 30000 } = {}) {
-  let b = breakers.get(name);
-  if (!b) {
-    b = { name, failures: 0, state: 'closed', openedAt: 0, failureThreshold, resetMs, trips: 0 };
-    breakers.set(name, b);
-  }
-  return b;
-}
-
-export function breakerSnapshot() {
+function safeMeta(meta) {
+  if (!meta || typeof meta !== 'object') return undefined;
   const out = {};
-  for (const [name, b] of breakers) out[name] = { state: b.state, failures: b.failures, trips: b.trips };
+  for (const [key, value] of Object.entries(meta)) {
+    if (/token|secret|password|authorization|cookie|pin/i.test(key)) continue;
+    if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) out[key] = value;
+  }
   return out;
 }
 
+export function logEvent(level, event, fields = {}) {
+  const record = {
+    ts: new Date().toISOString(),
+    level,
+    event,
+    service: 'priv-spaca-api',
+    ...safeMeta(fields),
+  };
+  const line = JSON.stringify(record);
+  if (level === 'error' || level === 'fatal') console.error(line);
+  else if (level === 'warn') console.warn(line);
+  else console.log(line);
+}
+
+export function statusClass(status) {
+  if (status >= 500) return '5xx';
+  if (status >= 400) return '4xx';
+  if (status >= 300) return '3xx';
+  return '2xx';
+}
+
 /**
- * Run `fn` under the named breaker.
- * @param fallback optional value returned instead of throwing when open
+ * Access log middleware. Sampling keeps healthy hot paths inexpensive while
+ * retaining every slow/error/degraded request.
  */
-export async function withBreaker(name, fn, { fallback, failureThreshold, resetMs, timeoutMs } = {}) {
-  const b = getBreaker(name, { failureThreshold, resetMs });
-  const now = Date.now();
-
-  if (b.state === 'open') {
-    if (now - b.openedAt >= b.resetMs) {
-      b.state = 'half-open';
-    } else {
-      log('warn', 'breaker_open', { breaker: name });
-      if (fallback !== undefined) return fallback;
-      throw new AppError(
-        ErrorCodes.UPSTREAM_UNAVAILABLE,
-        'A service we depend on is temporarily unavailable.',
-        { status: 503 }
-      );
+export function accessLog({ successSampleRate = 0.04, slowMs = 1000 } = {}) {
+  return async (c, next) => {
+    const start = Date.now();
+    let thrown = null;
+    try {
+      await next();
+    } catch (error) {
+      thrown = error;
+      throw error;
+    } finally {
+      const durationMs = Date.now() - start;
+      const status = thrown ? 500 : (c.res?.status || 200);
+      const important = thrown || status >= 400 || durationMs >= slowMs || c.get('omniDegraded');
+      if (important || Math.random() < successSampleRate) {
+        logEvent(status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info', 'request.complete', {
+          correlationId: c.get('correlationId') || c.get('requestId'),
+          requestId: c.get('requestId'),
+          path: c.req.path,
+          method: c.req.method,
+          status,
+          statusClass: statusClass(status),
+          durationMs,
+          tier: c.get('omniTier'),
+          loadStep: c.get('omniLoadStep'),
+          colo: c.req.raw.cf?.colo,
+          country: c.req.raw.cf?.country,
+        });
+      }
     }
-  }
+  };
+}
 
+/** Promise timeout that does not rely on Node-only APIs. */
+export async function withTimeout(promise, ms, label = 'operation') {
+  if (!ms || ms <= 0) return promise;
+  let timer;
   try {
-    const result = timeoutMs ? await withTimeout(Promise.resolve(fn()), timeoutMs, name) : await fn();
-    if (b.state === 'half-open' || b.failures) {
-      b.state = 'closed';
-      b.failures = 0;
-      log('info', 'breaker_closed', { breaker: name });
-    }
-    return result;
-  } catch (e) {
-    b.failures++;
-    if (b.state === 'half-open' || b.failures >= b.failureThreshold) {
-      b.state = 'open';
-      b.openedAt = Date.now();
-      b.trips++;
-      log('error', 'breaker_tripped', { breaker: name, failures: b.failures });
-    }
-    if (fallback !== undefined) return fallback;
-    throw e;
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new AppError(
+          ErrorCodes.UPSTREAM_TIMEOUT,
+          `${label} timed out.`,
+          { safeMessage: 'A dependency took too long to respond.', status: 504, meta: { label } },
+        )), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
-/* ---------------------------------------------------------------- retries */
+function stateFor(name) {
+  if (!breakerState.has(name)) {
+    breakerState.set(name, {
+      state: 'closed',
+      events: [],
+      openedAt: 0,
+      probeInFlight: false,
+      openCount: 0,
+      lastFailureAt: 0,
+      lastSuccessAt: 0,
+    });
+  }
+  return breakerState.get(name);
+}
+
+function pruneEvents(state, now, windowMs = WINDOW_MS) {
+  const cutoff = now - windowMs;
+  while (state.events.length && state.events[0].at < cutoff) state.events.shift();
+}
+
+function windowStats(state, now, windowMs) {
+  pruneEvents(state, now, windowMs);
+  const samples = state.events.length;
+  const failures = state.events.reduce((n, event) => n + (event.ok ? 0 : 1), 0);
+  return { samples, failures, failureRate: samples ? failures / samples : 0 };
+}
+
+function fallbackOrThrow(fallback, error, info) {
+  if (fallback === undefined) throw error;
+  return typeof fallback === 'function' ? fallback(error, info) : fallback;
+}
 
 /**
- * Retry with exponential backoff and jitter.
- *
- * Only for idempotent work. Jitter matters: without it, everything that failed
- * during a blip retries in lockstep and re-creates the blip.
+ * Three-state rolling-window circuit breaker.
+ * Opens when failures exceed 30% over the previous 10 seconds after a small
+ * minimum sample size, then permits exactly one half-open probe.
  */
-export async function retry(fn, { attempts = 3, baseMs = 100, maxMs = 2000, retryable } = {}) {
-  let lastErr;
-  for (let i = 0; i < attempts; i++) {
+export async function withBreaker(name, fn, {
+  fallback,
+  failureThreshold,
+  minSamples = failureThreshold || DEFAULT_MIN_SAMPLES,
+  failureRate = 0.30,
+  windowMs = WINDOW_MS,
+  resetMs = 10_000,
+  timeoutMs,
+} = {}) {
+  const state = stateFor(name);
+  const now = Date.now();
+  pruneEvents(state, now, windowMs);
+
+  if (state.state === 'open') {
+    if (now - state.openedAt < resetMs) {
+      return fallbackOrThrow(fallback, new AppError(
+        ErrorCodes.UPSTREAM_UNAVAILABLE,
+        `${name} circuit is open.`,
+        { safeMessage: 'A dependency is temporarily unavailable.', status: 503, meta: { breaker: name } },
+      ), { breaker: name, state: 'open' });
+    }
+    state.state = 'half_open';
+    state.probeInFlight = false;
+  }
+
+  if (state.state === 'half_open' && state.probeInFlight) {
+    return fallbackOrThrow(fallback, new AppError(
+      ErrorCodes.UPSTREAM_UNAVAILABLE,
+      `${name} half-open probe is already running.`,
+      { safeMessage: 'A dependency is recovering. Please retry shortly.', status: 503, meta: { breaker: name } },
+    ), { breaker: name, state: 'half_open' });
+  }
+
+  const isProbe = state.state === 'half_open';
+  if (isProbe) state.probeInFlight = true;
+  try {
+    const result = await withTimeout(Promise.resolve().then(fn), timeoutMs, name);
+    const doneAt = Date.now();
+    state.lastSuccessAt = doneAt;
+    if (isProbe) {
+      state.state = 'closed';
+      state.events = [];
+      state.openedAt = 0;
+      logEvent('info', 'circuit.closed', { breaker: name });
+    } else {
+      state.events.push({ at: doneAt, ok: true });
+      pruneEvents(state, doneAt, windowMs);
+    }
+    return result;
+  } catch (error) {
+    const failedAt = Date.now();
+    state.lastFailureAt = failedAt;
+    state.events.push({ at: failedAt, ok: false });
+    const stats = windowStats(state, failedAt, windowMs);
+    if (isProbe || (stats.samples >= minSamples && stats.failureRate > failureRate)) {
+      state.state = 'open';
+      state.openedAt = failedAt;
+      state.openCount++;
+      logEvent('error', 'circuit.opened', {
+        breaker: name,
+        samples: stats.samples,
+        failures: stats.failures,
+        failureRate: Number(stats.failureRate.toFixed(3)),
+      });
+    }
+    return fallbackOrThrow(fallback, error, { breaker: name, state: state.state, ...stats });
+  } finally {
+    if (isProbe) state.probeInFlight = false;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isTransientError(error) {
+  const wrapped = wrapUnexpected(error);
+  if ([
+    ErrorCodes.UPSTREAM_TIMEOUT,
+    ErrorCodes.UPSTREAM_UNAVAILABLE,
+    ErrorCodes.OVERLOADED,
+    ErrorCodes.RATE_LIMITED,
+  ].includes(wrapped.code)) return true;
+  if ([408, 425, 429, 502, 503, 504].includes(Number(wrapped.status))) return true;
+  return /timeout|temporar|network|fetch failed|connection|econn|reset/i.test(String(error?.message || ''));
+}
+
+/**
+ * Retry only callers that explicitly opt into idempotent work. Delays use
+ * full jitter around the requested 200ms, 800ms and 2000ms retry stages.
+ */
+export async function retryWithJitter(fn, {
+  idempotent = false,
+  delays = [200, 800, 2000],
+  retryable = isTransientError,
+  onRetry,
+} = {}) {
+  if (!idempotent) return fn(0);
+  let last;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
     try {
-      return await fn(i);
-    } catch (e) {
-      lastErr = e;
-      if (retryable && !retryable(e)) throw e;
-      if (i === attempts - 1) break;
-      const backoff = Math.min(maxMs, baseMs * Math.pow(2, i));
-      const jittered = backoff * (0.5 + Math.random() * 0.5);
-      await new Promise((r) => setTimeout(r, jittered));
+      return await fn(attempt);
+    } catch (error) {
+      last = error;
+      if (attempt >= delays.length || !retryable(error)) throw error;
+      const cap = delays[attempt];
+      const delayMs = Math.max(1, Math.floor(Math.random() * cap));
+      if (onRetry) onRetry({ attempt: attempt + 1, delayMs, error });
+      await sleep(delayMs);
     }
   }
-  throw lastErr;
+  throw last;
+}
+
+/** Compatibility wrapper retained for older call sites. */
+export async function retry(fn, { attempts = 3, baseMs = 200, maxMs = 2000, retryable = isTransientError } = {}) {
+  const delays = [];
+  for (let i = 0; i < Math.max(0, attempts - 1); i++) delays.push(Math.min(maxMs, baseMs * (4 ** i)));
+  return retryWithJitter(fn, { idempotent: true, delays, retryable });
+}
+
+export function circuitSnapshot() {
+  const now = Date.now();
+  const circuits = {};
+  for (const [name, state] of breakerState) {
+    const stats = windowStats(state, now, WINDOW_MS);
+    circuits[name] = {
+      state: state.state,
+      windowMs: WINDOW_MS,
+      samples: stats.samples,
+      failures: stats.failures,
+      failureRate: Number(stats.failureRate.toFixed(3)),
+      openedAt: state.openedAt || null,
+      openCount: state.openCount,
+      lastFailureAt: state.lastFailureAt || null,
+      lastSuccessAt: state.lastSuccessAt || null,
+      probeInFlight: state.probeInFlight,
+    };
+  }
+  return { isolateUptimeMs: now - startedAt, circuits };
+}
+
+export function resetCircuitBreakers() {
+  breakerState.clear();
 }

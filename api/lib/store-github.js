@@ -17,6 +17,7 @@ import { cfg } from './config.js';
 import { state } from './state.js';
 import { _b64decode, isRepo, safeJson } from './helpers.js';
 import { isTursoPrimary, tursoReadDb, tursoWriteDb } from './store-turso.js';
+import { omniFetch } from './omni-engine.js';
 
 // ---------- GitHub repo persistence ----------
 export async function repoRead() {
@@ -27,10 +28,10 @@ export async function repoRead() {
     
     // Read JSON directly from GitHub Contents API. Avoid raw.githubusercontent/raw
     // responses because they can be stale and caused login to say account not found.
-    const rSha = await fetch(url, {
+    const rSha = await omniFetch('database.github', url, {
       headers: { Authorization: 'token ' + cfg.GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json', 'Cache-Control': 'no-cache' },
       cf: { cacheTtl: 0, cacheEverything: false },
-    });
+    }, { idempotent: true, timeoutMs: 5000 });
     if (!rSha.ok) return { _httpError: rSha.status, txt: await rSha.text() };
     const dSha = await rSha.json();
     if (dSha && dSha.sha) state.ghFileSha = dSha.sha;
@@ -53,11 +54,11 @@ export async function repoWrite(dbObj) {
     const doPut = async (sha) => {
       const body = { message: 'priv-spaca sync ' + new Date().toISOString(), content, branch: cfg.GH_BRANCH };
       if (sha) body.sha = sha;
-      return fetch(url, {
+      return omniFetch('database.github', url, {
         method: 'PUT',
         headers: { Authorization: 'token ' + cfg.GITHUB_PAT, 'User-Agent': 'PRIV-SPACA', Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      });
+      }, { idempotent: false, timeoutMs: 8000 });
     };
     let r = await doPut(state.ghFileSha);
     // Do NOT retry conflicts here with the same stale content. Return false so

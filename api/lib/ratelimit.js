@@ -8,6 +8,7 @@
 
 import { sleepMs } from './helpers.js';
 import { isTursoPrimary, tursoClient, tursoEnsure } from './store-turso.js';
+import { supervisedTask } from './omni-engine.js';
 
 // ---------- Rate limiting ----------
 // v77-bugfix: In-memory rate limiter is ONLY used as fallback when Turso is unreachable.
@@ -38,7 +39,10 @@ export async function sharedRateLimit({ key, limit, windowMs }) {
         args: [key, nextResetAt, now, now, now, nextResetAt, now],
       });
       if (Math.random() < 0.01) {
-        tc.execute({ sql: 'DELETE FROM ps_rate_limits WHERE reset_at < ?', args: [now - (24 * 60 * 60 * 1000)] }).catch(() => {});
+        supervisedTask(null, tc.execute({
+          sql: 'DELETE FROM ps_rate_limits WHERE reset_at < ?',
+          args: [now - (24 * 60 * 60 * 1000)],
+        }), 'ratelimit.cleanup');
       }
       const rs = await tc.execute({ sql: 'SELECT count, reset_at FROM ps_rate_limits WHERE key = ? LIMIT 1', args: [key] });
       const row = rs.rows && rs.rows[0] ? rs.rows[0] : { count: 1, reset_at: nextResetAt };

@@ -9,6 +9,7 @@
 import { nowMs, uid } from './helpers.js';
 import { sendWebPush } from './push.js';
 import { isTursoPrimary, tursoClient, tursoEnsure } from './store-turso.js';
+import { getOmniContext, supervisedTask } from './omni-engine.js';
 
 // ---------- Real-time events (in-memory; SSE per-request) ----------
 // Note: In Cloudflare Workers, each isolate has its own memory and is ephemeral,
@@ -31,7 +32,8 @@ export const _eventSubscribers = new Map();
 // caller saw "Calling…" but the callee never got the incoming-call popup.
 export function _pushEvent(userId, kind, data, opts = {}) {
   if (!userId) return;
-  const evt = { id: 'evt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ts: Date.now(), kind, data };
+  const correlationId = getOmniContext()?.correlationId || null;
+  const evt = { id: 'evt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ts: Date.now(), kind, data, correlationId };
   if (!_eventQueues.has(userId)) _eventQueues.set(userId, []);
   const q = _eventQueues.get(userId);
   q.push(evt);
@@ -44,10 +46,10 @@ export function _pushEvent(userId, kind, data, opts = {}) {
   }
   if (opts.persist === false) return evt;
   if (isTursoPrimary()) {
-    tursoEnsure().then(() => tursoClient().execute({
+    supervisedTask(null, tursoEnsure().then(() => tursoClient().execute({
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
       args: [evt.id, userId, kind, JSON.stringify(evt), evt.ts],
-    })).catch(e => console.warn('[_pushEvent] turso insert failed:', e && e.message));
+    })), `event.persist.${kind}`);
   } // Neon events path removed
   return evt;
 }
@@ -95,9 +97,9 @@ export function pushNotification(db, recipientId, kind, fromUserId, extra = {}) 
   if (kind === 'follow')  body = `${fromName} started following you`;
   if (kind === 'message') body = `${fromName}: ${(notif.text || '').slice(0, 80)}`;
   if (kind === 'story_reply') body = `${fromName} replied to your story`;
-  if (body) sendWebPush(db, recipientId, { title, body, tag: 'priv-spaca-' + notif.id, url: '/', kind, notifId: notif.id }).catch((err) => {
-    // v77-bugfix: Log push failures instead of silently swallowing
-    console.warn('[pushNotification:sendWebPush] error for', recipientId, kind, err && err.message);
-  });
+  if (body) supervisedTask(null,
+    sendWebPush(db, recipientId, { title, body, tag: 'priv-spaca-' + notif.id, url: '/', kind, notifId: notif.id }),
+    `push.send.${kind}`,
+  );
   return notif;
 }

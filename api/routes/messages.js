@@ -15,7 +15,7 @@ import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dmRoomFor, normalizeRoomId } from '../lib/rooms.js';
-import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoHealNotificationColumns, tursoMarkRoomRead, tursoRefreshDmIndexForOwners, tursoUpsertMessages } from '../lib/store-turso.js';
+import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoHealNotificationColumns, tursoMarkRoomRead, tursoMarkRoomsRead, tursoRefreshDmIndexForOwners, tursoUpsertMessages } from '../lib/store-turso.js';
 
 // ---------- Messages ----------
 app.get('/api/messages', requireAuth, async (c) => {
@@ -228,7 +228,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
       if (isPersist() && !persisted) return c.json({ error: 'Message storage unavailable. Please retry.' }, 503);
     }
     return c.json({ message: enriched });
-  } catch (e) { console.error('[send]', e); return c.json({ error: 'Send failed' }, 500); }
+  } catch (e) { console.error('[send]', e); throw wrapUnexpected(e, 'Send failed. Please try again.'); }
 });
 
 app.post('/api/messages/delete', requireAuth, async (c) => {
@@ -246,7 +246,7 @@ app.post('/api/messages/delete', requireAuth, async (c) => {
       if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
     }
     return c.json({ ok: true, undoUntil: m.deletedAt + 30 * 24 * 3600 * 1000 });
-  } catch (e) { console.error('[delmsg]', e); return c.json({ error: 'Delete failed' }, 500); }
+  } catch (e) { console.error('[delmsg]', e); throw wrapUnexpected(e, 'Delete failed. Please try again.'); }
 });
 
 app.post('/api/messages/restore', requireAuth, async (c) => {
@@ -263,7 +263,7 @@ app.post('/api/messages/restore', requireAuth, async (c) => {
       if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
     }
     return c.json({ ok: true });
-  } catch (e) { console.error('[restoremsg]', e); return c.json({ error: 'Restore failed' }, 500); }
+  } catch (e) { console.error('[restoremsg]', e); throw wrapUnexpected(e, 'Restore failed. Please try again.'); }
 });
 
 // Scheduled
@@ -300,7 +300,7 @@ app.post('/api/messages/schedule', requireAuth, async (c) => {
     db.scheduledMessages.push(sm);
     await saveDatabase(db, false);
     return c.json({ scheduled: sm });
-  } catch (e) { return c.json({ error: 'Schedule failed' }, 500); }
+  } catch (e) { throw wrapUnexpected(e, 'Schedule failed. Please try again.'); }
 });
 
 app.get('/api/messages/scheduled', requireAuth, async (c) => {
@@ -341,5 +341,24 @@ app.post('/api/messages/read', requireAuth, async (c) => {
     const ts = Number(body.at) > 0 ? Number(body.at) : nowMs();
     if (isTursoConfigured()) await tursoMarkRoomRead(myId, roomId, ts);
     return c.json({ ok: true, roomId, at: ts });
+  } catch (e) { throw wrapUnexpected(e); }
+});
+
+// Batched, best-effort read receipts are Tier 2 in Omni. The batch keeps rapid
+// room switches from generating one database/network operation per room.
+app.post('/api/messages/read-batch', requireAuth, async (c) => {
+  try {
+    const myId = c.get('userId');
+    const body = await vbody(c, S.MessageReadBatchBody);
+    const receipts = (body.receipts || []).map((receipt) => ({
+      roomId: String(receipt.roomId || '').trim(),
+      at: Number(receipt.at) > 0 ? Number(receipt.at) : nowMs(),
+    }));
+    if (!receipts.length) return c.json({ ok: true, count: 0 });
+    const allowed = receipts.every(({ roomId }) => roomId === 'general-group'
+      || (roomId.startsWith('dm:') && roomId.slice(3).split(':').includes(myId)));
+    if (!allowed) return c.json({ error: 'Forbidden' }, 403);
+    if (isTursoConfigured()) await tursoMarkRoomsRead(myId, receipts);
+    return c.json({ ok: true, count: receipts.length, at: nowMs() });
   } catch (e) { throw wrapUnexpected(e); }
 });

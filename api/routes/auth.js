@@ -14,7 +14,8 @@ import { PBKDF2_PIN_ITERATIONS, hashPassword, needsRehash, verifyPassword } from
 import { fetchPrimaryDatabase, isPersist, primaryPersistenceName, saveDatabase, saveDatabaseVerified } from '../lib/db.js';
 import { wrapUnexpected } from '../lib/errors.js';
 import { isEmail, isPin, isRepo, isUsername, normalizeAuthIdentifier, nowMs, safeJson, sanitizeText, sanitizeUser, uid } from '../lib/helpers.js';
-import { breakerSnapshot, loadSnapshot, withTimeout } from '../lib/resilience.js';
+import { withTimeout } from '../lib/resilience.js';
+import { omniSnapshot, supervisedTask } from '../lib/omni-engine.js';
 import { pickBody } from '../lib/validate.js';
 import { decryptUserPII, emailIndex } from '../lib/crypto-fields.js';
 import { requireAdmin, requireAuth } from '../lib/middleware.js';
@@ -36,7 +37,8 @@ app.get('/api/health', (c) => c.json({
   // Those two are the frontend cache-busting pair and bumping them forces every
   // client to reload — pointless for a change that ships no new frontend asset.
   // This field is how we confirm which worker build is actually live.
-  apiVersion: 'security-phase2',
+  apiVersion: 'omni-engine-v1',
+  controlPlane: 'omni-engine',
   time: nowMs(), version: 'phase2-turso-json-primary',
   ...(cfg.APP_MIN_VERSION ? { minVersion: cfg.APP_MIN_VERSION } : {}),
 }));
@@ -69,8 +71,10 @@ app.get('/api/ready', async (c) => {
     checks.database = 'skipped';
   }
 
-  checks.load = loadSnapshot();
-  checks.breakers = breakerSnapshot();
+  const omni = omniSnapshot();
+  checks.load = omni.load;
+  checks.scheduler = omni.scheduler;
+  checks.breakers = omni.circuits;
 
   return c.json({ ready, checks, time: nowMs() }, ready ? 200 : 503);
 });
@@ -82,6 +86,7 @@ app.get('/api/diag', requireAdmin, async (c) => {
     repo: cfg.GH_REPO ? '[configured]' : '', branch: cfg.GH_BRANCH ? '[configured]' : '', file: cfg.GH_FILE ? '[configured]' : '',
     canRead: false, canWrite: false, userCount: 0, error: null,
     runtime: 'cloudflare-workers',
+    omni: omniSnapshot(),
   };
   try {
     const db = await repoRead();
@@ -166,7 +171,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     return c.json({ token, user: sanitizeUser(newUser, true) });
   } catch (e) {
     console.error('[signup]', e);
-    return c.json({ error: 'Signup failed' }, 500);
+    throw wrapUnexpected(e, 'Signup failed. Please try again.');
   }
 });
 
@@ -304,7 +309,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
         if (u2) {
           u2.passwordHash = newHash;
           u2.passwordChangedAt = matchUser.passwordChangedAt;
-          saveDatabase(db, true, { skipSecondarySync: true }).catch(() => {});
+          await saveDatabase(db, true, { skipSecondarySync: true });
           if (isTursoConfigured()) {
             try {
               const tu = tursoClient();
@@ -314,17 +319,13 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
             } catch (_) {}
           }
         }
-      } catch (_) { /* background upgrade is best-effort */ }
+      } catch (error) {
+        throw wrapUnexpected(error, 'Background password hash upgrade failed.');
+      }
     };
-    try {
-      const ctx = c.executionCtx;
-      if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(rehashIfNeeded());
-      else rehashIfNeeded().catch(() => {});
-    } catch (_) {
-      rehashIfNeeded().catch(() => {});
-    }
+    supervisedTask(c, rehashIfNeeded(), 'auth.password-rehash');
     // ── PASSKEY 2FA CHECK ──
-    // If user has passkey enabled, don't issue token yet — require biometric
+    // If user has passkey enabled, don't issue token yet — require biometric.
     if (matchUser.passkeyEnabled && matchUser.passkeyCredentialId) {
       const challenge = uid();
       _loginUserCache.set('challenge:' + matchUser.id, {
@@ -418,7 +419,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     return c.json({ ok: true, token, user: sanitizeUser(user, true) });
   } catch (e) {
     console.error('[reset]', e);
-    return c.json({ error: 'Reset failed' }, 500);
+    throw wrapUnexpected(e, 'Reset failed. Please try again.');
   }
 });
 

@@ -8,6 +8,7 @@
 
 import { cfg } from './config.js';
 import { fetchDatabase, saveDatabase } from './db.js';
+import { omniFetch } from './omni-engine.js';
 
 // ============================================================
 // Web Push via VAPID — native WebCrypto implementation
@@ -211,7 +212,7 @@ export async function sendWebPush(db, recipientId, payload) {
 
         const cipher = await _encryptPushPayload(sub, bodyBytes);
 
-        const res = await fetch(sub.endpoint, {
+        const res = await omniFetch('push.gateway', sub.endpoint, {
           method: 'POST',
           headers: {
             'TTL': '86400',
@@ -221,7 +222,7 @@ export async function sendWebPush(db, recipientId, payload) {
             'Urgency': 'normal',
           },
           body: cipher,
-        });
+        }, { idempotent: false, timeoutMs: 6000 });
         
         if (res.status === 201 || res.ok) {
           result.sent++;

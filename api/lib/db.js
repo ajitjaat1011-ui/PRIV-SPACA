@@ -13,6 +13,7 @@ import { decryptUserPII } from './crypto-fields.js';
 import { mergeDatabase, normalizeDb, runScheduler } from './schema.js';
 import { repoRead, repoWrite } from './store-github.js';
 import { isTursoConfigured, isTursoPrimary, tursoClient, tursoReadDbVersioned, tursoWriteDbCAS } from './store-turso.js';
+import { supervisedTask } from './omni-engine.js';
 
 export const isPersist = () => isTursoPrimary() || isRepo();
 
@@ -139,7 +140,7 @@ export async function saveDatabase(data, isEphemeral = false, opts = {}) {
     const now = nowMs();
     if (now - state.lastEphemeralWrite < EPHEMERAL_WRITE_INTERVAL_MS) return true;
     state.lastEphemeralWrite = now;
-    repoWrite(data).catch(() => {});
+    supervisedTask(null, repoWrite(data), 'database.ephemeral-repo-write');
     return true;
   }
   if (isEphemeral && isTursoPrimary()) {
