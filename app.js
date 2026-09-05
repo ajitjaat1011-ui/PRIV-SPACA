@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v162';
+const APP_VERSION = 'priv-spaca-v163';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -12283,13 +12283,79 @@ const BioLock = {
   },
 
   async enable() {
-    this.enabled = true;
-    localStorage.setItem('ps_biometric_lock', '1');
-    await this._register();
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden && this.enabled) this._lock();
-    });
-    this._resetIdle();
+    // Show immediate feedback
+    const bioStatus = document.getElementById('bioLockStatus');
+    if (bioStatus) { bioStatus.textContent = '...'; bioStatus.className = 'settings-chip'; }
+
+    // Check WebAuthn support
+    if (!window.PublicKeyCredential) {
+      if (typeof toast === 'function') toast('WebAuthn not supported in this browser', 'error');
+      if (bioStatus) { bioStatus.textContent = 'Off'; bioStatus.className = 'settings-chip'; }
+      return;
+    }
+
+    try {
+      // Check platform authenticator availability
+      const hasPlatform = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      if (!hasPlatform) {
+        if (typeof toast === 'function') toast('No biometric sensor detected on this device', 'error');
+        if (bioStatus) { bioStatus.textContent = 'Off'; bioStatus.className = 'settings-chip'; }
+        return;
+      }
+
+      // Register biometric credential
+      const uid = (typeof State !== 'undefined' && State.user && State.user.id) || 'user-' + Date.now();
+      const uname = (typeof State !== 'undefined' && State.user && (State.user.displayName || State.user.username)) || 'User';
+      
+      if (typeof toast === 'function') toast('Scan your fingerprint / face...', 'info');
+
+      const cred = await navigator.credentials.create({
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          rp: { name: 'Priv Spaca', id: location.hostname },
+          user: { id: new TextEncoder().encode(uid), name: uname, displayName: uname },
+          pubKeyCredParams: [
+            { type: 'public-key', alg: -7 },
+            { type: 'public-key', alg: -257 }
+          ],
+          timeout: 120000,
+          authenticatorSelection: {
+            authenticatorAttachment: 'platform',
+            userVerification: 'required',
+            residentKey: 'preferred'
+          },
+          attestation: 'none'
+        }
+      });
+
+      if (cred) {
+        const idB64 = btoa(String.fromCharCode(...new Uint8Array(cred.rawId)));
+        this._credId = idB64;
+        this.enabled = true;
+        localStorage.setItem('ps_biometric_lock', '1');
+        localStorage.setItem('ps_biometric_cred', idB64);
+
+        // Setup auto-lock
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden && this.enabled) this._lock();
+        });
+        this._resetIdle();
+
+        if (bioStatus) { bioStatus.textContent = 'On'; bioStatus.className = 'settings-chip on'; }
+        if (typeof toast === 'function') toast('✅ Biometric lock activated!', 'success');
+      }
+    } catch (err) {
+      console.error('[BioLock] enable error:', err);
+      if (bioStatus) { bioStatus.textContent = 'Off'; bioStatus.className = 'settings-chip'; }
+      // Show specific error
+      let msg = 'Biometric failed: ';
+      if (err.name === 'NotAllowedError') msg = 'Biometric scan was cancelled or denied';
+      else if (err.name === 'SecurityError') msg = 'Security error — HTTPS required';
+      else if (err.name === 'InvalidStateError') msg = 'Already registered on this device';
+      else if (err.name === 'NotSupportedError') msg = 'Biometric not supported here';
+      else msg += err.message || err.name || 'unknown error';
+      if (typeof toast === 'function') toast(msg, 'error');
+    }
   },
 
   disable() {
@@ -12380,7 +12446,8 @@ function _bindEngineSettings() {
     if (bioRow && !bioRow.dataset.engineBound) {
       bioRow.dataset.engineBound = '1';
       bioRow.style.cursor = 'pointer';
-      bioRow.addEventListener('click', async (e) => {
+      // Use both click and touchend for reliability
+      const handleBioTap = async (e) => {
         e.preventDefault();
         e.stopPropagation();
         const isOn = localStorage.getItem('ps_biometric_lock') === '1';
@@ -12389,14 +12456,20 @@ function _bindEngineSettings() {
           syncBio();
           if (typeof toast === 'function') toast('Biometric lock disabled', 'info');
         } else {
+          // Show immediate feedback
+          if (bioStatus) { bioStatus.textContent = 'Starting...'; }
           try {
             await BioLock.enable();
             syncBio();
           } catch(err) {
-            if (typeof toast === 'function') toast('Could not enable biometric lock', 'error');
+            console.error('[BioLock click]', err);
+            if (bioStatus) { bioStatus.textContent = 'Off'; bioStatus.className = 'settings-chip'; }
+            if (typeof toast === 'function') toast('Error: ' + (err.message || err), 'error');
           }
         }
-      });
+      };
+      bioRow.addEventListener('click', handleBioTap);
+      bioRow.addEventListener('touchend', (e) => { e.preventDefault(); handleBioTap(e); });
     }
 
     // Sync bio status when settings opens
