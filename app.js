@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v163';
+const APP_VERSION = 'priv-spaca-v164';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -12163,14 +12163,12 @@ const BioLock = {
       '<h3 style="color:#fff;font-size:20px;margin:0 0 8px">Priv Spaca Locked</h3>' +
       '<p style="color:#8E9BC9;font-size:14px;margin:0 0 24px">Authenticate to unlock</p>' +
       '<button id="bioUnlockBtn" style="width:100%;height:50px;border:none;border-radius:14px;background:linear-gradient(135deg,#4E8CFF,#7C5CFF);color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px;box-shadow:0 8px 24px rgba(78,140,255,0.3)">🔓 Unlock with Biometrics</button>' +
-      '<button id="bioFallbackBtn" style="width:100%;height:40px;border:1px solid rgba(255,255,255,0.12);border-radius:10px;background:transparent;color:#8E9BC9;font-size:13px;font-weight:600;cursor:pointer">Use PIN instead</button>' +
       '</div>';
     ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(10,12,28,0.97);backdrop-filter:blur(30px)';
     document.body.appendChild(ov);
     this._overlay = ov;
 
     document.getElementById('bioUnlockBtn').addEventListener('click', () => this._auth());
-    document.getElementById('bioFallbackBtn').addEventListener('click', () => this._pinFallback());
   },
 
   _showOverlay() {
@@ -12257,23 +12255,6 @@ const BioLock = {
       console.warn('[BioLock] register error:', err);
       if (typeof toast === 'function') toast('Could not set up biometrics', 'error');
     }
-  },
-
-  _pinFallback() {
-    const pin = prompt('Enter your PIN:');
-    if (!pin || pin.length < 4) return;
-    const stored = localStorage.getItem('ps_pin_hash');
-    crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin)).then(hash => {
-      const h = btoa(String.fromCharCode(...new Uint8Array(hash)));
-      if (!stored) {
-        localStorage.setItem('ps_pin_hash', h);
-        this._unlock();
-      } else if (h === stored) {
-        this._unlock();
-      } else {
-        if (typeof toast === 'function') toast('Incorrect PIN', 'error');
-      }
-    });
   },
 
   _resetIdle() {
