@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v165';
+const APP_VERSION = 'priv-spaca-v166';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -12132,171 +12132,33 @@ const Predictive = {
 // ─── 4. WEBAUTHN BIOMETRIC LOCK ──────────────────────────────────────────────
 const BioLock = {
   enabled: false,
-  locked: false,
-  _idleTimer: null,
-  _IDLE_MS: 60000,
-  _overlay: null,
   _credId: null,
 
   init() {
     try {
       this.enabled = localStorage.getItem('ps_biometric_lock') === '1';
       this._credId = localStorage.getItem('ps_biometric_cred');
-      if (!this.enabled) return;
-
-      // Lock immediately
-      this.locked = true;
-      this._makeOverlay();
-      this._showOverlay();
-
-      // Auto-lock on hide
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden && this.enabled) {
-          this._lock();
-          const shell = document.getElementById('appShell');
-          if (shell) shell.style.filter = 'blur(30px)';
-        }
-      });
-
-      // Idle timer
-      this._resetIdle();
-      ['pointerdown','pointermove','keydown','touchstart'].forEach(ev => {
-        document.addEventListener(ev, () => this._resetIdle(), { passive: true });
-      });
-    } catch(e) { console.warn('[BioLock] init failed:', e); }
-  },
-
-  _makeOverlay() {
-    if (this._overlay) return;
-    const ov = document.createElement('div');
-    ov.id = 'bioLockOverlay';
-    ov.innerHTML = '<div style="text-align:center;padding:40px;background:rgba(13,20,36,0.98);border-radius:24px;max-width:320px;width:90%;border:1px solid rgba(255,255,255,0.08);box-shadow:0 32px 64px rgba(0,0,0,0.5)">' +
-      '<div style="color:#6C8CFF;margin-bottom:16px"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>' +
-      '<h3 style="color:#fff;font-size:20px;margin:0 0 8px">Priv Spaca Locked</h3>' +
-      '<p style="color:#8E9BC9;font-size:14px;margin:0 0 24px">Authenticate to unlock</p>' +
-      '<button id="bioUnlockBtn" style="width:100%;height:50px;border:none;border-radius:14px;background:linear-gradient(135deg,#4E8CFF,#7C5CFF);color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px;box-shadow:0 8px 24px rgba(78,140,255,0.3)">🔓 Unlock with Biometrics</button>' +
-      '</div>';
-    ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(10,12,28,0.97);backdrop-filter:blur(30px)';
-    document.body.appendChild(ov);
-    this._overlay = ov;
-
-    document.getElementById('bioUnlockBtn').addEventListener('click', () => this._auth());
-  },
-
-  _showOverlay() {
-    if (!this._overlay) this._makeOverlay();
-    this._overlay.style.display = 'flex';
-    setTimeout(() => this._auth(), 400);
-  },
-
-  _hideOverlay() {
-    if (this._overlay) this._overlay.style.display = 'none';
-    const shell = document.getElementById('appShell');
-    if (shell) shell.style.filter = '';
-  },
-
-  _lock() {
-    this.locked = true;
-    this._showOverlay();
-  },
-
-  _unlock() {
-    this.locked = false;
-    this._hideOverlay();
-    this._resetIdle();
-  },
-
-  async _auth() {
-    try {
-      if (!window.PublicKeyCredential) {
-        if (typeof toast === 'function') toast('Biometric auth not supported', 'error');
-        return;
-      }
-      const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (!available) {
-        if (typeof toast === 'function') toast('No biometric authenticator found', 'error');
-        return;
-      }
-      if (this._credId) {
-        // Authenticate with existing credential
-        const rawId = Uint8Array.from(atob(this._credId), c => c.charCodeAt(0));
-        const assertion = await navigator.credentials.get({
-          publicKey: {
-            challenge: crypto.getRandomValues(new Uint8Array(32)),
-            timeout: 60000,
-            rpId: location.hostname,
-            allowCredentials: [{ id: rawId, type: 'public-key', transports: ['internal'] }],
-            userVerification: 'required',
-            authenticatorAttachment: 'platform'
-          }
-        });
-        if (assertion) this._unlock();
-      } else {
-        await this._register();
-      }
-    } catch(err) {
-      if (err.name !== 'NotAllowedError') {
-        console.warn('[BioLock] auth error:', err);
-      }
-    }
-  },
-
-  async _register() {
-    try {
-      const uid = (typeof State !== 'undefined' && State.user && State.user.id) || 'user';
-      const uname = (typeof State !== 'undefined' && State.user && (State.user.displayName || State.user.username)) || 'User';
-      const cred = await navigator.credentials.create({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          rp: { name: 'Priv Spaca', id: location.hostname },
-          user: { id: new TextEncoder().encode(uid), name: uname, displayName: uname },
-          pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-          timeout: 60000,
-          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
-          attestation: 'none'
-        }
-      });
-      if (cred) {
-        const idB64 = btoa(String.fromCharCode(...new Uint8Array(cred.rawId)));
-        this._credId = idB64;
-        localStorage.setItem('ps_biometric_cred', idB64);
-        this._unlock();
-        if (typeof toast === 'function') toast('Biometric lock enabled!', 'success');
-      }
-    } catch(err) {
-      console.warn('[BioLock] register error:', err);
-      if (typeof toast === 'function') toast('Could not set up biometrics', 'error');
-    }
-  },
-
-  _resetIdle() {
-    clearTimeout(this._idleTimer);
-    if (!this.enabled) return;
-    this._idleTimer = setTimeout(() => { if (this.enabled) this._lock(); }, this._IDLE_MS);
+    } catch(e) { console.warn('[BioLock] init:', e); }
   },
 
   async enable() {
-    // Show immediate feedback
     const bioStatus = document.getElementById('bioLockStatus');
     if (bioStatus) { bioStatus.textContent = '...'; bioStatus.className = 'settings-chip'; }
 
-    // Check WebAuthn support
     if (!window.PublicKeyCredential) {
       if (typeof toast === 'function') toast('WebAuthn not supported in this browser', 'error');
-      if (bioStatus) { bioStatus.textContent = 'Off'; bioStatus.className = 'settings-chip'; }
+      if (bioStatus) { bioStatus.textContent = 'Off'; }
       return;
     }
 
     try {
-      // Check platform authenticator availability
       const hasPlatform = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       if (!hasPlatform) {
         if (typeof toast === 'function') toast('No biometric sensor detected on this device', 'error');
-        if (bioStatus) { bioStatus.textContent = 'Off'; bioStatus.className = 'settings-chip'; }
+        if (bioStatus) { bioStatus.textContent = 'Off'; }
         return;
       }
 
-      // Register biometric credential
       const uid = (typeof State !== 'undefined' && State.user && State.user.id) || 'user-' + Date.now();
       const uname = (typeof State !== 'undefined' && State.user && (State.user.displayName || State.user.username)) || 'User';
       
@@ -12307,16 +12169,9 @@ const BioLock = {
           challenge: crypto.getRandomValues(new Uint8Array(32)),
           rp: { name: 'Priv Spaca', id: location.hostname },
           user: { id: new TextEncoder().encode(uid), name: uname, displayName: uname },
-          pubKeyCredParams: [
-            { type: 'public-key', alg: -7 },
-            { type: 'public-key', alg: -257 }
-          ],
+          pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
           timeout: 120000,
-          authenticatorSelection: {
-            authenticatorAttachment: 'platform',
-            userVerification: 'required',
-            residentKey: 'preferred'
-          },
+          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
           attestation: 'none'
         }
       });
@@ -12328,69 +12183,48 @@ const BioLock = {
         localStorage.setItem('ps_biometric_lock', '1');
         localStorage.setItem('ps_biometric_cred', idB64);
 
-        // Register passkey credential with server for 2FA enforcement
+        // Register passkey on server for login 2FA
         try {
           const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
-          if (token && cred.response && cred.response.getPublicKey) {
-            const pubKey = cred.response.getPublicKey();
-            if (pubKey) {
-              const pubKeyBuf = new Uint8Array(pubKey.buffer || pubKey);
-              const pubKeyB64 = btoa(String.fromCharCode(...pubKeyBuf));
-              await fetch('/api/auth/passkey/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                body: JSON.stringify({
-                  credentialId: idB64,
-                  publicKey: pubKeyB64,
-                  algorithm: cred.response.getPublicKeyAlgorithm ? cred.response.getPublicKeyAlgorithm() : -7
-                })
-              });
-            }
+          if (token) {
+            const pubKey = cred.response.getPublicKey ? cred.response.getPublicKey() : null;
+            const pubKeyB64 = pubKey ? btoa(String.fromCharCode(...new Uint8Array(pubKey.buffer || pubKey))) : '';
+            await fetch('/api/auth/passkey/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+              body: JSON.stringify({
+                credentialId: idB64,
+                publicKey: pubKeyB64,
+                algorithm: cred.response.getPublicKeyAlgorithm ? cred.response.getPublicKeyAlgorithm() : -7
+              })
+            });
           }
-        } catch (regErr) {
-          console.warn('[BioLock] server registration failed (lock still works locally):', regErr);
-        }
-
-        // Setup auto-lock
-        document.addEventListener('visibilitychange', () => {
-          if (document.hidden && this.enabled) this._lock();
-        });
-        this._resetIdle();
+        } catch (regErr) { console.warn('[BioLock] server register:', regErr); }
 
         if (bioStatus) { bioStatus.textContent = 'On'; bioStatus.className = 'settings-chip on'; }
-        if (typeof toast === 'function') toast('✅ Biometric 2FA activated!', 'success');
+        if (typeof toast === 'function') toast('✅ Biometric 2FA enabled for login!', 'success');
       }
     } catch (err) {
       console.error('[BioLock] enable error:', err);
       if (bioStatus) { bioStatus.textContent = 'Off'; bioStatus.className = 'settings-chip'; }
-      // Show specific error
       let msg = 'Biometric failed: ';
-      if (err.name === 'NotAllowedError') msg = 'Biometric scan was cancelled or denied';
-      else if (err.name === 'SecurityError') msg = 'Security error — HTTPS required';
-      else if (err.name === 'InvalidStateError') msg = 'Already registered on this device';
-      else if (err.name === 'NotSupportedError') msg = 'Biometric not supported here';
-      else msg += err.message || err.name || 'unknown error';
+      if (err.name === 'NotAllowedError') msg = 'Scan cancelled or denied';
+      else if (err.name === 'SecurityError') msg = 'HTTPS required';
+      else if (err.name === 'NotSupportedError') msg = 'Not supported on this device';
+      else msg += err.message || err.name || 'unknown';
       if (typeof toast === 'function') toast(msg, 'error');
     }
   },
 
   disable() {
     this.enabled = false;
-    this.locked = false;
     localStorage.removeItem('ps_biometric_lock');
     localStorage.removeItem('ps_biometric_cred');
     this._credId = null;
-    this._hideOverlay();
-    clearTimeout(this._idleTimer);
-    // Notify server to disable passkey 2FA
+    // Remove from server
     try {
       const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
-      if (token) {
-        fetch('/api/auth/passkey/disable', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }
-        }).catch(() => {});
-      }
+      if (token) fetch('/api/auth/passkey/disable', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } }).catch(() => {});
     } catch(_) {}
   }
 };
