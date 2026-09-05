@@ -9245,3 +9245,42 @@ button.story-sheet-handle{display:block;border:0;padding:0;cursor:pointer}
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
 }
+
+/* ── v159 — Settings chip ON state + select ── */
+.settings-chip.on {
+  background: rgba(67, 185, 131, 0.15) !important;
+  color: #43B983 !important;
+  border-color: rgba(67, 185, 131, 0.3) !important;
+}
+.settings-select {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  margin-left: auto;
+  cursor: pointer;
+  outline: none;
+}
+.settings-select:focus {
+  border-color: rgba(78, 140, 255, 0.5);
+}
+/* BioLock row hover/active */
+#bioLockRow:active {
+  background: rgba(255,255,255,0.03);
+}
+/* Ephemeral timer data attribute */
+[data-remaining-time]::after {
+  content: attr(data-remaining-time) "s";
+  position: absolute;
+  bottom: 4px; right: 4px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  pointer-events: none;
+}

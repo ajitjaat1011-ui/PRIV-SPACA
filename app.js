@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v159';
+const APP_VERSION = 'priv-spaca-v160';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -12744,7 +12744,7 @@ function _initAdvancedEngines() {
 
   // 2. Ambient shader background
   _AmbientShader.init();
-  // Update colors when feed loads
+  // Update colors when feed loads or content changes
   const origRenderPosts = typeof renderPosts === 'function' ? renderPosts : null;
   if (origRenderPosts) {
     const wrapped = function() {
@@ -12752,7 +12752,6 @@ function _initAdvancedEngines() {
       setTimeout(() => _AmbientShader.updateFromVisibleContent(), 500);
       return result;
     };
-    // Only wrap if not already wrapped
     if (!renderPosts.__ambientWrapped) {
       window.renderPosts = wrapped;
       window.renderPosts.__ambientWrapped = true;
@@ -12765,7 +12764,77 @@ function _initAdvancedEngines() {
   // 4. Biometric lock
   _BioLock.init();
 
+  // 5. Wire up settings UI for BioLock + Disappearing Messages
+  _bindEngineSettings();
+
   console.log('[v159] Advanced engines initialized: Spring, Shader, Predictive, BioLock, Ephemeral');
+}
+
+// ── Settings UI wiring for advanced engines ──
+function _bindEngineSettings() {
+  // BioLock toggle — clicking the row enables/disables biometric lock
+  const bioRow = $id('bioLockRow');
+  const bioStatus = $id('bioLockStatus');
+
+  function syncBioStatus() {
+    const on = localStorage.getItem('ps_biometric_lock') === '1';
+    if (bioStatus) {
+      bioStatus.textContent = on ? 'On' : 'Off';
+      bioStatus.className = 'settings-chip' + (on ? ' on' : '');
+    }
+  }
+  syncBioStatus();
+
+  if (bioRow && !bioRow.dataset.engineBound) {
+    bioRow.dataset.engineBound = '1';
+    bioRow.style.cursor = 'pointer';
+    bioRow.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const currentlyOn = localStorage.getItem('ps_biometric_lock') === '1';
+      if (currentlyOn) {
+        // Disable
+        _BioLock.disable();
+        syncBioStatus();
+        toast('Biometric lock disabled', 'info');
+      } else {
+        // Enable — will show biometric prompt
+        try {
+          await _BioLock.enable();
+          syncBioStatus();
+        } catch (err) {
+          toast('Could not enable biometric lock', 'error');
+        }
+      }
+    });
+  }
+
+  // Disappearing messages default timer
+  const dissSel = $id('dfltDissapSelect');
+  if (dissSel && !dissSel.dataset.engineBound) {
+    dissSel.dataset.engineBound = '1';
+    // Load saved preference
+    const saved = localStorage.getItem('ps_defaultDisappear') || 'off';
+    dissSel.value = saved;
+    dissSel.addEventListener('change', () => {
+      localStorage.setItem('ps_defaultDisappear', dissSel.value);
+      const label = dissSel.value === 'off' ? 'Disappearing messages off' : 'Messages will disappear after ' + dissSel.options[dissSel.selectedIndex].text;
+      toast(label, 'success');
+    });
+  }
+
+  // Also sync bio status when settings sheet is opened
+  const origOpenSettings = typeof openSettings === 'function' ? openSettings : null;
+  if (origOpenSettings && !openSettings.__bioWrapped) {
+    const wrappedOpen = function() {
+      const r = origOpenSettings.apply(this, arguments);
+      syncBioStatus();
+      // Re-sync disappearing select
+      if (dissSel) dissSel.value = localStorage.getItem('ps_defaultDisappear') || 'off';
+      return r;
+    };
+    window.openSettings = wrappedOpen;
+    window.openSettings.__bioWrapped = true;
+  }
 }
 
 })();
