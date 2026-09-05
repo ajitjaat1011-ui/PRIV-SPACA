@@ -41,7 +41,12 @@ app.use('*', async (c, next) => {
 
   if (c.req.method === 'OPTIONS') {
     const origin = c.req.header('origin') || '';
-    return isAllowedCorsOrigin(origin) ? c.body(null, 204) : c.text('CORS origin denied', 403);
+    return isAllowedCorsOrigin(origin) ? c.body(null, 204) : c.json(
+      errorBody(ErrorCodes.FORBIDDEN, 'CORS origin denied.', {
+        requestId: c.get('requestId'), correlationId: c.get('correlationId'),
+      }),
+      403,
+    );
   }
   const origin = c.req.header('origin') || '';
   if (origin && !isAllowedCorsOrigin(origin)) {

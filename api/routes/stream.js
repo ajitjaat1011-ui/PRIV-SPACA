@@ -15,6 +15,7 @@ import { _eventQueues, _eventSubscribers } from '../lib/events.js';
 import { requireAuth } from '../lib/middleware.js';
 import { isTursoPrimary, tursoClient, tursoEnsure } from '../lib/store-turso.js';
 import { supervisedTask } from '../lib/omni-engine.js';
+import { ErrorCodes, errorBody } from '../lib/errors.js';
 
 // ---------- GetStream.io integration endpoints ----------
 app.get('/api/stream/config', (c) => {
@@ -49,12 +50,17 @@ app.get('/api/stream/token', requireAuth, async (c) => {
 // ---------- SSE stream — real streaming on Workers using ReadableStream ----------
 app.get('/api/stream', async (c) => {
   const token = c.req.query('token') || (c.req.header('authorization') || '').replace(/^Bearer\s+/i, '');
-  if (!token) return c.text('', 401);
+  const unauthorizedStream = () => c.json(errorBody(
+    ErrorCodes.UNAUTHORIZED,
+    'Missing or invalid stream token.',
+    { requestId: c.get('requestId'), correlationId: c.get('correlationId') },
+  ), 401);
+  if (!token) return unauthorizedStream();
   let payload;
-  try { payload = await verifyToken(token); } catch (_) { return c.text('', 401); }
+  try { payload = await verifyToken(token); } catch (_) { return unauthorizedStream(); }
   const authDb = await fetchPrimaryDatabase();
   const authUser = (authDb.users || []).find(u => u.id === payload.uid);
-  if (!authUser || Number(payload.sv || 0) !== Number(authUser.tokenVersion || 0)) return c.text('', 401);
+  if (!authUser || Number(payload.sv || 0) !== Number(authUser.tokenVersion || 0)) return unauthorizedStream();
   const userId = payload.uid;
   const lastEventId = c.req.header('last-event-id') || c.req.query('lastEventId') || null;
   const encoder = new TextEncoder();
