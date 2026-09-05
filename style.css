@@ -801,7 +801,7 @@ img{user-select:none;-webkit-user-drag:none}
   backdrop-filter:none !important;
   border:0 !important;
   box-shadow:none !important;
-  z-index:5;height:auto;position:relative;overflow:visible;
+  z-index:10;height:auto;position:sticky;top:0;overflow:visible;
   border-radius:0;
 }
 .topbar > div:last-child {
@@ -4706,7 +4706,7 @@ body{
 }
 
 /* ---- Feed wrap: ensure glass cards sit above orbs ---- */
-.feed-wrap{position:relative;z-index:1}
+.feed-wrap{position:relative;z-index:1;overflow:visible}
 
 /* ---- Composer card: liquid glass ---- */
 .composer-card.ig-compose-inline{
@@ -9293,4 +9293,17 @@ button.story-sheet-handle{display:block;border:0;padding:0;cursor:pointer}
 [data-theme="dark"] #ambientCanvas,
 @media (prefers-color-scheme: dark) {
   #ambientCanvas { opacity: 1 !important; }
+}
+
+/* v167 — Fix topbar overlap: sticky positioning + background to prevent content bleed */
+.topbar {
+  background: var(--bg) !important;
+}
+[data-theme="dark"] .topbar {
+  background: var(--bg) !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .topbar {
+    background: var(--bg) !important;
+  }
 }
