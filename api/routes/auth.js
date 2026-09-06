@@ -9,7 +9,7 @@
 import { app } from '../lib/app.js';
 import { cfg, isDefaultJwtSecret, isMissingFieldKey } from '../lib/config.js';
 import { state } from '../lib/state.js';
-import { _authUserCache, _bcryptVerifyCache, _loginUserCache, b64url, clearSessionCookie, setSessionCookie, signToken } from '../lib/auth.js';
+import { _bcryptVerifyCache, _loginUserCache, b64url, clearSessionCookie, invalidateUserAuthCaches, setSessionCookie, signToken } from '../lib/auth.js';
 import { PBKDF2_PIN_ITERATIONS, hashPassword, needsRehash, verifyPassword } from '../lib/password.js';
 import { fetchPrimaryDatabase, isPersist, primaryPersistenceName, saveDatabase, saveDatabaseVerified } from '../lib/db.js';
 import { wrapUnexpected } from '../lib/errors.js';
@@ -436,9 +436,9 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     user.passwordHash = await hashPassword(newPassword);
     user.tokenVersion = oldTokenVersion + 1;
     user.passwordChangedAt = nowMs();
-    // Invalidate the in-memory auth cache so the new tokenVersion is picked
-    // up by subsequent requests.
-    _authUserCache.delete(user.id);
+    // Invalidate session, login-user and password-verification caches before
+    // persistence so no request in this isolate can reuse the old password.
+    invalidateUserAuthCaches(user);
     const persisted = await saveDatabaseVerified(db, d => {
       const u2 = (d.users || []).find(u => u.id === user.id);
       return !!u2 && u2.passwordHash === user.passwordHash && Number(u2.tokenVersion || 0) === user.tokenVersion;
@@ -473,7 +473,7 @@ app.post('/api/auth/logout', requireAuth, async (c) => {
     durable.loggedOutAt = nowMs();
     await saveDatabaseVerified(db, d => Number((d.users || []).find(u => u.id === durable.id)?.tokenVersion || 0) === durable.tokenVersion);
     if (isTursoConfigured()) await tursoUpsertUser(durable);
-    _authUserCache.delete(durable.id);
+    invalidateUserAuthCaches(durable);
   }
   clearSessionCookie(c);
   return c.json({ ok: true });
@@ -539,9 +539,7 @@ app.post('/api/auth/passkey/register', requireAuth, async (c) => {
     const persisted = await saveDatabaseVerified(db, d => (d.users || []).find(u => u.id === durable.id)?.passkeyCredentialId === result.credentialId);
     if (!persisted) return c.json({ error: 'Storage temporarily unavailable' }, 503);
     if (isTursoConfigured()) await tursoUpsertUser(durable);
-    _loginUserCache.delete('user:' + normalizeAuthIdentifier(durable.username));
-    _loginUserCache.delete('user:' + normalizeAuthIdentifier(durable.email || ''));
-    _authUserCache.delete(durable.id);
+    invalidateUserAuthCaches(durable);
     return c.json({ ok: true, message: 'Passkey enabled' });
   } catch (e) {
     console.warn('[passkey/register] rejected:', e && e.message);
@@ -564,8 +562,7 @@ app.post('/api/auth/passkey/disable', requireAuth, async (c) => {
   durable.passkeyRpId = null;
   await saveDatabase(db, false);
   if (isTursoConfigured()) await tursoUpsertUser(durable);
-  _loginUserCache.delete('user:' + normalizeAuthIdentifier(durable.username));
-  _authUserCache.delete(durable.id);
+  invalidateUserAuthCaches(durable);
   return c.json({ ok: true, message: 'Passkey disabled' });
 });
 

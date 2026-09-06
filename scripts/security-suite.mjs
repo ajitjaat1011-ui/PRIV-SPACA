@@ -147,7 +147,8 @@ async function main() {
   check('logout revokes every older session version', (await get('/api/auth/me', signupCookie)).status === 401);
   const relogin = await post('/api/auth/login', { identifier: cred.username, password: cred.password });
   activeCookie = cookieFrom(relogin);
-  check('fresh login works after revocation', relogin.status === 200 && !!activeCookie);
+  const reloginMe = activeCookie ? await get('/api/auth/me', activeCookie) : null;
+  check('fresh login works after revocation', relogin.status === 200 && !!activeCookie && reloginMe?.status === 200);
 
   console.log('\nmass assignment');
   const esc = await post('/api/user/update', {
@@ -196,6 +197,8 @@ async function main() {
     activePassword = 'SuiteTestPw456!';
     activeCookie = resetCookie;
   }
+  const oldPasswordLogin = await post('/api/auth/login', { identifier: cred.username, password: cred.password });
+  check('old password is rejected immediately after reset', oldPasswordLogin.status === 401);
   const replay = await post('/api/auth/reset-by-pin', {
     identifier: cred.username, pin: cred.pin, recoveryCode: regeneratedCodes[0], newPassword: 'SuiteTestPw789!',
   });
@@ -250,7 +253,16 @@ async function main() {
 
   console.log('\ncleanup');
   if (accountCreated) {
-    const deleted = await post('/api/user/delete', { password: activePassword, pin: cred.pin, confirmation: 'DELETE' }, activeCookie);
+    let deleted = await post('/api/user/delete', { password: activePassword, pin: cred.pin, confirmation: 'DELETE' }, activeCookie);
+    // Cleanup must survive an earlier session assertion failure so the suite
+    // never strands a disposable account in production.
+    if (deleted.status === 401) {
+      const rescueLogin = await post('/api/auth/login', { identifier: cred.username, password: activePassword });
+      const rescueCookie = cookieFrom(rescueLogin);
+      if (rescueCookie) {
+        deleted = await post('/api/user/delete', { password: activePassword, pin: cred.pin, confirmation: 'DELETE' }, rescueCookie);
+      }
+    }
     check('temporary suite account permanently deleted', deleted.status === 200 && deleted.body?.deleted === true, `status ${deleted.status}`);
     if (deleted.status === 200) accountCreated = false;
   }

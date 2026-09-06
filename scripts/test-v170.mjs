@@ -5,6 +5,7 @@ import {
   SESSION_COOKIE, TOKEN_AUDIENCE, TOKEN_ISSUER,
   b64urlJson, hmacSha256, signToken, verifyToken,
   tokenFromRequest, setSessionCookie, clearSessionCookie,
+  _authUserCache, _loginUserCache, _bcryptVerifyCache, invalidateUserAuthCaches,
 } from '../api/lib/auth.js';
 import {
   b64urlEncode, b64urlDecode, randomChallenge,
@@ -143,6 +144,24 @@ await test('session cookie is __Host-, HttpOnly, Secure and SameSite=Strict', as
   assert.equal(tokenFromRequest(request), 'signed.jwt.value');
   clearSessionCookie(c);
   assert.match(c.responseHeaders.get('set-cookie'), /Max-Age=0/);
+});
+
+await test('auth-security mutations invalidate session, login and password caches', async () => {
+  const user = { id: 'usr_cache_170', username: 'CacheUser', email: 'cache@example.test' };
+  _authUserCache.set(user.id, { user, fetchedAt: Date.now() });
+  _loginUserCache.set('user:cacheuser', { _user: user, _cachedAt: Date.now() });
+  _loginUserCache.set('user:cache@example.test', { _user: user, _cachedAt: Date.now() });
+  _loginUserCache.set('user:formername', { _user: user, _cachedAt: Date.now() });
+  _bcryptVerifyCache.set(`${user.id}|old-hash|old-password`, { ok: true, ts: Date.now() });
+  _bcryptVerifyCache.set('usr_someone_else|hash|password', { ok: true, ts: Date.now() });
+  invalidateUserAuthCaches(user, 'FormerName');
+  assert.equal(_authUserCache.has(user.id), false);
+  assert.equal(_loginUserCache.has('user:cacheuser'), false);
+  assert.equal(_loginUserCache.has('user:cache@example.test'), false);
+  assert.equal(_loginUserCache.has('user:formername'), false);
+  assert.equal(_bcryptVerifyCache.has(`${user.id}|old-hash|old-password`), false);
+  assert.equal(_bcryptVerifyCache.has('usr_someone_else|hash|password'), true);
+  _bcryptVerifyCache.delete('usr_someone_else|hash|password');
 });
 
 await test('AES-GCM PII envelopes round-trip, resist tampering and blind-index deterministically', async () => {

@@ -12,7 +12,7 @@ import { state } from '../lib/state.js';
 import { fetchDatabase, saveDatabase } from '../lib/db.js';
 import { wrapUnexpected } from '../lib/errors.js';
 import { _pushEvent, pushNotification } from '../lib/events.js';
-import { activeNote, canRequestFollow, canViewProfileCard, canViewerAccessPrivateProfile, clearFollowRequestPair, hasPendingFollowRequest, isSafeImageUrl, isStoryRecord, isUsername, normalizeAuthIdentifier, normalizeFollowRequests, nowMs, sanitizeText, sanitizeUser } from '../lib/helpers.js';
+import { activeNote, canRequestFollow, canViewProfileCard, canViewerAccessPrivateProfile, clearFollowRequestPair, hasPendingFollowRequest, isSafeImageUrl, isStoryRecord, isUsername, normalizeFollowRequests, nowMs, sanitizeText, sanitizeUser } from '../lib/helpers.js';
 import { cleanNoteMusic } from '../lib/media.js';
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
@@ -20,7 +20,7 @@ import { requireAuth } from '../lib/middleware.js';
 import { verifyPassword } from '../lib/password.js';
 import { pickBody } from '../lib/validate.js';
 import { sharedRateLimit } from '../lib/ratelimit.js';
-import { _authUserCache, _loginUserCache, b64url, clearSessionCookie } from '../lib/auth.js';
+import { b64url, clearSessionCookie, invalidateUserAuthCaches } from '../lib/auth.js';
 import { canAccessRoom, normalizeRoomId } from '../lib/rooms.js';
 import { readPresence, readTypingState, setTypingState, touchPresence } from '../lib/realtime-store.js';
 import { normalizeDb } from '../lib/schema.js';
@@ -34,6 +34,8 @@ app.post('/api/user/update', requireAuth, async (c) => {
     const db = await fetchDatabase();
     const user = db.users.find(u => u.id === c.get('userId'));
     if (!user) return c.json({ error: 'Not found' }, 404);
+    const previousUsername = user.username;
+    const previousEmail = user.email;
     if (typeof username === 'string' && username !== user.username) {
       if (!isUsername(username)) return c.json({ error: 'Invalid username' }, 400);
       if (db.users.some(u => u.id !== user.id && u.username.toLowerCase() === username.toLowerCase())) return c.json({ error: 'Username taken' }, 409);
@@ -65,6 +67,7 @@ app.post('/api/user/update', requireAuth, async (c) => {
       }
     }
     await saveDatabase(db, false);
+    invalidateUserAuthCaches(user, previousUsername, previousEmail);
     return c.json({ user: sanitizeUser(user, true) });
   } catch (e) { console.error('[user/update]', e); throw wrapUnexpected(e, 'Update failed. Please try again.'); }
 });
@@ -375,9 +378,7 @@ app.post('/api/user/delete', requireAuth, async (c) => {
     }
     await Promise.all(db.users.filter(u => usersWithReferences.has(u.id)).map(u => tursoUpsertUser(u)));
   }
-  _authUserCache.delete(myId);
-  _loginUserCache.delete('user:' + normalizeAuthIdentifier(me.username));
-  _loginUserCache.delete('user:' + normalizeAuthIdentifier(me.email || ''));
+  invalidateUserAuthCaches(me);
   clearSessionCookie(c);
   return c.json({ ok: true, deleted: true });
 });

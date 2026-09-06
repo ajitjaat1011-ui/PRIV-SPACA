@@ -121,3 +121,24 @@ export const _authUserCache = new Map();
 export const _loginUserCache = new Map();
 export const _bcryptVerifyCache = new Map();
 export const _AUTH_CACHE_TTL_MS = 30000;
+
+/**
+ * Drop every isolate-local authentication view of a user after logout,
+ * password/PIN changes, passkey changes, username changes or deletion.
+ * Keeping the password-verification cache after a password reset can otherwise
+ * make the old password usable until its five-minute TTL expires.
+ */
+export function invalidateUserAuthCaches(user, ...formerIdentifiers) {
+  if (!user || typeof user !== 'object') return;
+  const userId = String(user.id || '');
+  if (userId) {
+    _authUserCache.delete(userId);
+    for (const key of _bcryptVerifyCache.keys()) {
+      if (String(key).startsWith(userId + '|')) _bcryptVerifyCache.delete(key);
+    }
+  }
+  for (const identifier of [user.username, user.email, ...formerIdentifiers]) {
+    const normalized = String(identifier || '').trim().toLowerCase();
+    if (normalized) _loginUserCache.delete('user:' + normalized);
+  }
+}
