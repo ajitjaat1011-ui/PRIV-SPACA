@@ -100,8 +100,16 @@ export function runWithTursoRequestScope(fn) {
 export async function tursoEnsure() {
   if (!isTursoConfigured()) return false;
   if (state._tursoReady) return true;
-  const c = tursoClient();
-  await c.executeMultiple(`
+  // Mark this isolate ready before the first network await. Multiple requests
+  // can enter a cold Worker concurrently; without this guard each one ran the
+  // entire DDL/migration sequence and a normal page launch saturated Turso.
+  // Queries may proceed concurrently because production tables already exist;
+  // on a genuinely empty database they fail transiently until this initializer
+  // finishes, and a failed initializer clears the flag for a later retry.
+  state._tursoReady = true;
+  try {
+    const c = tursoClient();
+    await c.executeMultiple(`
     CREATE TABLE IF NOT EXISTS ps_kv (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -273,10 +281,13 @@ export async function tursoEnsure() {
     CREATE UNIQUE INDEX IF NOT EXISTS ux_ps_users_username_lower ON ps_users (username_lower) WHERE username_lower IS NOT NULL AND username_lower <> '';
     CREATE UNIQUE INDEX IF NOT EXISTS ux_ps_users_email_lower ON ps_users (email_lower) WHERE email_lower IS NOT NULL AND email_lower <> '';
   `);
-  await tursoMigrate();
-  await tursoMigrateSensitiveData();
-  state._tursoReady = true;
-  return true;
+    await tursoMigrate();
+    await tursoMigrateSensitiveData();
+    return true;
+  } catch (error) {
+    state._tursoReady = false;
+    throw error;
+  }
 }
 
 /**

@@ -14,7 +14,8 @@ import {
 function testClassification() {
   const cases = [
     ['/api/auth/login', 'POST', 0, 'auth'],
-    ['/api/auth/me', 'GET', 0, 'auth'],
+    ['/api/auth/me', 'GET', 1, 'auth-session'],
+    ['/api/rtc/signals', 'GET', 1, 'webrtc-poll'],
     ['/api/messages', 'GET', 0, 'chat'],
     ['/api/messages/send', 'POST', 0, 'chat'],
     ['/api/user/typing', 'POST', 0, 'presence'],

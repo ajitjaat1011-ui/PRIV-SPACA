@@ -55,8 +55,11 @@ const BASE_LIMITS = Object.freeze({
   background: 4,
   media: 2,
   database: 12,
-  user: 6,
-  ip: 12,
+  // A signed-in launch requests the independent feed, people, notification,
+  // key and profile resources together. Six slots made a single browser queue
+  // behind itself; ten still bounds fan-out while allowing that normal burst.
+  user: 10,
+  ip: 16,
 });
 
 const DOMAIN_LIMITS = Object.freeze({
@@ -99,7 +102,12 @@ export function classifyRequest(path, method = 'GET') {
   const m = String(method || 'GET').toUpperCase();
 
   if (p === '/health' || p === '/ready' || p === '/diag') return { tier: 0, name: 'critical', domain: 'operations' };
+  // Login/reset remain immediate Tier 0 security work. Read-only session and
+  // RTC polling are queueable: classifying every startup poll as Tier 0 made
+  // one normal browser exhaust its own finite critical admission cap.
+  if (p === '/auth/me' && m === 'GET') return { tier: 1, name: 'standard', domain: 'auth-session', securityLimited: true };
   if (p.startsWith('/auth/')) return { tier: 0, name: 'critical', domain: 'auth', securityLimited: true };
+  if (p === '/rtc/signals' && m === 'GET') return { tier: 1, name: 'standard', domain: 'webrtc-poll' };
   if (p.startsWith('/rtc/')) return { tier: 0, name: 'critical', domain: 'webrtc' };
   if (p === '/stream' || p === '/stream/token') return { tier: 0, name: 'critical', domain: 'realtime-stream' };
   if (p === '/messages' || p === '/messages/send' || p === '/messages/reaction') return { tier: 0, name: 'critical', domain: 'chat' };
@@ -285,8 +293,8 @@ function canRun(meta) {
   const load = currentLoad();
   const limits = dynamicLimits(load);
   const nonCritical = scheduler.inFlight[1] + scheduler.inFlight[2];
-  const userLimit = Math.min(BASE_LIMITS.user, Math.max(2, Math.ceil(limits.nonCritical / 4)));
-  const ipLimit = Math.min(BASE_LIMITS.ip, Math.max(3, Math.ceil(limits.nonCritical / 2)));
+  const userLimit = Math.min(BASE_LIMITS.user, Math.max(2, Math.ceil(limits.nonCritical / 2)));
+  const ipLimit = Math.min(BASE_LIMITS.ip, Math.max(3, limits.nonCritical));
   return nonCritical < limits.nonCritical &&
     scheduler.inFlight[meta.tier] < (meta.tier === 1 ? limits.standard : limits.background) &&
     count(scheduler.domainRunning, meta.domain) < domainLimit(meta, load) &&
