@@ -936,7 +936,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=194';
+    script.src = '/auth.react.min.js?v=195';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -982,12 +982,14 @@ function showApp() {
   startPolls();
   loadAll();
   OfflineQueue.drain().catch(() => {});
-  queueDeepLinkResolution();
-  loadCloseFriends().catch(() => {});
-  loadFollowRequests(true).catch(() => {});
-  // Part 3: publish E2E public key so peers can DM us with Secret Chat
+  State.pollTimers.secondaryStartup = setTimeout(() => {
+    queueDeepLinkResolution();
+    loadCloseFriends().catch(() => {});
+    loadFollowRequests(true).catch(() => {});
+  }, 1200);
+  // Part 3: publish E2E public key after primary content has settled.
   if (window.crypto && crypto.subtle && window.indexedDB) {
-    setTimeout(() => { E2E.publishPublicKey().catch(() => {}); }, 800);
+    State.pollTimers.keyStartup = setTimeout(() => { E2E.publishPublicKey().catch(() => {}); }, 1800);
   }
 }
 
@@ -4558,11 +4560,16 @@ function startPolls() {
   Object.values(State.pollTimers || {}).forEach(timer => clearInterval(timer));
   State.pollTimers = {};
   disconnectSSE();
-  sendHeartbeat();
-  loadMembers();
-  pollTyping();
-  pollNotifications();
-  pollRTCSignals();
+  // Let the active tab's primary content and member index settle first. These
+  // independent realtime/status calls used to all hit Turso in the same tick,
+  // making the first feed request lose a dependency slot and retry.
+  State.pollTimers.startup = setTimeout(() => {
+    sendHeartbeat();
+    if (State.currentTab === 'chat') pollTyping();
+    pollNotifications();
+    pollRTCSignals();
+    connectSSE();
+  }, 2500);
   State.pollTimers.hb = setInterval(sendHeartbeat, 30000);
   State.pollTimers.members = setInterval(() => {
     if (isStorySurfaceOpen()) return;
@@ -4615,8 +4622,7 @@ function startPolls() {
     if (isStorySurfaceOpen()) return;
     pollRTCSignals();
   }, 1500);
-  // Try SSE — it'll auto-fall-back if not supported
-  connectSSE();
+  // SSE starts with the staggered startup batch above.
 }
 
 /* ========== Real-time Server-Sent Events ========== */
@@ -11068,7 +11074,7 @@ function closeLightbox() {
 // ====== Init ======
 async function loadAll() {
   await loadMembers();
-  await loadMessages(true);
+  if (State.currentTab === 'chat') await loadMessages(true);
 }
 
 /* ====== Toast with Undo button ====== */

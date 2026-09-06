@@ -84,7 +84,7 @@ async function main() {
   check('headers present on error responses', (errH.headers.get('content-security-policy') || '').includes("default-src 'self'"));
   const shellResponse = await fetch(BASE + '/', { redirect: 'follow' });
   const shellHtml = await shellResponse.text();
-  check('static shell references v170 release assets', shellHtml.includes('style.min.css?v=188') && shellHtml.includes('app.min.js?v=194') && !shellHtml.includes('auth.react.min.js'));
+  check('static shell references v170 release assets', shellHtml.includes('style.min.css?v=188') && shellHtml.includes('app.min.js?v=195') && !shellHtml.includes('auth.react.min.js'));
   if (IS_REMOTE) {
     check('static shell has CSP', (shellResponse.headers.get('content-security-policy') || '').includes("default-src 'self'"));
     check('static shell has HSTS', /max-age=63072000/.test(shellResponse.headers.get('strict-transport-security') || ''));
