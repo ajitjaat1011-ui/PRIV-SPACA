@@ -14,7 +14,7 @@
     "test:v170": "node scripts/test-v170.mjs",
     "test:browser": "playwright test scripts/auth-browser-v170.spec.mjs --reporter=line",
     "test:security": "node scripts/security-suite.mjs",
-    "deploy": "wrangler pages deploy . --project-name=priv-spaca --branch=main --commit-dirty=true",
+    "deploy": "node scripts/preflight-deploy.mjs && wrangler pages deploy . --project-name=priv-spaca --branch=main",
     "build:auth": "esbuild react-auth/main.jsx --bundle --format=iife --minify --target=es2019 --outfile=auth.react.min.js"
   },
   "engines": {
