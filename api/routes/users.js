@@ -168,6 +168,7 @@ app.get('/api/users', requireAuth, async (c) => {
       requestedMe: myIncomingRequests.has(u.id),
       lastMessage: lastByPeer[u.id] || null,
       unreadCount: (unreadByRoom && unreadByRoom[dmRoomId(u.id)]) || 0,
+      conversationPrefs: (me && me.conversationPrefs && me.conversationPrefs[u.id]) || {},
     }));
   return c.json({
     users: list,
@@ -216,9 +217,14 @@ app.get('/api/user/public-key', requireAuth, async (c) => {
 // ---------- Heartbeat & typing ----------
 app.post('/api/user/heartbeat', requireAuth, async (c) => {
   const db = await fetchDatabase();
-  db.heartbeat[c.get('userId')] = nowMs();
+  const myId = c.get('userId');
+  const at = nowMs();
+  db.heartbeat[myId] = at;
   await saveDatabase(db, true);
-  return c.json({ ok: true });
+  (db.users || []).slice(0, 250).forEach(user => {
+    if (user.id !== myId) _pushEvent(user.id, 'presence', { userId: myId, online: true, lastSeen: at }, { persist: false });
+  });
+  return c.json({ ok: true, at });
 });
 
 // ---------- Notes: short 24h status shown on the DM inbox rail ----------
@@ -244,9 +250,15 @@ app.post('/api/user/typing', requireAuth, async (c) => {
   const roomId = normalizeRoomId(body.roomId, c.get('userId'));
   const db = await fetchDatabase();
   if (!db.typing[roomId]) db.typing[roomId] = {};
-  db.typing[roomId][c.get('userId')] = nowMs();
+  const myId = c.get('userId');
+  db.typing[roomId][myId] = nowMs();
   await saveDatabase(db, true);
-  return c.json({ ok: true });
+  const payload = { roomId, userId: myId, user: sanitizeUser(db.users.find(u => u.id === myId)) };
+  const recipients = roomId.startsWith('dm:')
+    ? roomId.slice(3).split(':').filter(id => id && id !== myId)
+    : (db.users || []).map(u => u.id).filter(id => id && id !== myId);
+  recipients.slice(0, 250).forEach(id => _pushEvent(id, 'typing', payload, { persist: false }));
+  return c.json({ ok: true, expiresInMs: 3000 });
 });
 
 app.get('/api/user/typing', requireAuth, async (c) => {
@@ -256,12 +268,51 @@ app.get('/api/user/typing', requireAuth, async (c) => {
   const map = db.typing[roomId] || {};
   const now = nowMs();
   const myId = c.get('userId');
-  const typing = Object.keys(map).filter(uid2 => uid2 !== myId && now - map[uid2] < 4000)
+  const typing = Object.keys(map).filter(uid2 => uid2 !== myId && now - map[uid2] < 3000)
     .map(id => {
       const u = db.users.find(x => x.id === id);
       return u ? { id: u.id, username: u.username, displayName: u.displayName } : null;
     }).filter(Boolean);
   return c.json({ typing });
+});
+
+// ---------- Per-user conversation controls (pin/mute/archive/delete/unread) ----------
+app.post('/api/user/conversation', requireAuth, async (c) => {
+  try {
+    const body = await vbody(c, S.ConversationActionBody);
+    const myId = c.get('userId');
+    const db = await fetchDatabase();
+    const me = db.users.find(u => u.id === myId);
+    const peer = db.users.find(u => u.id === body.peerId);
+    if (!me || !peer || peer.id === myId) return c.json({ error: 'Conversation not found' }, 404);
+    const allowed = new Set(['pin', 'mute', 'archive', 'delete', 'unread']);
+    if (!allowed.has(body.action)) return c.json({ error: 'Unsupported action' }, 400);
+    me.conversationPrefs = me.conversationPrefs && typeof me.conversationPrefs === 'object' ? me.conversationPrefs : {};
+    const prefs = { ...(me.conversationPrefs[peer.id] || {}) };
+    const enabled = body.value === undefined ? !prefs[body.action] : !!body.value;
+    if (body.action === 'delete') {
+      prefs.archived = true;
+      prefs.deletedBefore = enabled ? nowMs() : 0;
+    } else if (body.action !== 'unread') {
+      prefs[body.action === 'archive' ? 'archived' : body.action === 'pin' ? 'pinned' : 'muted'] = enabled;
+    }
+    prefs.updatedAt = nowMs();
+    me.conversationPrefs[peer.id] = prefs;
+    await saveDatabase(db, false, { skipSecondarySync: true });
+    if (isTursoConfigured()) {
+      await tursoUpsertUser(me);
+      if (body.action === 'unread' && enabled) {
+        const roomId = 'dm:' + [myId, peer.id].sort().join(':');
+        await tursoClient().execute({
+          sql: `INSERT INTO ps_conversation_state (owner_user_id, room_id, unread_count, last_message_at, last_read_at, updated_at)
+                VALUES (?, ?, 1, 0, 0, ?)
+                ON CONFLICT(owner_user_id, room_id) DO UPDATE SET unread_count=MAX(1, ps_conversation_state.unread_count), updated_at=excluded.updated_at`,
+          args: [myId, roomId, nowMs()],
+        });
+      }
+    }
+    return c.json({ ok: true, peerId: peer.id, action: body.action, enabled, prefs });
+  } catch (e) { throw wrapUnexpected(e); }
 });
 
 // ---------- Follow / Block ----------

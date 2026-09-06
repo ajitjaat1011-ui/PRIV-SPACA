@@ -48,6 +48,7 @@ import './routes/auth.js';
 import './routes/media.js';
 import './routes/users.js';
 import './routes/messages.js';
+import './routes/link-preview.js';
 import './routes/notifications.js';
 import './routes/posts.js';
 import './routes/rtc.js';

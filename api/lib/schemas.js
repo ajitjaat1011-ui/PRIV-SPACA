@@ -98,6 +98,8 @@ export const PostCreateBody = o({
   text: opt(string().check(maxLength(20000))),
   imageUrl: nullish(string().check(maxLength(8 * 1024 * 1024))),
   images: opt(array(string().check(maxLength(8 * 1024 * 1024))).check(maxLength(10))),
+  imageBlur: nullish(string().check(maxLength(12000))),
+  imageBlurs: opt(array(string().check(maxLength(12000))).check(maxLength(10))),
   videoUrl: nullish(string().check(maxLength(32 * 1024 * 1024))),
   isScratch: opt(any()),
   music: opt(any()),
@@ -108,6 +110,7 @@ export const PostCreateBody = o({
 });
 
 export const PostIdBody = o({ postId: id });
+export const PostLikeBody = o({ postId: id, liked: opt(any()) });
 
 export const CommentBody = o({
   postId: id,
@@ -126,6 +129,7 @@ export const MessageSendBody = o({
   targetUserId: opt(id),
   text: opt(string().check(maxLength(20000))),
   imageUrl: nullish(string().check(maxLength(8 * 1024 * 1024))),
+  imageBlur: nullish(string().check(maxLength(12000))),
   replyTo: opt(any()),
   encrypted: opt(any()),
   cipher: opt(string().check(maxLength(200000))),
@@ -146,6 +150,25 @@ export const MessageReadBody = o({
 
 export const MessageReadBatchBody = o({
   receipts: array(o({ roomId, at: opt(number()) })).check(maxLength(50)),
+});
+
+export const MessageReactionBody = o({
+  messageId: id,
+  emoji: string().check(maxLength(16)),
+  active: opt(any()),
+});
+
+export const MessageReceiptBody = o({
+  roomId,
+  messageIds: array(id).check(maxLength(100)),
+  state: string().check(maxLength(16)),
+  at: opt(number()),
+});
+
+export const ConversationActionBody = o({
+  peerId: id,
+  action: string().check(maxLength(24)),
+  value: opt(any()),
 });
 
 /* -------------------------------------------------------------------- media */

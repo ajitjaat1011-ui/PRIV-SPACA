@@ -187,6 +187,17 @@ export async function tursoEnsure() {
       PRIMARY KEY (owner_user_id, room_id)
     );
     CREATE INDEX IF NOT EXISTS idx_ps_read_state_owner ON ps_read_state (owner_user_id);
+    CREATE TABLE IF NOT EXISTS ps_conversation_state (
+      owner_user_id TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      unread_count INTEGER NOT NULL DEFAULT 0,
+      last_message_at INTEGER NOT NULL DEFAULT 0,
+      last_read_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, room_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_conversation_state_owner_message ON ps_conversation_state (owner_user_id, last_message_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ps_conversation_state_room ON ps_conversation_state (room_id, owner_user_id);
     CREATE TABLE IF NOT EXISTS ps_messages (
       id TEXT PRIMARY KEY,
       room_id TEXT NOT NULL,
@@ -198,6 +209,36 @@ export async function tursoEnsure() {
       data_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ps_messages_room_created ON ps_messages (room_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ps_messages_room_user_created ON ps_messages (room_id, user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_message_reactions (
+      message_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (message_id, user_id, emoji)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_message_reactions_message ON ps_message_reactions (message_id, created_at);
+    CREATE TABLE IF NOT EXISTS ps_message_receipts (
+      message_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      delivered_at INTEGER NOT NULL DEFAULT 0,
+      read_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (message_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_message_receipts_message_state ON ps_message_receipts (message_id, read_at, delivered_at);
+    CREATE TABLE IF NOT EXISTS ps_link_previews (
+      url_hash TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      title TEXT,
+      description TEXT,
+      image_url TEXT,
+      site_name TEXT,
+      expires_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      data_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_link_previews_expiry ON ps_link_previews (expires_at);
     CREATE TABLE IF NOT EXISTS ps_meta (
       key TEXT PRIMARY KEY,
       value TEXT,
@@ -473,20 +514,87 @@ export async function fetchTursoDmIndex(ownerUserId) {
   return out;
 }
 
-export async function fetchTursoMessages(roomId, now = nowMs()) {
+export async function fetchTursoMessages(roomId, now = nowMs(), options = {}) {
   if (!isTursoConfigured() || !roomId) return null;
   try {
     await tursoEnsure();
-    const rs = await tursoClient().execute({
-      sql: 'SELECT data_json FROM ps_messages WHERE room_id = ? AND (deleted_at IS NULL OR deleted_at = 0) AND (disappear_at IS NULL OR disappear_at > ?) ORDER BY created_at DESC LIMIT 200',
-      args: [roomId, Number(now || 0)],
-    });
-    const list = (rs.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean);
-    return list.sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+    const before = Number(options.beforeTimestamp || 0);
+    const since = Number(options.sinceTimestamp || 0);
+    const limit = Math.max(1, Math.min(100, Number(options.limit) || 30));
+    const whereCursor = since > 0 ? ' AND created_at > ?' : (before > 0 ? ' AND created_at < ?' : '');
+    const args = [roomId, Number(now || 0)];
+    if (since > 0) args.push(since);
+    else if (before > 0) args.push(before);
+    args.push(limit + 1);
+    const order = since > 0 ? 'ASC' : 'DESC';
+    const pageSql = `SELECT id, data_json FROM ps_messages
+                     WHERE room_id = ?
+                       AND (deleted_at IS NULL OR deleted_at = 0)
+                       AND (disappear_at IS NULL OR disappear_at > ?)
+                       ${whereCursor}
+                     ORDER BY created_at ${order} LIMIT ?`;
+    const idPageSql = pageSql.replace('SELECT id, data_json', 'SELECT id');
+    // All three indexed reads share one libSQL round trip. Reactions/receipts
+    // are narrow side tables, so status changes never rewrite message blobs.
+    const [messageRs, reactionRs, receiptRs] = await tursoClient().batch([
+      { sql: pageSql, args },
+      { sql: `SELECT message_id, user_id, emoji, created_at FROM ps_message_reactions
+              WHERE message_id IN (${idPageSql}) ORDER BY created_at ASC`, args },
+      { sql: `SELECT message_id, user_id, delivered_at, read_at FROM ps_message_receipts
+              WHERE message_id IN (${idPageSql})`, args },
+    ], 'read');
+    let list = (messageRs?.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean);
+    const hasMore = list.length > limit;
+    if (hasMore) list = list.slice(0, limit);
+    list.sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+    list.forEach(m => { m.reactions = []; m.receipts = {}; });
+    const byId = new Map(list.map(m => [String(m.id), m]));
+    for (const row of (reactionRs?.rows || [])) {
+      const message = byId.get(String(row.message_id));
+      if (!message) continue;
+      message.reactions.push({ userId: String(row.user_id), emoji: String(row.emoji), createdAt: Number(row.created_at || 0) });
+    }
+    for (const row of (receiptRs?.rows || [])) {
+      const message = byId.get(String(row.message_id));
+      if (!message) continue;
+      message.receipts[String(row.user_id)] = {
+        deliveredAt: Number(row.delivered_at || 0),
+        readAt: Number(row.read_at || 0),
+      };
+    }
+    return { messages: list, hasMore, nextCursor: list.length ? Number(list[0].createdAt || 0) : null };
   } catch (e) {
     console.warn('[turso] messages read failed', e && e.message);
     return null;
   }
+}
+
+export async function tursoSetMessageReaction(messageId, userId, emoji, active, createdAt = nowMs()) {
+  if (!isTursoConfigured()) return false;
+  await tursoEnsure();
+  const statement = active
+    ? { sql: `INSERT INTO ps_message_reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)
+              ON CONFLICT(message_id, user_id, emoji) DO UPDATE SET created_at=excluded.created_at`, args: [messageId, userId, emoji, createdAt] }
+    : { sql: 'DELETE FROM ps_message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', args: [messageId, userId, emoji] };
+  await tursoClient().execute(statement);
+  return true;
+}
+
+export async function tursoUpsertMessageReceipts(userId, messageIds, stateName, at = nowMs()) {
+  if (!isTursoConfigured() || !userId || !Array.isArray(messageIds) || !messageIds.length) return false;
+  await tursoEnsure();
+  const isRead = stateName === 'read';
+  const statements = messageIds.slice(0, 100).map(messageId => ({
+    sql: `INSERT INTO ps_message_receipts (message_id, user_id, delivered_at, read_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(message_id, user_id) DO UPDATE SET
+            delivered_at=MAX(ps_message_receipts.delivered_at, excluded.delivered_at),
+            read_at=MAX(ps_message_receipts.read_at, excluded.read_at),
+            updated_at=excluded.updated_at`,
+    args: [messageId, userId, at, isRead ? at : 0, at],
+  }));
+  await tursoClient().batch(statements, 'write');
+  return true;
 }
 
 export async function tursoUpsertUser(user) {
@@ -665,9 +773,26 @@ export async function fetchTursoUnreadCounts(myId) {
   await tursoEnsure();
   const c = tursoClient();
   try {
+    const markerKey = `unread-materialized:${myId}`;
+    const [stateRs, markerRs] = await c.batch([
+      { sql: 'SELECT room_id, unread_count FROM ps_conversation_state WHERE owner_user_id = ? AND unread_count > 0', args: [myId] },
+      { sql: 'SELECT value FROM ps_meta WHERE key = ? LIMIT 1', args: [markerKey] },
+    ], 'read');
+    if ((markerRs?.rows || []).length) {
+      const out = {};
+      for (const row of (stateRs?.rows || [])) {
+        const n = Math.max(0, Number(row.unread_count || 0));
+        if (n) out[String(row.room_id)] = n;
+      }
+      return out;
+    }
+
+    // One-time backfill for pre-v169 databases. Subsequent inbox reads are
+    // narrow indexed lookups; they never repeat this grouped COUNT scan.
     const epoch = await _unreadEpoch();
-    const rs = await c.execute({
-      sql: `SELECT m.room_id AS room_id, COUNT(*) AS n
+    const legacy = await c.execute({
+      sql: `SELECT m.room_id AS room_id, COUNT(*) AS n, MAX(m.created_at) AS last_message_at,
+                   COALESCE(r.last_read_at, ?) AS last_read_at
             FROM ps_messages m
             LEFT JOIN ps_read_state r
               ON r.owner_user_id = ? AND r.room_id = m.room_id
@@ -677,13 +802,30 @@ export async function fetchTursoUnreadCounts(myId) {
               AND (m.disappear_at IS NULL OR m.disappear_at > ?)
               AND m.created_at > COALESCE(r.last_read_at, ?)
             GROUP BY m.room_id`,
-      args: [myId, myId, myId, nowMs(), epoch],
+      args: [epoch, myId, myId, myId, nowMs(), epoch],
     });
     const out = {};
-    for (const row of (rs.rows || [])) {
-      const n = Number(row.n || 0);
-      if (n > 0) out[String(row.room_id)] = n;
+    const ts = nowMs();
+    const writes = [];
+    for (const row of (legacy.rows || [])) {
+      const n = Math.max(0, Number(row.n || 0));
+      if (n) out[String(row.room_id)] = n;
+      writes.push({
+        sql: `INSERT INTO ps_conversation_state (owner_user_id, room_id, unread_count, last_message_at, last_read_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
+                unread_count=excluded.unread_count,
+                last_message_at=MAX(ps_conversation_state.last_message_at, excluded.last_message_at),
+                last_read_at=MAX(ps_conversation_state.last_read_at, excluded.last_read_at),
+                updated_at=excluded.updated_at`,
+        args: [myId, String(row.room_id), n, Number(row.last_message_at || 0), Number(row.last_read_at || epoch), ts],
+      });
     }
+    writes.push({
+      sql: 'INSERT INTO ps_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at',
+      args: [markerKey, '1', ts],
+    });
+    await c.batch(writes, 'write');
     return out;
   } catch (e) {
     console.warn('[turso] unread counts failed', e && e.message);
@@ -700,13 +842,27 @@ export async function tursoMarkRoomsRead(myId, receipts) {
   if (!isTursoConfigured() || !myId || !Array.isArray(receipts) || receipts.length === 0) return false;
   await tursoEnsure();
   const updatedAt = nowMs();
-  const statements = receipts.slice(0, 50).map((receipt) => ({
-    sql: `INSERT INTO ps_read_state (owner_user_id, room_id, last_read_at, updated_at) VALUES (?, ?, ?, ?)
-          ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
-            last_read_at = MAX(ps_read_state.last_read_at, excluded.last_read_at),
-            updated_at = excluded.updated_at`,
-    args: [myId, receipt.roomId, Number(receipt.at) || updatedAt, updatedAt],
-  }));
+  const statements = receipts.slice(0, 50).flatMap((receipt) => {
+    const at = Number(receipt.at) || updatedAt;
+    return [
+      {
+        sql: `INSERT INTO ps_read_state (owner_user_id, room_id, last_read_at, updated_at) VALUES (?, ?, ?, ?)
+              ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
+                last_read_at = MAX(ps_read_state.last_read_at, excluded.last_read_at),
+                updated_at = excluded.updated_at`,
+        args: [myId, receipt.roomId, at, updatedAt],
+      },
+      {
+        sql: `INSERT INTO ps_conversation_state (owner_user_id, room_id, unread_count, last_message_at, last_read_at, updated_at)
+              VALUES (?, ?, 0, 0, ?, ?)
+              ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
+                unread_count = CASE WHEN excluded.last_read_at >= ps_conversation_state.last_read_at THEN 0 ELSE ps_conversation_state.unread_count END,
+                last_read_at = MAX(ps_conversation_state.last_read_at, excluded.last_read_at),
+                updated_at = excluded.updated_at`,
+        args: [myId, receipt.roomId, at, updatedAt],
+      },
+    ];
+  });
   try {
     await tursoClient().batch(statements, 'write');
     return true;

@@ -89,7 +89,7 @@ export function pushNotification(db, recipientId, kind, fromUserId, extra = {}) 
     const oldest = perUser.slice(0, perUser.length - 500).map(n => n.id);
     db.notifications = db.notifications.filter(n => !oldest.includes(n.id));
   }
-  _pushEvent(recipientId, 'notification', { kind, fromUserId, fromSnapshot: snap, postId: notif.postId, text: notif.text, notifId: notif.id });
+  _pushEvent(recipientId, 'notification', { kind, fromUserId, fromSnapshot: snap, postId: notif.postId, roomId: extra.roomId || null, text: notif.text, notifId: notif.id });
   const fromName = (snap && (snap.username || snap.displayName)) || 'Someone';
   let title = 'PRIV SPACA', body = '';
   if (kind === 'like')    body = `${fromName} liked your post`;
@@ -97,9 +97,26 @@ export function pushNotification(db, recipientId, kind, fromUserId, extra = {}) 
   if (kind === 'follow')  body = `${fromName} started following you`;
   if (kind === 'message') body = `${fromName}: ${(notif.text || '').slice(0, 80)}`;
   if (kind === 'story_reply') body = `${fromName} replied to your story`;
-  if (body) supervisedTask(null,
-    sendWebPush(db, recipientId, { title, body, tag: 'priv-spaca-' + notif.id, url: '/', kind, notifId: notif.id }),
-    `push.send.${kind}`,
-  );
+  const mutedConversation = kind === 'message' && recipient && recipient.conversationPrefs
+    && recipient.conversationPrefs[fromUserId] && recipient.conversationPrefs[fromUserId].muted;
+  if (body && !mutedConversation) {
+    const targetUrl = kind === 'message' && extra.roomId
+      ? '/chat/' + encodeURIComponent(String(extra.roomId))
+      : '/';
+    supervisedTask(null,
+      sendWebPush(db, recipientId, {
+        title,
+        body,
+        preview: String(notif.text || body).slice(0, 120),
+        avatar: snap && snap.photoUrl ? snap.photoUrl : '',
+        tag: 'priv-spaca-' + notif.id,
+        url: targetUrl,
+        roomId: extra.roomId || null,
+        kind,
+        notifId: notif.id,
+      }),
+      `push.send.${kind}`,
+    );
+  }
   return notif;
 }

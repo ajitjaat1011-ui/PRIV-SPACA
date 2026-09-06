@@ -80,7 +80,7 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     if (typeof dataUrl !== 'string' || (!dataUrl.startsWith('data:image/') && !dataUrl.startsWith('data:audio/') && !dataUrl.startsWith('data:video/'))) {
       return c.json({ error: 'Send a data URL: data:image/... , data:audio/... or data:video/...' }, 400);
     }
-    const m = dataUrl.match(/^data:(image|audio|video)\/(jpeg|jpg|png|webp|gif|webm|mp3|mp4|quicktime|mov);base64,(.+)$/);
+    const m = dataUrl.match(/^data:(image|audio|video)\/(jpeg|jpg|png|webp|avif|gif|webm|mp3|mp4|quicktime|mov);base64,(.+)$/);
     if (!m) return c.json({ error: 'Unsupported media type' }, 400);
     const isVideo = m[1] === 'video';
     let ext = m[2] === 'jpeg' ? 'jpg' : (m[2] === 'quicktime' ? 'mov' : m[2]);

@@ -65,10 +65,12 @@ app.get('/api/posts', requireAuth, async (c) => {
 app.post('/api/posts/create', requireAuth, async (c) => {
   try {
     const body = await vbody(c, S.PostCreateBody);
-    const { text, imageUrl, images, videoUrl, isScratch, music, style, story, storyExpiresAt, audience } = body;
+    const { text, imageUrl, images, imageBlur, imageBlurs, videoUrl, isScratch, music, style, story, storyExpiresAt, audience } = body;
     const ct = sanitizeText(text, 2000);
     const ci = isSafeImageUrl(imageUrl) ? String(imageUrl).trim() : null;
     const cimgs = Array.isArray(images) ? images.filter(u => isSafeImageUrl(u)).map(u => String(u).trim()).slice(0, 3) : (ci ? [ci] : []);
+    const cleanBlur = (value) => /^data:image\/(?:webp|jpeg|png);base64,/i.test(String(value || '')) ? String(value).slice(0, 12000) : '';
+    const cblurs = Array.isArray(imageBlurs) ? imageBlurs.slice(0, 3).map(cleanBlur) : [];
     const mainImg = cimgs[0] || ci || null;
     const cvid = isSafeMediaUrl(videoUrl) && (/^https?:\/\//i.test(String(videoUrl)) || /^data:video\//i.test(String(videoUrl))) ? String(videoUrl).trim() : null;
     if (!ct && !mainImg && cimgs.length === 0 && !cvid) return c.json({ error: 'Empty post' }, 400);
@@ -107,6 +109,7 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     const post = {
       id: uid('post'), userId: myId, text: ct, imageUrl: mainImg,
       images: cimgs.length > 0 ? cimgs : (mainImg ? [mainImg] : []),
+      imageBlur: cleanBlur(imageBlur) || cblurs[0] || '', imageBlurs: cblurs,
       videoUrl: cvid,
       music: cleanMusic, style: cleanStyle, story: isStory, storyExpiresAt: expiresAt,
       audience: isStory ? (audience === 'close_friends' ? 'close_friends' : 'all') : null,
@@ -142,7 +145,7 @@ app.post('/api/posts/create', requireAuth, async (c) => {
 
 app.post('/api/posts/like', requireAuth, async (c) => {
   try {
-  const { postId } = await vbody(c, S.PostIdBody);
+  const { postId, liked: desiredLiked } = await vbody(c, S.PostLikeBody);
   if (!postId) return c.json({ error: 'postId required' }, 400);
   let db = await fetchDatabase();
   let post = db.posts.find(p => p.id === postId);
@@ -160,9 +163,10 @@ app.post('/api/posts/like', requireAuth, async (c) => {
   if (isStoryRecord(post) && !canViewerSeeStory(post, myId, db)) return c.json({ error: 'Forbidden' }, 403);
   post.likes = post.likes || [];
   const idx = post.likes.indexOf(myId);
-  let liked;
-  if (idx === -1) { post.likes.push(myId); liked = true; } else { post.likes.splice(idx, 1); liked = false; }
-  const notif = liked ? pushNotification(db, post.userId, 'like', myId, { postId: post.id }) : null;
+  const liked = typeof desiredLiked === 'boolean' ? desiredLiked : idx === -1;
+  if (liked && idx === -1) post.likes.push(myId);
+  if (!liked && idx !== -1) post.likes.splice(idx, 1);
+  const notif = liked && idx === -1 ? pushNotification(db, post.userId, 'like', myId, { postId: post.id }) : null;
   await saveDatabase(db, false, { skipSecondarySync: true });
   if (isTursoConfigured()) {
     await tursoUpsertPosts([post]);

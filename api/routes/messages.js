@@ -15,7 +15,7 @@ import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dmRoomFor, normalizeRoomId } from '../lib/rooms.js';
-import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoHealNotificationColumns, tursoMarkRoomRead, tursoMarkRoomsRead, tursoRefreshDmIndexForOwners, tursoUpsertMessages } from '../lib/store-turso.js';
+import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoHealNotificationColumns, tursoMarkRoomRead, tursoMarkRoomsRead, tursoRefreshDmIndexForOwners, tursoSetMessageReaction, tursoUpsertMessageReceipts, tursoUpsertMessages } from '../lib/store-turso.js';
 
 // ---------- Messages ----------
 app.get('/api/messages', requireAuth, async (c) => {
@@ -24,23 +24,28 @@ app.get('/api/messages', requireAuth, async (c) => {
     const parts = roomId.slice(3).split(':');
     if (!parts.includes(c.get('userId'))) return c.json({ error: 'Forbidden' }, 403);
   }
-  let now = nowMs();
-  // perf: fetchDatabase() and fetchTursoMessages() are two independent Turso
-  // round trips that don't depend on each other's results (fetchTursoMessages
-  // only needs roomId/now, not the db object). They used to run sequentially,
-  // each paying the same network round-trip cost — running them concurrently
-  // via Promise.all cuts this endpoint's wait roughly in half on any request
-  // that isn't served entirely from the in-memory cache.
-  let [db, list] = await Promise.all([
+  const now = nowMs();
+  const beforeTimestamp = Math.max(0, Number(c.req.query('beforeTimestamp') || 0));
+  const sinceTimestamp = Math.max(0, Number(c.req.query('sinceTimestamp') || 0));
+  const limit = Math.max(1, Math.min(100, Number(c.req.query('limit') || 30)));
+  // Database/user hydration and the indexed page query are independent.
+  let [db, page] = await Promise.all([
     fetchDatabase(),
-    fetchTursoMessages(roomId, now),
+    fetchTursoMessages(roomId, now, { beforeTimestamp, sinceTimestamp, limit }),
   ]);
-  const dbRoomMessages = () => db.messages
-    .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .slice(-200);
-  if (!Array.isArray(list) || (list.length === 0 && db.messages.some(m => m.roomId === roomId && !m.deletedAt))) {
+  const dbRoomMessages = () => {
+    let rows = db.messages
+      .filter(m => m.roomId === roomId && !m.deletedAt && !(m.disappearAt && m.disappearAt <= now))
+      .filter(m => !beforeTimestamp || Number(m.createdAt || 0) < beforeTimestamp)
+      .filter(m => !sinceTimestamp || Number(m.createdAt || 0) > sinceTimestamp)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    if (sinceTimestamp) return rows.slice(0, limit);
+    return rows.slice(-limit);
+  };
+  let list = page && Array.isArray(page.messages) ? page.messages : null;
+  if (!Array.isArray(list) || (list.length === 0 && !beforeTimestamp && !sinceTimestamp && db.messages.some(m => m.roomId === roomId && !m.deletedAt))) {
     list = dbRoomMessages();
+    page = { messages: list, hasMore: db.messages.filter(m => m.roomId === roomId && !m.deletedAt).length > list.length };
   }
   const enriched = list.map(m => {
     const author = db.users.find(u => u.id === m.userId);
@@ -49,14 +54,20 @@ app.get('/api/messages', requireAuth, async (c) => {
     return { ...m, author: { id: m.userId, displayName: 'Member', username: (m.userId || 'member').slice(-6) } };
   });
 
-  return c.json({ messages: enriched, roomId });
+  return c.json({
+    messages: enriched,
+    roomId,
+    hasMore: !!(page && page.hasMore),
+    nextCursor: enriched.length ? Number(enriched[sinceTimestamp ? enriched.length - 1 : 0].createdAt || 0) : null,
+    direction: sinceTimestamp ? 'forward' : 'backward',
+  });
 });
 
 app.post('/api/messages/send', requireAuth, async (c) => {
   try {
     const body = await vbody(c, S.MessageSendBody);
     const {
-      roomId: raw, text, imageUrl, replyTo, targetUserId,
+      roomId: raw, text, imageUrl, imageBlur, replyTo, targetUserId,
       encrypted, cipher, iv,                  // E2E payload (Part 3)
       disappearAfterMs,                       // disappearing messages (Part 3)
       clientNonce,                            // optimistic-UI correlation id
@@ -87,6 +98,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
 
     const ct = isEncrypted ? '' : sanitizeText(text, 4000);
     const ci = isSafeMediaUrl(imageUrl) ? String(imageUrl).trim() : null;
+    const cb = /^data:image\/(?:webp|jpeg|png);base64,/i.test(String(imageBlur || '')) ? String(imageBlur).slice(0, 12000) : '';
     if (!ct && !ci && !isEncrypted) return c.json({ error: 'Empty message' }, 400);
 
     // Disappearing TTL (clamp to 10s..24h)
@@ -123,7 +135,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     const snap = author ? { id: author.id, username: author.username, displayName: author.displayName, photoUrl: author.photoUrl || '' } : null;
     const msg = {
       id: uid('msg'), roomId, userId: myId,
-      text: ct, imageUrl: ci, replyTo: replyRef, authorSnapshot: snap, createdAt: nowMs(),
+      text: ct, imageUrl: ci, imageBlur: cb, replyTo: replyRef, authorSnapshot: snap, createdAt: nowMs(),
     };
     if (nonce) msg.clientNonce = nonce;
     if (isEncrypted) { msg.encrypted = true; msg.cipher = cipher; msg.iv = iv; }
@@ -138,7 +150,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
         _pushEvent(recip, 'new_message', { roomId, message: enriched });
         // For E2E messages, server never sees plaintext → push preview is generic
         const previewText = isEncrypted ? '🔒 Encrypted message' : (ct || (ci ? '📷 Photo' : ''));
-        const notif = pushNotification(db, recip, 'message', myId, { text: previewText.slice(0, 80) });
+        const notif = pushNotification(db, recip, 'message', myId, { text: previewText.slice(0, 80), roomId });
         if (notif) tursoNotifs.push(notif);
       });
     } else {
@@ -193,15 +205,50 @@ app.post('/api/messages/send', requireAuth, async (c) => {
           });
         }
       }
-      // Sending into a room implies you have read it: clear the sender's own
-      // unread for this room in the same batch, so the count is right even if
-      // the client never calls /api/messages/read.
+      // Materialized unread counters: one indexed row per user+room. DMs need
+      // two tiny upserts; the group fan-out is a single INSERT..SELECT rather
+      // than N application-side writes.
+      const messageAt = Number(msg.createdAt || 0) || nowMs();
+      if (roomId.startsWith('dm:')) {
+        for (const ownerId of roomId.slice(3).split(':').filter(Boolean)) {
+          const fromMe = ownerId === myId;
+          stmts.push({
+            sql: `INSERT INTO ps_conversation_state (owner_user_id, room_id, unread_count, last_message_at, last_read_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
+                    unread_count = CASE
+                      WHEN excluded.unread_count = 0 THEN 0
+                      WHEN excluded.last_message_at > ps_conversation_state.last_read_at THEN ps_conversation_state.unread_count + 1
+                      ELSE ps_conversation_state.unread_count END,
+                    last_message_at = MAX(ps_conversation_state.last_message_at, excluded.last_message_at),
+                    last_read_at = MAX(ps_conversation_state.last_read_at, excluded.last_read_at),
+                    updated_at = excluded.updated_at`,
+            args: [ownerId, roomId, fromMe ? 0 : 1, messageAt, fromMe ? messageAt : 0, nowMs()],
+          });
+        }
+      } else {
+        stmts.push({
+          sql: `INSERT INTO ps_conversation_state (owner_user_id, room_id, unread_count, last_message_at, last_read_at, updated_at)
+                SELECT id, ?, CASE WHEN id = ? THEN 0 ELSE 1 END, ?, CASE WHEN id = ? THEN ? ELSE 0 END, ?
+                FROM ps_users WHERE 1
+                ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
+                  unread_count = CASE
+                    WHEN excluded.owner_user_id = ? THEN 0
+                    WHEN excluded.last_message_at > ps_conversation_state.last_read_at THEN ps_conversation_state.unread_count + 1
+                    ELSE ps_conversation_state.unread_count END,
+                  last_message_at = MAX(ps_conversation_state.last_message_at, excluded.last_message_at),
+                  last_read_at = MAX(ps_conversation_state.last_read_at, excluded.last_read_at),
+                  updated_at = excluded.updated_at`,
+          args: [roomId, myId, messageAt, myId, messageAt, nowMs(), myId],
+        });
+      }
+      // Sending into a room also advances the canonical read watermark.
       stmts.push({
         sql: `INSERT INTO ps_read_state (owner_user_id, room_id, last_read_at, updated_at) VALUES (?, ?, ?, ?)
               ON CONFLICT(owner_user_id, room_id) DO UPDATE SET
                 last_read_at = MAX(ps_read_state.last_read_at, excluded.last_read_at),
                 updated_at = excluded.updated_at`,
-        args: [myId, roomId, Number(msg.createdAt || 0) || nowMs(), nowMs()],
+        args: [myId, roomId, messageAt, nowMs()],
       });
       const [persisted] = await Promise.all([
         saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true }),
@@ -231,6 +278,56 @@ app.post('/api/messages/send', requireAuth, async (c) => {
   } catch (e) { console.error('[send]', e); throw wrapUnexpected(e, 'Send failed. Please try again.'); }
 });
 
+// ---------- Message reactions + per-message delivery/read receipts ----------
+app.post('/api/messages/reaction', requireAuth, async (c) => {
+  try {
+    const body = await vbody(c, S.MessageReactionBody);
+    const myId = c.get('userId');
+    const emoji = String(body.emoji || '').trim();
+    if (!['❤️', '😂', '😮', '😢', '👍', '🔥'].includes(emoji)) return c.json({ error: 'Unsupported reaction' }, 400);
+    const db = await fetchDatabase();
+    const message = (db.messages || []).find(m => m.id === body.messageId && !m.deletedAt);
+    if (!message) return c.json({ error: 'Not found' }, 404);
+    const roomId = String(message.roomId || '');
+    const allowed = roomId === 'general-group' || (roomId.startsWith('dm:') && roomId.slice(3).split(':').includes(myId));
+    if (!allowed) return c.json({ error: 'Forbidden' }, 403);
+    message.reactions = Array.isArray(message.reactions) ? message.reactions : [];
+    const active = body.active !== false;
+    message.reactions = message.reactions.filter(r => !(r && r.userId === myId && r.emoji === emoji));
+    if (active) message.reactions.push({ userId: myId, emoji, createdAt: nowMs() });
+    await saveDatabase(db, false, { skipSecondarySync: true });
+    if (isTursoConfigured()) await tursoSetMessageReaction(message.id, myId, emoji, active);
+    const event = { roomId, messageId: message.id, userId: myId, emoji, active };
+    if (roomId.startsWith('dm:')) {
+      roomId.slice(3).split(':').filter(id => id && id !== myId).forEach(id => _pushEvent(id, 'message_reaction', event));
+    } else _broadcastEvent('message_reaction', event, myId);
+    return c.json({ ok: true, ...event });
+  } catch (e) { throw wrapUnexpected(e); }
+});
+
+app.post('/api/messages/receipt', requireAuth, async (c) => {
+  try {
+    const body = await vbody(c, S.MessageReceiptBody);
+    const myId = c.get('userId');
+    const roomId = normalizeRoomId(body.roomId, myId);
+    const stateName = body.state === 'read' ? 'read' : 'delivered';
+    const allowed = roomId === 'general-group' || (roomId.startsWith('dm:') && roomId.slice(3).split(':').includes(myId));
+    if (!allowed) return c.json({ error: 'Forbidden' }, 403);
+    const ids = [...new Set((body.messageIds || []).map(String))].slice(0, 100);
+    const at = Number(body.at) > 0 ? Number(body.at) : nowMs();
+    const db = await fetchDatabase();
+    const rows = (db.messages || []).filter(m => ids.includes(m.id) && m.roomId === roomId && m.userId !== myId);
+    if (!rows.length) return c.json({ ok: true, count: 0, state: stateName });
+    const validIds = rows.map(m => m.id);
+    if (isTursoConfigured()) await tursoUpsertMessageReceipts(myId, validIds, stateName, at);
+    if (stateName === 'read' && isTursoConfigured()) await tursoMarkRoomRead(myId, roomId, at);
+    for (const authorId of new Set(rows.map(m => m.userId).filter(Boolean))) {
+      _pushEvent(authorId, 'message_receipt', { roomId, messageIds: validIds, userId: myId, state: stateName, at });
+    }
+    return c.json({ ok: true, count: validIds.length, state: stateName, at });
+  } catch (e) { throw wrapUnexpected(e); }
+});
+
 app.post('/api/messages/delete', requireAuth, async (c) => {
   try {
     const { messageId } = await vbody(c, S.MessageIdBody);
@@ -239,10 +336,16 @@ app.post('/api/messages/delete', requireAuth, async (c) => {
     const m = db.messages.find(x => x.id === messageId);
     if (!m) return c.json({ error: 'Not found' }, 404);
     if (m.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
+    if (m.deletedAt) return c.json({ ok: true, undoUntil: Number(m.deletedAt) + 30 * 24 * 3600 * 1000 });
     m.deletedAt = nowMs();
     await saveDatabase(db, false, { skipSecondarySync: true });
     if (isTursoConfigured()) {
       await tursoUpsertMessages([m]);
+      await tursoClient().execute({
+        sql: `UPDATE ps_conversation_state SET unread_count=MAX(0, unread_count - 1), updated_at=?
+              WHERE room_id=? AND owner_user_id!=? AND last_read_at < ? AND unread_count > 0`,
+        args: [nowMs(), m.roomId, m.userId, Number(m.createdAt || 0)],
+      }).catch(() => {});
       if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
     }
     return c.json({ ok: true, undoUntil: m.deletedAt + 30 * 24 * 3600 * 1000 });
@@ -256,10 +359,16 @@ app.post('/api/messages/restore', requireAuth, async (c) => {
     const m = db.messages.find(x => x.id === messageId);
     if (!m) return c.json({ error: 'Not found' }, 404);
     if (m.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
+    if (!m.deletedAt) return c.json({ ok: true });
     delete m.deletedAt;
     await saveDatabase(db, false, { skipSecondarySync: true });
     if (isTursoConfigured()) {
       await tursoUpsertMessages([m]);
+      await tursoClient().execute({
+        sql: `UPDATE ps_conversation_state SET unread_count=unread_count + 1, updated_at=?
+              WHERE room_id=? AND owner_user_id!=? AND last_read_at < ?`,
+        args: [nowMs(), m.roomId, m.userId, Number(m.createdAt || 0)],
+      }).catch(() => {});
       if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
     }
     return c.json({ ok: true });

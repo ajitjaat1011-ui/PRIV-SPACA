@@ -5,16 +5,16 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v168';
-const STATIC_CACHE = 'priv-spaca-static-v138';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v138';
+const SW_VERSION = 'priv-spaca-v169';
+const STATIC_CACHE = 'priv-spaca-static-v139';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v139';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=186',
-  '/app.min.js?v=191',
-  '/auth.react.min.js?v=191',
+  '/style.min.css?v=187',
+  '/app.min.js?v=192',
+  '/auth.react.min.js?v=192',
   '/vendor/local-fonts.css?v=1',
   '/vendor/lucide.min.js?v=1',
   '/vendor/motion.min.js?v=1',
@@ -133,12 +133,14 @@ self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (_) {}
   const title = data.title || 'PRIV SPACA';
+  const avatar = typeof data.avatar === 'string' && /^https:\/\//i.test(data.avatar) ? data.avatar : ICON_DATA_URI;
   const opts = {
-    body: data.body || 'New activity',
-    icon: ICON_DATA_URI,
+    body: data.preview || data.body || 'New activity',
+    icon: avatar,
+    image: typeof data.image === 'string' && /^https:\/\//i.test(data.image) ? data.image : undefined,
     badge: ICON_DATA_URI,
     tag: data.tag || 'priv-spaca',
-    data: { url: data.url || '/', kind: data.kind, notifId: data.notifId },
+    data: { url: data.url || '/', roomId: data.roomId || null, kind: data.kind, notifId: data.notifId },
     vibrate: [120, 60, 120],
     requireInteraction: false,
   };

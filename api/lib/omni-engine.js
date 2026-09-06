@@ -98,10 +98,11 @@ export function classifyRequest(path, method = 'GET') {
   if (p.startsWith('/auth/')) return { tier: 0, name: 'critical', domain: 'auth', securityLimited: true };
   if (p.startsWith('/rtc/')) return { tier: 0, name: 'critical', domain: 'webrtc' };
   if (p === '/stream' || p === '/stream/token') return { tier: 0, name: 'critical', domain: 'realtime-stream' };
-  if (p === '/messages' || p === '/messages/send') return { tier: 0, name: 'critical', domain: 'chat' };
+  if (p === '/messages' || p === '/messages/send' || p === '/messages/reaction') return { tier: 0, name: 'critical', domain: 'chat' };
   if (p === '/user/typing' || p === '/user/heartbeat') return { tier: 0, name: 'critical', domain: 'presence' };
+  if (p === '/link-preview') return { tier: 1, name: 'standard', domain: 'scraping.preview' };
 
-  if (p === '/messages/read' || p === '/messages/read-batch') return { tier: 2, name: 'background', domain: 'read-receipts' };
+  if (p === '/messages/read' || p === '/messages/read-batch' || p === '/messages/receipt') return { tier: 2, name: 'background', domain: 'read-receipts' };
   if (/^\/stories\/[^/]+\/view$/.test(p) && m === 'POST') return { tier: 2, name: 'background', domain: 'story-analytics' };
   if (p === '/notifications/seen' || p.startsWith('/push/') || p.startsWith('/omni/')) {
     return { tier: 2, name: 'background', domain: p.startsWith('/push/') ? 'push' : 'telemetry' };

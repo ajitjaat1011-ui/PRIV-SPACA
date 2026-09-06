@@ -45,7 +45,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v168';
+const APP_VERSION = 'priv-spaca-v169';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -232,8 +232,8 @@ const ClientOmni = (() => {
     const p = String(path || '/').split('?')[0];
     const m = String(method || 'GET').toUpperCase();
     if (p.startsWith('/auth/') || p.startsWith('/rtc/') || p === '/stream' || p === '/stream/token'
-        || p === '/messages' || p === '/messages/send' || p === '/user/typing' || p === '/user/heartbeat') return 0;
-    if (p === '/messages/read' || p === '/messages/read-batch' || p === '/notifications/seen'
+        || p === '/messages' || p === '/messages/send' || p === '/messages/reaction' || p === '/user/typing' || p === '/user/heartbeat') return 0;
+    if (p === '/messages/read' || p === '/messages/read-batch' || p === '/messages/receipt' || p === '/notifications/seen'
         || p.startsWith('/push/') || (m === 'POST' && /^\/stories\/[^/]+\/view$/.test(p))) return 2;
     return 1;
   }
@@ -395,6 +395,123 @@ async function api(path, options = {}) {
   }
   return fetchPromise;
 }
+
+// ====== Durable offline mutation queue (messages + likes) ======
+const OfflineQueue = (() => {
+  const DB = 'priv-spaca-runtime';
+  const STORE = 'operations';
+  let draining = false;
+  function open() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+  async function tx(mode, run) {
+    if (!window.indexedDB) return null;
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE, mode);
+      const request = run(transaction.objectStore(STORE));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      transaction.oncomplete = () => db.close();
+    });
+  }
+  async function enqueue(operation) {
+    const item = {
+      id: operation.id || 'op_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8),
+      createdAt: Date.now(), userId: State.user && State.user.id,
+      path: operation.path, method: operation.method || 'POST', body: operation.body || {},
+      kind: operation.kind, nonce: operation.nonce || '', postId: operation.postId || '',
+    };
+    await tx('readwrite', store => store.put(item));
+    return item;
+  }
+  async function all() {
+    const rows = await tx('readonly', store => store.getAll()) || [];
+    return rows.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  async function remove(id) { await tx('readwrite', store => store.delete(id)); }
+  function reconcile(item, data) {
+    if (item.kind === 'message') {
+      const pending = (State.messages || []).find(m => m._clientNonce === item.nonce || m.id === item.nonce);
+      if (data && data.message) upsertMessageInState(data.message);
+      if (pending) { pending._queued = false; pending._pending = false; }
+      State.messages = dedupeMessagesById(State.messages || []);
+      _lastMessageRenderSig = ''; renderMessages(false);
+    } else if (item.kind === 'like') {
+      const post = (State.posts || []).find(p => p.id === item.postId);
+      if (post && data && typeof data.likeCount === 'number') {
+        post.likeCount = data.likeCount; post.likes = Array.isArray(post.likes) ? post.likes : [];
+        const myId = State.user && State.user.id;
+        if (data.liked && !post.likes.includes(myId)) post.likes.push(myId);
+        if (!data.liked) post.likes = post.likes.filter(id => id !== myId);
+        delete post._queuedLike;
+      }
+    }
+  }
+  async function drain() {
+    if (draining || !navigator.onLine || !State.token) return;
+    draining = true;
+    try {
+      for (const item of await all()) {
+        if (!navigator.onLine) break;
+        if (item.userId && item.userId !== (State.user && State.user.id)) continue;
+        try {
+          const data = await api(item.path, { method: item.method, body: item.body });
+          reconcile(item, data);
+          await remove(item.id);
+        } catch (error) {
+          if (!navigator.onLine || /network|timeout/i.test(String(error && error.message || ''))) break;
+          if (Number(error && error.status) >= 400 && Number(error && error.status) < 500) await remove(item.id);
+          else break;
+        }
+      }
+      bustApiCache('/messages', '/posts', '/feed');
+    } finally { draining = false; }
+  }
+  return { enqueue, drain, all };
+})();
+
+async function queueableMutation(path, body, meta = {}) {
+  if (navigator.onLine) {
+    try { return await api(path, { method: 'POST', body }); }
+    catch (error) {
+      if (!/network|timeout/i.test(String(error && error.message || ''))) throw error;
+    }
+  }
+  await OfflineQueue.enqueue({ path, body, ...meta });
+  return { queued: true };
+}
+
+let _offlineSince = Number(localStorage.getItem('ps_offlineSince') || 0);
+async function syncMissedMessages() {
+  if (!navigator.onLine || !State.token || !State.currentRoom) return;
+  let since = _offlineSince || Number(localStorage.getItem('ps_lastRealtimeActivity') || 0);
+  for (let page = 0; since > 0 && page < 6; page++) {
+    const result = await loadMessages(false, { sinceTimestamp: since });
+    if (!result || !result.hasMore || !result.nextCursor || Number(result.nextCursor) <= since) break;
+    since = Number(result.nextCursor);
+  }
+  _offlineSince = 0;
+  localStorage.removeItem('ps_offlineSince');
+  localStorage.setItem('ps_lastRealtimeActivity', String(Date.now()));
+}
+window.addEventListener('offline', () => {
+  _offlineSince = Date.now(); localStorage.setItem('ps_offlineSince', String(_offlineSince));
+  toast('Offline — messages and likes will be queued');
+});
+window.addEventListener('online', () => {
+  toast('Back online — sending queued activity', 'success');
+  OfflineQueue.drain().then(syncMissedMessages).catch(() => {});
+  connectSSE();
+});
 
 // ====== Utilities ======
 function escapeHtml(s) {
@@ -783,25 +900,26 @@ async function uploadImage(file, onProgress) {
   if (!file) throw new Error('No file');
   if (file.size > MAX_UPLOAD_BYTES) throw new Error('File too large (max 15MB)');
   if (onProgress) onProgress(10);
-  const dataUrl = await new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result);
-    r.onerror = () => reject(new Error('Read failed'));
-    r.readAsDataURL(file);
-  });
+  const isGif = String(file.type || '').toLowerCase() === 'image/gif';
+  const encoded = isGif ? {
+    dataUrl: await new Promise((resolve, reject) => {
+      const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => reject(new Error('Read failed')); r.readAsDataURL(file);
+    }), blurDataUrl: '', size: file.size,
+  } : await compressResponsiveImage(file, { maxDim: 1080, quality: .82, targetBytes: 400 * 1024 });
+  const dataUrl = encoded.dataUrl;
   if (onProgress) onProgress(50);
   try {
     const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind: 'media' } });
     if (onProgress) onProgress(100);
-    return { url: res.url || dataUrl, name: file.name, size: file.size, persisted: res.persisted !== false };
+    return { url: res.url || dataUrl, name: file.name, size: encoded.size || file.size, blurDataUrl: encoded.blurDataUrl || '', persisted: res.persisted !== false };
   } catch (e) {
     // Last resort: inline data URL only (works everywhere, but bloats the
     // DB record and won't persist across a full post-storage rewrite). Only
     // reached if /api/upload-photo itself is unreachable/erroring, and only
     // for small files so we don't balloon storage with large inline blobs.
-    if (file.size > 800 * 1024) throw new Error('Image upload service unavailable. Please use a smaller image (<800KB) or try again later.');
+    if ((encoded.size || file.size) > 800 * 1024) throw new Error('Image upload service unavailable. Please use a smaller image (<800KB) or try again later.');
     if (onProgress) onProgress(100);
-    return { url: dataUrl, name: file.name, size: file.size, persisted: false };
+    return { url: dataUrl, name: file.name, size: encoded.size || file.size, blurDataUrl: encoded.blurDataUrl || '', persisted: false };
   }
 }
 
@@ -852,6 +970,7 @@ function showApp() {
   switchTab(readAppRoute().tab, { history: 'replace', preserveContent: true });
   startPolls();
   loadAll();
+  OfflineQueue.drain().catch(() => {});
   queueDeepLinkResolution();
   loadCloseFriends().catch(() => {});
   loadFollowRequests(true).catch(() => {});
@@ -1401,16 +1520,21 @@ function readAppRoute() {
   const url = new URL(location.href);
   const hashParams = new URLSearchParams((url.hash || '').replace(/^#/, ''));
   const requestedTab = url.searchParams.get('tab');
+  const chatMatch = url.pathname.match(/^\/chat\/([^/]+)\/?$/);
+  let chatRoom = '';
+  try { chatRoom = chatMatch ? decodeURIComponent(chatMatch[1]) : ''; } catch (_) {}
   return {
-    tab: APP_TABS.has(requestedTab) ? requestedTab : 'feed',
+    tab: chatRoom ? 'chat' : (APP_TABS.has(requestedTab) ? requestedTab : 'feed'),
     post: url.searchParams.get('post') || hashParams.get('post') || '',
     story: url.searchParams.get('story') || hashParams.get('story') || '',
+    chatRoom,
   };
 }
 
 function syncTabRoute(tab, mode = 'none', preserveContent = false) {
   if (mode !== 'push' && mode !== 'replace') return;
   const url = new URL(location.href);
+  if (tab !== 'chat' && /^\/chat\//.test(url.pathname)) url.pathname = '/';
   if (tab === 'feed') url.searchParams.delete('tab');
   else url.searchParams.set('tab', tab);
   if (!preserveContent) {
@@ -1431,9 +1555,27 @@ async function resolveDeepLink() {
   if (!State.token || !State.user) return;
   const run = ++_deepLinkRun;
   const route = readAppRoute();
-  if (!route.post && !route.story) return;
-  await Promise.allSettled([loadMembers(), loadPosts(true)]);
+  if (!route.post && !route.story && !route.chatRoom) return;
+  const loads = [loadMembers()];
+  if (route.post || route.story) loads.push(loadPosts(true));
+  await Promise.allSettled(loads);
   if (run !== _deepLinkRun) return;
+  if (route.chatRoom) {
+    if (route.chatRoom === 'general-group') {
+      State.currentRoom = { id: 'general-group', kind: 'group', target: null, label: '#general-group' };
+      switchTab('chat', { history: 'none', preserveContent: true });
+      loadMessages(true);
+      return;
+    }
+    const parts = route.chatRoom.startsWith('dm:') ? route.chatRoom.slice(3).split(':') : [];
+    if (!parts.includes(State.user.id)) { toast('This conversation is unavailable.', 'error'); return; }
+    const peerId = parts.find(id => id !== State.user.id);
+    const peer = (State.members || []).find(u => u.id === peerId);
+    if (!peer) { toast('This conversation is unavailable.', 'error'); return; }
+    switchTab('chat', { history: 'none', preserveContent: true });
+    openDM(peer);
+    return;
+  }
   if (route.story) {
     const story = (State.posts || []).find(p => p && p.id === route.story && isActiveStoryPost(p));
     if (!story) { toast('This story is unavailable, expired, or private.', 'error'); return; }
@@ -1573,7 +1715,7 @@ window.addEventListener('popstate', () => {
   if (!route.post) closePostDetail({ history: 'none' });
   if (!route.story && !$id('#storyViewer')?.classList.contains('hidden')) closeStory();
   switchTab(route.tab, { history: 'none', preserveContent: true });
-  if (route.post || route.story) queueDeepLinkResolution();
+  if (route.post || route.story || route.chatRoom) queueDeepLinkResolution();
 });
 
 // Show the centered app name wordmark only on the home page (feed tab).
@@ -1782,6 +1924,41 @@ function markRoomRead(roomId, peerId) {
   queueReadReceipt(roomId, Date.now());
 }
 
+const _messageReceiptSent = new Set();
+let _visibleReceiptTimer = null;
+function scheduleVisibleMessageReceipts() {
+  if (_visibleReceiptTimer) return;
+  _visibleReceiptTimer = setTimeout(flushVisibleMessageReceipts, 180);
+}
+async function flushVisibleMessageReceipts() {
+  _visibleReceiptTimer = null;
+  if (!State.token || !State.user || !State.currentRoom) return;
+  const mine = State.user.id;
+  const incoming = (State.messages || []).filter(m => m && !m._pending && m.userId !== mine && !String(m.id).startsWith('tmp_'));
+  const delivered = incoming.filter(m => !_messageReceiptSent.has('d:' + m.id)).map(m => m.id);
+  const visible = document.visibilityState === 'visible' && State.currentTab === 'chat'
+    ? Array.from(document.querySelectorAll('#messagesList .message:not(.mine)')).filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.bottom > 0 && r.top < window.innerHeight;
+      }).map(el => el.dataset.id).filter(Boolean)
+    : [];
+  const read = visible.filter(id => !_messageReceiptSent.has('r:' + id));
+  const send = async (state, ids) => {
+    if (!ids.length) return;
+    ids.forEach(id => _messageReceiptSent.add((state === 'read' ? 'r:' : 'd:') + id));
+    try {
+      await api('/messages/receipt', { method: 'POST', body: { roomId: State.currentRoom.id, messageIds: ids.slice(0, 100), state } });
+    } catch (error) {
+      ids.forEach(id => _messageReceiptSent.delete((state === 'read' ? 'r:' : 'd:') + id));
+    }
+  };
+  await send('delivered', delivered);
+  await send('read', read);
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { scheduleVisibleMessageReceipts(); syncMissedMessages(); }
+});
+
 // Zero out counts for rooms the user just opened, before the list is rendered.
 function _applyLocalReadState(users) {
   if (!Array.isArray(users) || _readAtByRoom.size === 0) return users;
@@ -1799,6 +1976,72 @@ function _applyLocalReadState(users) {
 
 let _unreadByRoom = {};
 
+async function performConversationAction(user, action, value) {
+  if (!user) return;
+  user.conversationPrefs = user.conversationPrefs || {};
+  const map = { pin: 'pinned', mute: 'muted', archive: 'archived' };
+  const key = map[action];
+  const enabled = value === undefined ? !(key && user.conversationPrefs[key]) : !!value;
+  if (key) user.conversationPrefs[key] = enabled;
+  if (action === 'delete') user.conversationPrefs.archived = true;
+  if (action === 'unread') user.unreadCount = Math.max(1, Number(user.unreadCount || 0));
+  _lastMembersSig = ''; renderMembers(); haptic(action === 'delete' ? 'warning' : 'light');
+  try {
+    const data = await api('/user/conversation', { method: 'POST', body: { peerId: user.id, action, value: enabled } });
+    if (data && data.prefs) user.conversationPrefs = data.prefs;
+    bustApiCache('/users');
+  } catch (_) { toast('Conversation action failed', 'error'); loadMembers(true); }
+}
+
+function bindInboxSwipe(row, content, user) {
+  let down = false, horizontal = false, sx = 0, sy = 0, dx = 0, moved = false, startedAt = 0;
+  const snap = (target, velocity = 0) => {
+    if (typeof SpringEngine !== 'undefined') {
+      const spring = SpringEngine.create('inbox_' + user.id, { stiffness: 320, damping: 24, mass: 0.9, position: dx });
+      SpringEngine.onUpdate(spring, value => { content.style.transform = `translate3d(${value}px,0,0)`; });
+      SpringEngine.release(spring, velocity, target);
+    } else {
+      content.style.transition = 'transform .28s cubic-bezier(.22,1,.36,1)';
+      content.style.transform = `translate3d(${target}px,0,0)`;
+    }
+    dx = target;
+  };
+  content.addEventListener('pointerdown', e => {
+    if (e.target.closest('button,a,input')) return;
+    down = true; horizontal = false; moved = false; sx = e.clientX; sy = e.clientY; startedAt = performance.now();
+    content.style.transition = 'none';
+  });
+  content.addEventListener('pointermove', e => {
+    if (!down) return;
+    const x = e.clientX - sx, y = e.clientY - sy;
+    if (!horizontal && Math.max(Math.abs(x), Math.abs(y)) > 8) {
+      if (Math.abs(y) >= Math.abs(x)) { down = false; return; }
+      horizontal = true;
+    }
+    if (!horizontal) return;
+    e.preventDefault(); moved = true;
+    dx = Math.max(-190, Math.min(150, x));
+    content.style.transform = `translate3d(${dx}px,0,0)`;
+    row.classList.toggle('swiping-left', dx < 0); row.classList.toggle('swiping-right', dx > 0);
+  });
+  const end = e => {
+    if (!down) return;
+    down = false;
+    if (!horizontal) return;
+    const elapsed = Math.max(16, performance.now() - startedAt);
+    const velocity = dx / elapsed * 1000;
+    if (dx < -165) { performConversationAction(user, 'archive', true); snap(0, velocity); }
+    else if (dx > 130) { performConversationAction(user, 'pin'); snap(0, velocity); }
+    else if (dx < -55) snap(-132, velocity);
+    else if (dx > 55) snap(104, velocity);
+    else snap(0, velocity);
+    setTimeout(() => { moved = false; }, 80);
+  };
+  content.addEventListener('pointerup', end);
+  content.addEventListener('pointercancel', end);
+  content.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); } }, true);
+}
+
 function renderMembers() {
   const list = $id('#membersList');
   if (!list) return;
@@ -1814,7 +2057,8 @@ function renderMembers() {
 
   // Split into Primary (connected) vs Requests (not connected yet).
   // Newest conversation first (bug: the inbox used raw server order).
-  const primary = _sortByRecent(others.filter(u => !_isRequestUser(u)));
+  const primary = _sortByRecent(others.filter(u => !_isRequestUser(u) && !(u.conversationPrefs && u.conversationPrefs.archived)))
+    .sort((a, b) => Number(!!(b.conversationPrefs && b.conversationPrefs.pinned)) - Number(!!(a.conversationPrefs && a.conversationPrefs.pinned)));
   const requests = _sortByRecent(others.filter(u => _isRequestUser(u)));
 
   // Update segment badges.
@@ -1881,7 +2125,24 @@ function renderMembers() {
       }
       li.appendChild(right);
     }
-    li.addEventListener('click', () => openDM(u));
+    const content = document.createElement('div'); content.className = 'inbox-swipe-content';
+    while (li.firstChild) content.appendChild(li.firstChild);
+    const rightActions = document.createElement('div'); rightActions.className = 'inbox-swipe-actions reveal-right';
+    const leftActions = document.createElement('div'); leftActions.className = 'inbox-swipe-actions reveal-left';
+    const addAction = (host, action, label, icon, danger) => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = danger ? 'danger' : '';
+      button.innerHTML = '<i data-lucide="' + icon + '"></i><span>' + label + '</span>';
+      button.addEventListener('click', e => { e.stopPropagation(); performConversationAction(u, action); });
+      host.appendChild(button);
+    };
+    addAction(rightActions, 'pin', (u.conversationPrefs && u.conversationPrefs.pinned) ? 'Unpin' : 'Pin', 'pin');
+    addAction(rightActions, 'unread', 'Unread', 'mail');
+    addAction(leftActions, 'mute', (u.conversationPrefs && u.conversationPrefs.muted) ? 'Unmute' : 'Mute', 'volume-x');
+    addAction(leftActions, 'archive', 'Archive', 'archive');
+    addAction(leftActions, 'delete', 'Delete', 'trash-2', true);
+    li.append(rightActions, leftActions, content);
+    content.addEventListener('click', () => openDM(u));
+    bindInboxSwipe(li, content, u);
     return li;
   };
 
@@ -2964,39 +3225,103 @@ function upsertMessageInState(msg) {
   return true;
 }
 
-async function loadMessages(scrollEnd) {
-  try {
-    const data = await api('/messages?roomId=' + encodeURIComponent(State.currentRoom.id));
-    const newMsgs = dedupeMessagesById(data.messages || []);
-    // Merge, never clobber.
-    //
-    // A GET issued before a send completed can resolve after it, returning a
-    // snapshot that predates the new message. Assigning that straight to
-    // State.messages deleted the just-confirmed bubble and the next poll put
-    // it back - a visible disappear/reappear, and the main remaining source of
-    // flicker. So keep local messages the snapshot doesn't know about yet:
-    //   - optimistic bubbles still awaiting their server copy, and
-    //   - very recent confirmed messages (the racing-snapshot case).
-    // The recency window also lets genuine remote deletions propagate: once a
-    // message ages past it, the server list is authoritative again.
-    const nowTs = Date.now();
-    const RECENT_MS = 30000;
-    const keep = State.messages.filter(m => {
-      if (!m || !m.id) return false;
-      if (newMsgs.some(n => n.id === m.id)) return false;          // server has it
-      if (m._pending) return !newMsgs.some(n => _isPendingTwin(m, n)) && (nowTs - (m.createdAt || 0) < 20000);
-      return (nowTs - (m.createdAt || 0)) < RECENT_MS;             // just-confirmed, snapshot is stale
-    });
-    const merged = keep.length ? newMsgs.concat(keep) : newMsgs;
-    if (keep.length) merged.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    const sig = merged.map(m => m.id).join('|');
-    if (sig === lastMessagesSignature && !scrollEnd) return; // skip rerender if unchanged
-    lastMessagesSignature = sig;
-    State.messages = merged;
-    renderMessages(scrollEnd);
-  } catch (e) {
-    if (e.status !== 401) console.warn('loadMessages', e.message);
+const _messagePage = { roomId: '', hasMore: true, loadingOlder: false, oldest: 0 };
+
+async function _decryptMessagePage(msgs) {
+  if (State.currentRoom.kind !== 'dm' || !State.currentRoom.target) return;
+  const peerId = State.currentRoom.target.id;
+  await Promise.all(msgs.filter(m => m.encrypted).map(async m => {
+    if (_e2eDecryptCache.has(m.id)) {
+      const cached = _e2eDecryptCache.get(m.id);
+      m._decrypted = cached === null ? '__ERR__' : cached;
+      return;
+    }
+    try {
+      const plain = await E2E.decryptFrom(peerId, m.cipher, m.iv);
+      _e2eDecryptCache.set(m.id, plain);
+      m._decrypted = plain;
+    } catch (_) {
+      _e2eDecryptCache.set(m.id, null);
+      m._decrypted = '__ERR__';
+    }
+  }));
+}
+
+async function loadMessages(scrollEnd, options = {}) {
+  const roomId = State.currentRoom.id;
+  const older = !!options.older;
+  const sinceTimestamp = Math.max(0, Number(options.sinceTimestamp || 0));
+  if (older && (_messagePage.loadingOlder || !_messagePage.hasMore)) return;
+  if (_messagePage.roomId !== roomId) {
+    _messagePage.roomId = roomId;
+    _messagePage.hasMore = true;
+    _messagePage.oldest = 0;
+    State.messages = [];
+    _lastMessageRenderSig = '';
   }
+  if (older) _messagePage.loadingOlder = true;
+  const initialPage = !older && !sinceTimestamp && State.messages.length === 0;
+  const scroller = $id('#messagesScroll');
+  const beforeHeight = scroller ? scroller.scrollHeight : 0;
+  const beforeTop = scroller ? scroller.scrollTop : 0;
+  if (older && scroller) {
+    const visibleAnchor = Array.from(document.querySelectorAll('#messagesList .message')).find(el => {
+      const r = el.getBoundingClientRect(), sr = scroller.getBoundingClientRect();
+      return r.bottom > sr.top;
+    });
+    if (visibleAnchor) _prependAnchor = { key: visibleAnchor.dataset.key, top: visibleAnchor.getBoundingClientRect().top };
+  }
+  try {
+    let url = '/messages?roomId=' + encodeURIComponent(roomId) + '&limit=30';
+    if (older) {
+      const oldest = _messagePage.oldest || Math.min(...State.messages.map(m => Number(m.createdAt || Infinity)));
+      if (Number.isFinite(oldest) && oldest > 0) url += '&beforeTimestamp=' + encodeURIComponent(oldest);
+    } else if (sinceTimestamp > 0) {
+      url += '&sinceTimestamp=' + encodeURIComponent(sinceTimestamp);
+    }
+    const data = await api(url);
+    if (State.currentRoom.id !== roomId) return;
+    const incoming = dedupeMessagesById(data.messages || []);
+    await _decryptMessagePage(incoming);
+    const nowTs = Date.now();
+    const queued = (State.messages || []).filter(m => m && m._pending &&
+      (m._queued || (nowTs - Number(m.createdAt || nowTs)) < 30000));
+    let localBase = State.messages || [];
+    if (!older && !sinceTimestamp && incoming.length) {
+      const cutoff = Number(incoming[0].createdAt || 0);
+      const incomingIds = new Set(incoming.map(m => m.id));
+      localBase = localBase.filter(m => m._pending || Number(m.createdAt || 0) < cutoff || incomingIds.has(m.id));
+    }
+    const merged = older ? incoming.concat(localBase) : localBase.concat(incoming);
+    State.messages = dedupeMessagesById(merged.concat(queued));
+    State.messages.sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+    _messagePage.oldest = State.messages.length ? Number(State.messages[0].createdAt || 0) : 0;
+    if (older || initialPage) _messagePage.hasMore = !!data.hasMore;
+    lastMessagesSignature = State.messages.map(m => m.id).join('|');
+    _lastMessageRenderSig = '';
+    renderMessages(!!scrollEnd && !older);
+    if (older && scroller) requestAnimationFrame(() => {
+      if (_prependAnchor) {
+        const node = document.querySelector('#messagesList [data-key="' + (window.CSS && CSS.escape ? CSS.escape(_prependAnchor.key) : _prependAnchor.key) + '"]');
+        if (node) scroller.scrollTop += node.getBoundingClientRect().top - _prependAnchor.top;
+        else scroller.scrollTop = beforeTop + (scroller.scrollHeight - beforeHeight);
+        _prependAnchor = null;
+        _messageVirtualKey = '';
+        renderMessages(false);
+      } else scroller.scrollTop = beforeTop + (scroller.scrollHeight - beforeHeight);
+    });
+    scheduleVisibleMessageReceipts();
+    return data;
+  } catch (e) {
+    if (older) _prependAnchor = null;
+    if (e.status !== 401) console.warn('loadMessages', e.message);
+  } finally {
+    if (older) _messagePage.loadingOlder = false;
+  }
+}
+
+function loadOlderMessages() {
+  return loadMessages(false, { older: true });
 }
 
 let _previousMessageIds = new Set();
@@ -3021,6 +3346,7 @@ function _msgSig(m, grouped, meId) {
     m._decrypted || '',
     m.encrypted ? 'e' : '',
     m.imageUrl || '',
+    m.imageBlur || '',
     m.kind || '',
     m.replyTo ? JSON.stringify(m.replyTo) : '',
     m.storyReply ? '1' : '',
@@ -3035,6 +3361,9 @@ function _msgSig(m, grouped, meId) {
     // _pending is deliberately NOT in the signature: confirming a message only
     // toggles a CSS class, so it is patched in place instead of rebuilding.
     m._failed ? 'f' : '',
+    m._queued ? 'q' : '',
+    Array.isArray(m.reactions) ? m.reactions.map(r => (r.userId || '') + (r.emoji || '')).join(',') : '',
+    m.receipts ? JSON.stringify(m.receipts) : '',
     a ? ((a.displayName || '') + '|' + (a.username || '') + '|' + (a.avatarUrl || '')) : '',
   ].join('\u0001');
 }
@@ -3065,6 +3394,43 @@ function _messagesRenderSig(msgs) {
 // are swapped in place, new rows are inserted at the right offset, vanished
 // rows are removed. In the common case - one new message appended - the DOM
 // performs a single insertBefore and nothing else moves.
+const _messageRowHeights = new Map();
+let _messageVirtualKey = '';
+let _prependAnchor = null;
+
+function _virtualizeMessageRows(rows, scroller) {
+  if (State.messages.length <= 50 || !scroller) return { rows, key: 'all' };
+  const heights = rows.map(row => _messageRowHeights.get(row.key) || (row.msg ? 76 : 34));
+  const offsets = new Array(rows.length + 1).fill(0);
+  for (let i = 0; i < rows.length; i++) offsets[i + 1] = offsets[i] + heights[i];
+  const min = Math.max(0, scroller.scrollTop - 700);
+  const max = scroller.scrollTop + scroller.clientHeight + 700;
+  let start = 0, end = 0;
+  if (_prependAnchor) {
+    const anchorIndex = rows.findIndex(row => row.key === _prependAnchor.key);
+    start = 0;
+    end = anchorIndex >= 0 ? Math.min(rows.length, anchorIndex + 12) : rows.length;
+  } else {
+    while (start < rows.length && offsets[start + 1] < min) start++;
+    end = start;
+    while (end < rows.length && offsets[end] < max) end++;
+    start = Math.max(0, start - 2);
+    end = Math.min(rows.length, end + 2);
+  }
+  const top = offsets[start];
+  const bottom = Math.max(0, offsets[rows.length] - offsets[end]);
+  const output = rows.slice(start, end);
+  if (top > 0) output.unshift({
+    key: '__virtual_top__', sig: 'vt:' + Math.round(top),
+    build: () => { const el = document.createElement('div'); el.className = 'message-virtual-spacer'; el.style.height = top + 'px'; return el; },
+  });
+  if (bottom > 0) output.push({
+    key: '__virtual_bottom__', sig: 'vb:' + Math.round(bottom),
+    build: () => { const el = document.createElement('div'); el.className = 'message-virtual-spacer'; el.style.height = bottom + 'px'; return el; },
+  });
+  return { rows: output, key: start + ':' + end + ':' + Math.round(top) + ':' + Math.round(bottom) };
+}
+
 function renderMessages(forceScroll) {
   const list = $id('#messagesList');
   const scroller = $id('#messagesScroll');
@@ -3074,12 +3440,7 @@ function renderMessages(forceScroll) {
   const newOnes = new Set();
   currentIds.forEach(id => { if (!_previousMessageIds.has(id)) newOnes.add(id); });
 
-  // === Skip entirely if nothing changed (anti-flicker fast path) ===
   const sig = _messagesRenderSig(State.messages);
-  if (sig === _lastMessageRenderSig && newOnes.size === 0 && !forceScroll && list.children.length > 0) {
-    return;
-  }
-  _lastMessageRenderSig = sig;
   _previousMessageIds = currentIds;
 
   const meId = State.user && State.user.id;
@@ -3132,6 +3493,14 @@ function renderMessages(forceScroll) {
     });
     lastSender = m.userId;
   }
+
+  // Threads beyond 50 messages keep only the visible variable-height window
+  // mounted. Top/bottom spacers preserve native scrolling semantics.
+  const virtual = _virtualizeMessageRows(desired, scroller);
+  desired.splice(0, desired.length, ...virtual.rows);
+  if (sig === _lastMessageRenderSig && virtual.key === _messageVirtualKey && newOnes.size === 0 && !forceScroll && list.children.length > 0) return;
+  _lastMessageRenderSig = sig;
+  _messageVirtualKey = virtual.key;
 
   // 2. Diff against the live DOM.
   const existing = new Map();
@@ -3199,6 +3568,15 @@ function renderMessages(forceScroll) {
     );
   }
 
+  // Learn actual variable heights for future window calculations.
+  requestAnimationFrame(() => {
+    for (const node of list.children) {
+      const key = node.dataset && node.dataset.key;
+      if (!key || key.startsWith('__virtual_')) continue;
+      const height = Math.max(1, Math.ceil(node.getBoundingClientRect().height));
+      _messageRowHeights.set(key, height);
+    }
+  });
   // Only re-scan for lucide icons if markup actually changed.
   if (mutated) refreshIcons();
   if (forceScroll || wasAtBottom) {
@@ -3331,11 +3709,70 @@ function createVoiceNoteElement(src, isMine, opts = {}) {
   return root;
 }
 
+function haptic(kind = 'light') {
+  try {
+    if (!navigator.vibrate) return;
+    navigator.vibrate(kind === 'confirm' ? [14, 28, 20] : kind === 'warning' ? [28, 35, 28] : 8);
+  } catch (_) {}
+}
+
+const _linkPreviewCache = new Map();
+function firstHttpUrl(text) {
+  const match = String(text || '').match(/https?:\/\/[^\s<>{}\[\]"']+/i);
+  return match ? match[0].replace(/[),.!?]+$/, '') : '';
+}
+function attachLinkPreview(bubble, message) {
+  const url = !message.encrypted ? firstHttpUrl(message.text) : '';
+  if (!url) return;
+  const card = document.createElement('a');
+  card.className = 'message-link-preview loading';
+  card.href = url; card.target = '_blank'; card.rel = 'noopener noreferrer nofollow';
+  card.innerHTML = '<span class="message-link-site">Loading preview…</span>';
+  bubble.appendChild(card);
+  let request = _linkPreviewCache.get(url);
+  if (!request) {
+    request = api('/link-preview?url=' + encodeURIComponent(url), { omniTier: 1 }).then(r => r.preview || {}).catch(() => ({}));
+    _linkPreviewCache.set(url, request);
+  }
+  Promise.resolve(request).then(preview => {
+    if (!card.isConnected || (!preview.title && !preview.description && !preview.imageUrl)) { card.remove(); return; }
+    card.classList.remove('loading');
+    card.innerHTML = '';
+    if (preview.imageUrl) {
+      const img = lazyImg(preview.imageUrl, '', preview.siteName || url);
+      img.className = 'message-link-image';
+      card.appendChild(img);
+    }
+    const body = document.createElement('span'); body.className = 'message-link-body';
+    const site = document.createElement('span'); site.className = 'message-link-site'; site.textContent = preview.siteName || new URL(url).hostname;
+    body.appendChild(site);
+    if (preview.title) { const title = document.createElement('strong'); title.textContent = preview.title; body.appendChild(title); }
+    if (preview.description) { const desc = document.createElement('span'); desc.className = 'message-link-desc'; desc.textContent = preview.description; body.appendChild(desc); }
+    card.appendChild(body);
+  });
+}
+
+function bindMessageLongPress(target, message) {
+  let timer = null, sx = 0, sy = 0;
+  target.addEventListener('pointerdown', (e) => {
+    if (e.button != null && e.button !== 0) return;
+    sx = e.clientX; sy = e.clientY;
+    clearTimeout(timer);
+    timer = setTimeout(() => { haptic('confirm'); openMessageActionMenu(message, target); }, 400);
+  });
+  target.addEventListener('pointermove', (e) => {
+    if (Math.hypot(e.clientX - sx, e.clientY - sy) > 9) { clearTimeout(timer); timer = null; }
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(type => target.addEventListener(type, () => { clearTimeout(timer); timer = null; }));
+  target.addEventListener('contextmenu', (e) => { e.preventDefault(); haptic('light'); openMessageActionMenu(message, target); });
+}
+
 function renderMessage(m, meId, grouped) {
   const row = document.createElement('div');
   row.className = 'message';
   // Optimistic bubble awaiting server confirmation (dimmed via CSS).
   if (m._pending) row.classList.add('pending');
+  if (m._queued) row.classList.add('queued');
   if (m.scheduledOriginally) row.classList.add('scheduled-tag');
   if (grouped) row.classList.add('grouped');
   const isMine = m.userId === meId;
@@ -3428,6 +3865,7 @@ function renderMessage(m, meId, grouped) {
     t.textContent = m.text;
     bubble.appendChild(t);
   }
+  attachLinkPreview(bubble, m);
   // Disappearing-message badge + countdown bar
   if (m.disappearAt) {
     const remain = m.disappearAt - Date.now();
@@ -3465,15 +3903,25 @@ function renderMessage(m, meId, grouped) {
       if (!m.text && !m.replyTo && !m.storyReply && !m.encrypted) bubble.classList.add('voice-only');
       bubble.appendChild(createVoiceNoteElement(m.imageUrl, isMine));
     } else {
-      const img = document.createElement('img');
+      const img = lazyImg(m.imageUrl, 'attachment', m.id, m.imageBlur || '');
       img.className = 'img-attach';
-      img.src = m.imageUrl;
-      img.alt = 'attachment';
-      img.loading = 'lazy';
-      img.addEventListener('click', () => openLightbox(m.imageUrl, author.displayName));
-      img.addEventListener('error', () => { img.alt = '(image)'; img.style.display = 'none'; });
+      img.addEventListener('click', () => openLightbox(m.imageUrl, author.displayName, img));
+      img.addEventListener('error', () => { img.alt = '(image)'; });
       bubble.appendChild(img);
     }
+  }
+
+  if (Array.isArray(m.reactions) && m.reactions.length) {
+    const badges = document.createElement('div'); badges.className = 'message-reaction-badges';
+    const groupedReactions = new Map();
+    m.reactions.forEach(r => groupedReactions.set(r.emoji, (groupedReactions.get(r.emoji) || 0) + 1));
+    for (const [emoji, count] of groupedReactions) {
+      const badge = document.createElement('button'); badge.type = 'button'; badge.className = 'message-reaction-badge';
+      badge.textContent = emoji + (count > 1 ? ' ' + count : '');
+      badge.addEventListener('click', () => toggleMessageReaction(m, emoji));
+      badges.appendChild(badge);
+    }
+    bubble.appendChild(badges);
   }
 
   // Actions
@@ -3506,16 +3954,126 @@ function renderMessage(m, meId, grouped) {
     actions.appendChild(delBtn);
   }
   bubble.appendChild(actions);
+  bindMessageLongPress(bubble, m);
 
   wrap.appendChild(bubble);
 
   const time = document.createElement('div');
   time.className = 'time';
-  time.textContent = timeFmt(m.createdAt);
+  const stamp = document.createElement('span'); stamp.textContent = timeFmt(m.createdAt); time.appendChild(stamp);
+  if (isMine) {
+    const status = document.createElement('span'); status.className = 'message-status';
+    if (m._queued || m._pending) { status.textContent = '◷'; status.title = m._queued ? 'Queued' : 'Sending'; }
+    else {
+      const peerId = State.currentRoom && State.currentRoom.target && State.currentRoom.target.id;
+      const receipt = peerId && m.receipts && m.receipts[peerId];
+      if (receipt && receipt.readAt) { status.textContent = '✓✓'; status.classList.add('read'); status.title = 'Read'; }
+      else if (receipt && receipt.deliveredAt) { status.textContent = '✓✓'; status.title = 'Delivered'; }
+      else { status.textContent = '✓'; status.title = 'Sent'; }
+    }
+    time.appendChild(status);
+  }
   wrap.appendChild(time);
 
   row.appendChild(wrap);
   return row;
+}
+
+async function toggleMessageReaction(message, emoji) {
+  if (!message || message._pending) return;
+  const myId = State.user && State.user.id;
+  message.reactions = Array.isArray(message.reactions) ? message.reactions : [];
+  const existing = message.reactions.find(r => r.userId === myId && r.emoji === emoji);
+  const snapshot = message.reactions.slice();
+  message.reactions = message.reactions.filter(r => !(r.userId === myId && r.emoji === emoji));
+  if (!existing) message.reactions.push({ userId: myId, emoji, createdAt: Date.now() });
+  _lastMessageRenderSig = ''; renderMessages(false); haptic('light');
+  try {
+    await api('/messages/reaction', { method: 'POST', body: { messageId: message.id, emoji, active: !existing } });
+  } catch (error) {
+    message.reactions = snapshot; _lastMessageRenderSig = ''; renderMessages(false); toast('Reaction failed', 'error');
+  }
+}
+
+function closeMessageActionMenu() {
+  const sheet = document.querySelector('.message-action-sheet');
+  if (sheet) sheet.remove();
+}
+
+function openMessageForwardPicker(message) {
+  closeMessageActionMenu();
+  const sheet = document.createElement('div'); sheet.className = 'message-action-sheet';
+  const panel = document.createElement('div'); panel.className = 'message-action-panel forward-panel';
+  const title = document.createElement('strong'); title.textContent = 'Forward to'; panel.appendChild(title);
+  (State.members || []).filter(u => u.id !== State.user.id).forEach(user => {
+    const button = document.createElement('button'); button.className = 'message-forward-user';
+    const av = document.createElement('span'); av.className = 'avatar sm'; renderAvatar(av, user, { showStatus: true, online: !!user.online });
+    const label = document.createElement('span'); label.textContent = user.displayName || ('@' + user.username);
+    button.append(av, label);
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const forwardText = message._decrypted || message.text || '';
+        const payload = {
+          roomId: dmRoomId(State.user.id, user.id), targetUserId: user.id,
+          text: forwardText, imageUrl: message.imageUrl || null, imageBlur: message.imageBlur || '',
+        };
+        if (message.encrypted && forwardText) {
+          const encrypted = await E2E.encryptFor(user.id, forwardText);
+          payload.text = ''; payload.encrypted = true; payload.cipher = encrypted.cipher; payload.iv = encrypted.iv;
+        }
+        await api('/messages/send', { method: 'POST', body: payload });
+        haptic('confirm'); toast('Forwarded', 'success'); sheet.remove();
+      } catch (_) { button.disabled = false; toast('Could not forward', 'error'); }
+    });
+    panel.appendChild(button);
+  });
+  sheet.appendChild(panel); sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet); requestAnimationFrame(() => sheet.classList.add('open'));
+}
+
+async function deleteMessageFromMenu(message) {
+  try {
+    await api('/messages/delete', { method: 'POST', body: { messageId: message.id } });
+    State.messages = State.messages.filter(m => m.id !== message.id);
+    _lastMessageRenderSig = ''; renderMessages(false); haptic('confirm');
+  } catch (_) { toast('Delete failed', 'error'); }
+}
+
+function openMessageActionMenu(message, anchor) {
+  closeMessageActionMenu();
+  const sheet = document.createElement('div'); sheet.className = 'message-action-sheet';
+  const panel = document.createElement('div'); panel.className = 'message-action-panel';
+  const reacts = document.createElement('div'); reacts.className = 'message-reaction-picker';
+  ['❤️', '😂', '😮', '😢', '👍', '🔥'].forEach(emoji => {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = emoji;
+    button.addEventListener('click', () => { toggleMessageReaction(message, emoji); closeMessageActionMenu(); });
+    reacts.appendChild(button);
+  });
+  panel.appendChild(reacts);
+  const actions = [
+    ['Reply', 'corner-up-left', () => setReplyTo(message)],
+    ['Copy', 'copy', async () => {
+      const text = message._decrypted || message.text || message.imageUrl || '';
+      try { await navigator.clipboard.writeText(text); } catch (_) {
+        const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      }
+      toast('Copied', 'success');
+    }],
+    ['Forward', 'forward', () => openMessageForwardPicker(message)],
+  ];
+  if (message.userId === (State.user && State.user.id)) actions.push(['Delete', 'trash-2', () => deleteMessageFromMenu(message), true]);
+  actions.forEach(([label, icon, action, danger]) => {
+    const button = document.createElement('button'); button.className = 'message-action-item' + (danger ? ' danger' : '');
+    button.innerHTML = '<i data-lucide="' + icon + '"></i><span>' + label + '</span>';
+    button.addEventListener('click', () => { action(); if (label !== 'Forward') closeMessageActionMenu(); });
+    panel.appendChild(button);
+  });
+  sheet.appendChild(panel);
+  sheet.addEventListener('click', e => { if (e.target === sheet) closeMessageActionMenu(); });
+  document.body.appendChild(sheet); refreshIcons(); requestAnimationFrame(() => sheet.classList.add('open'));
+  if (anchor) anchor.classList.add('longpress-active');
+  sheet.addEventListener('transitionend', () => anchor && anchor.classList.remove('longpress-active'), { once: true });
 }
 
 function setReplyTo(m) {
@@ -3574,6 +4132,7 @@ function bindComposer() {
       roomId: room.id,
       text,
       imageUrl: State.attach ? State.attach.url : null,
+      imageBlur: State.attach ? (State.attach.blurDataUrl || '') : '',
       replyTo: State.replyTo,
     };
     // Encrypt text if Secret Chat is enabled for this DM
@@ -3611,6 +4170,7 @@ function bindComposer() {
       author: State.user,
       text: payload.encrypted ? '' : text,
       imageUrl: payload.imageUrl || null,
+      imageBlur: payload.imageBlur || '',
       replyTo: sentReply || null,
       createdAt: Date.now(),
       encrypted: !!payload.encrypted,
@@ -3624,7 +4184,16 @@ function bindComposer() {
     renderMessages(true);
 
     try {
-      const data = await api('/messages/send', { method: 'POST', body: payload });
+      const data = await queueableMutation('/messages/send', payload, { kind: 'message', nonce });
+      if (data && data.queued) {
+        optimistic._queued = true;
+        optimistic._pending = true;
+        _lastMessageRenderSig = '';
+        renderMessages(true);
+        bumpConversationToTop(room.id, optimistic);
+        toast('Message queued — it will send when you reconnect');
+        return;
+      }
       // Preload local cache so our own encrypted bubble shows plaintext immediately
       if (payload.encrypted && data.message && data.message.id) {
         _e2eDecryptCache.set(data.message.id, text);
@@ -3640,6 +4209,7 @@ function bindComposer() {
       lastMessagesSignature = '';
       renderMessages(true);
       bumpConversationToTop(room.id, data.message || optimistic);
+      haptic('confirm');
     } catch (err) {
       // Roll the optimistic bubble back out of the list.
       State.messages = State.messages.filter(m => m && m._clientNonce !== nonce);
@@ -3761,6 +4331,7 @@ function bindComposer() {
   // down (adds .scrolled class — see style.css). Throttled via rAF so we
   // don't thrash layout on every scroll event.
   let _scrollRafPending = false;
+  let _virtualScrollPending = false;
   let _lastScrollTop = 0;
   function updateChatHeaderScrolled() {
     _scrollRafPending = false;
@@ -3780,6 +4351,12 @@ function bindComposer() {
     const atBottom = (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 80;
     lastMessagesScrollAtBottom = atBottom;
     $id('#scrollBottomBtn').classList.toggle('hidden', atBottom);
+    if (scroller.scrollTop < 120 && _messagePage.hasMore) loadOlderMessages();
+    if (State.messages.length > 50 && !_virtualScrollPending) {
+      _virtualScrollPending = true;
+      requestAnimationFrame(() => { _virtualScrollPending = false; renderMessages(false); });
+    }
+    scheduleVisibleMessageReceipts();
     // Throttle the chat-header scrolled-state update to one rAF per frame
     if (!_scrollRafPending) {
       _scrollRafPending = true;
@@ -3808,8 +4385,8 @@ async function handleAttach(file) {
   $id('#attachPreview').classList.remove('hidden');
   try {
     // Permanent GitHub-CDN upload preferred
-    const res = await uploadPermanentImage(file, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => { $id('#attachProgress').style.width = p + '%'; }});
-    State.attach = { url: res.url, name: file.name, size: file.size };
+    const res = await uploadPermanentImage(file, { kind: 'post', maxDim: 1080, quality: 0.82, onProgress: (p) => { $id('#attachProgress').style.width = p + '%'; }});
+    State.attach = { url: res.url, name: file.name, size: res.encodedBytes || file.size, blurDataUrl: res.blurDataUrl || '' };
     $id('#attachName').textContent = file.name + (res.persisted ? ' · ready (permanent)' : ' · ready');
     $id('#attachProgress').style.width = '100%';
     refreshIcons();
@@ -3817,7 +4394,7 @@ async function handleAttach(file) {
     // Fallback to tmpfiles temporary host
     try {
       const res2 = await uploadImage(file, (p) => { $id('#attachProgress').style.width = p + '%'; });
-      State.attach = { url: res2.url, name: res2.name, size: res2.size };
+      State.attach = { url: res2.url, name: res2.name, size: res2.size, blurDataUrl: res2.blurDataUrl || '' };
       $id('#attachName').textContent = file.name + ' · ready (temp)';
       $id('#attachProgress').style.width = '100%';
     } catch (err2) {
@@ -3897,18 +4474,23 @@ async function sendTyping() {
   try { await api('/user/typing', { method: 'POST', body: { roomId: State.currentRoom.id } }); } catch (_) {}
 }
 
+function renderTypingIndicator() {
+  const el = $id('#typingIndicator');
+  if (!el) return;
+  if (!State.typingUsers.length) {
+    el.classList.add('hidden');
+  } else {
+    const names = State.typingUsers.map(u => u.displayName || ('@' + u.username)).join(', ');
+    $id('#typingText').textContent = names + (State.typingUsers.length === 1 ? ' is typing…' : ' are typing…');
+    el.classList.remove('hidden');
+  }
+}
+
 async function pollTyping() {
   try {
     const data = await api('/user/typing?roomId=' + encodeURIComponent(State.currentRoom.id));
     State.typingUsers = data.typing || [];
-    const el = $id('#typingIndicator');
-    if (State.typingUsers.length === 0) {
-      el.classList.add('hidden');
-    } else {
-      const names = State.typingUsers.map(u => u.displayName || ('@' + u.username)).join(', ');
-      $id('#typingText').textContent = names + (State.typingUsers.length === 1 ? ' is typing…' : ' are typing…');
-      el.classList.remove('hidden');
-    }
+    renderTypingIndicator();
     renderMembers();
   } catch (_) {}
 }
@@ -3950,7 +4532,7 @@ function startPolls() {
   pollTyping();
   pollNotifications();
   pollRTCSignals();
-  State.pollTimers.hb = setInterval(sendHeartbeat, 20000);
+  State.pollTimers.hb = setInterval(sendHeartbeat, 30000);
   State.pollTimers.members = setInterval(() => {
     if (isStorySurfaceOpen()) return;
     loadMembers();
@@ -4061,7 +4643,7 @@ function connectSSE() {
     if (!data) return;
     handleRealtimeEvent(type, data);
   };
-  ['notification','new_message','new_post','presence','typing','rtc_signal','follow_request','follow_request_updated'].forEach(t => {
+  ['notification','new_message','message_reaction','message_receipt','new_post','presence','typing','rtc_signal','follow_request','follow_request_updated'].forEach(t => {
     _sseSource.addEventListener(t, (e) => onAny(t, e));
   });
   _sseSource.addEventListener('error', () => {
@@ -4085,6 +4667,7 @@ function disconnectSSE() {
 }
 
 function handleRealtimeEvent(type, evt) {
+  try { localStorage.setItem('ps_lastRealtimeActivity', String(Number(evt && evt.ts) || Date.now())); } catch (_) {}
   // Defense-in-depth: SSE events from the Turso primaryPoller may arrive in a
   // "raw" format { id, createdAt, fromId, author, signal } instead of the
   // _pushEvent wrapper { id, ts, kind, data: { ... } }.  Detect and unwrap so
@@ -4129,6 +4712,27 @@ function handleRealtimeEvent(type, evt) {
     }
     // Trigger notification refresh (chat dot)
     pollNotifications();
+  } else if (type === 'message_reaction') {
+    if (data.roomId !== State.currentRoom.id) return;
+    const message = (State.messages || []).find(m => m.id === data.messageId);
+    if (!message) return;
+    message.reactions = Array.isArray(message.reactions) ? message.reactions : [];
+    message.reactions = message.reactions.filter(r => !(r.userId === data.userId && r.emoji === data.emoji));
+    if (data.active) message.reactions.push({ userId: data.userId, emoji: data.emoji, createdAt: Date.now() });
+    _lastMessageRenderSig = ''; renderMessages(false);
+  } else if (type === 'message_receipt') {
+    if (data.roomId !== State.currentRoom.id) return;
+    (data.messageIds || []).forEach(id => {
+      const message = (State.messages || []).find(m => m.id === id);
+      if (!message) return;
+      message.receipts = message.receipts || {};
+      const current = message.receipts[data.userId] || {};
+      message.receipts[data.userId] = {
+        deliveredAt: Math.max(Number(current.deliveredAt || 0), Number(data.at || 0)),
+        readAt: data.state === 'read' ? Math.max(Number(current.readAt || 0), Number(data.at || 0)) : Number(current.readAt || 0),
+      };
+    });
+    _lastMessageRenderSig = ''; renderMessages(false);
   } else if (type === 'new_post') {
     const post = data.post; if (!post) return;
     if (!State.posts.some(p => p.id === post.id)) {
@@ -4147,9 +4751,17 @@ function handleRealtimeEvent(type, evt) {
       boostPolling(15000);
       if (State.currentTab === 'feed') loadFeed(true);
     }
-  } else if (type === 'presence' || type === 'typing') {
-    // Refresh members
-    loadMembers();
+  } else if (type === 'typing') {
+    if (data.roomId !== State.currentRoom.id || !data.user || data.user.id === (State.user && State.user.id)) return;
+    State.typingUsers = [data.user];
+    renderTypingIndicator();
+    renderMembers();
+    clearTimeout(window.__typingExpiryTimer);
+    window.__typingExpiryTimer = setTimeout(() => { State.typingUsers = []; renderTypingIndicator(); renderMembers(); }, 3000);
+  } else if (type === 'presence') {
+    const member = (State.members || []).find(u => u.id === data.userId);
+    if (member) { member.online = data.online !== false; member.lastSeen = Number(data.lastSeen || Date.now()); _lastMembersSig = ''; renderMembers(); }
+    else loadMembers();
   } else if (type === 'follow_request' || type === 'follow_request_updated') {
     loadFollowRequests(true).catch(() => {});
     loadMembers(true).catch(() => {});
@@ -4172,11 +4784,14 @@ function maybeNativeNotify(data) {
   if (data.kind === 'message') body = `${from}: ${(data.text || '').slice(0, 80)}`;
   if (!body) return;
   try {
+    const roomId = data.roomId || (data.message && data.message.roomId) || '';
+    const avatar = data.fromSnapshot && data.fromSnapshot.photoUrl;
     const n = new Notification(title, {
       body, tag: 'priv-spaca-' + data.notifId,
-      icon: '/icon-192.png',
+      icon: avatar || '/icon-192.png',
+      data: { url: roomId ? '/chat/' + encodeURIComponent(roomId) : '/' },
     });
-    n.onclick = () => { window.focus(); n.close(); };
+    n.onclick = () => { window.focus(); if (n.data && n.data.url) location.href = n.data.url; n.close(); };
   } catch (_) {}
 }
 
@@ -5405,7 +6020,7 @@ function renderPost(p) {
     burst.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 21s-7-4.35-7-10a4.5 4.5 0 0 1 8-2.83A4.5 4.5 0 0 1 21 11c0 5.65-9 10-9 10z"/></svg>';
 
     if (imgs.length === 1) {
-      const img = lazyImg(imgs[0], 'post image', p.id);
+      const img = lazyImg(imgs[0], 'post image', p.id, p.imageBlur || (p.imageBlurs && p.imageBlurs[0]) || '');
       img.className = 'post-img';
       // v127: reserve space while loading so the floating dock never overlaps
       // the header; mark broken images so CSS flattens the dock to a normal row.
@@ -5431,7 +6046,7 @@ function renderPost(p) {
         } else {
           lastTap = now;
           if (tapTimer) clearTimeout(tapTimer);
-          tapTimer = setTimeout(() => { openLightbox(imgs[0], author.displayName); }, 290);
+          tapTimer = setTimeout(() => { openLightbox(imgs[0], author.displayName, img); }, 290);
         }
       });
       wrap.appendChild(img);
@@ -5457,7 +6072,7 @@ function renderPost(p) {
       imgs.forEach((url, idx) => {
         const slide = document.createElement('div');
         slide.style.cssText = 'flex:0 0 100%; width:100%; scroll-snap-align:start; position:relative; display:flex; align-items:center; justify-content:center; background:#000;';
-        const img = lazyImg(url, `slide ${idx+1}`, `${p.id}_${idx}`);
+        const img = lazyImg(url, `slide ${idx+1}`, `${p.id}_${idx}`, (p.imageBlurs && p.imageBlurs[idx]) || '');
         img.className = 'post-img';
         img.style.cssText = 'max-height:75vh; width:100%; object-fit:cover;';
         img.addEventListener('load', clearMin, { once: true });
@@ -5477,7 +6092,7 @@ function renderPost(p) {
           } else {
             lastTap = now;
             if (tapTimer) clearTimeout(tapTimer);
-            tapTimer = setTimeout(() => { openLightbox(url, author.displayName); }, 290);
+            tapTimer = setTimeout(() => { openLightbox(url, author.displayName, img); }, 290);
           }
         });
         slide.appendChild(img);
@@ -5777,14 +6392,16 @@ function toggleLike(p, card) {
       else if (!p.likes.includes(meId)) p.likes.push(meId);
       p.likeCount = p.likes.length;
       patchLikeUI(card, p, meId);
+      haptic('light');
       // Protect it from a refresh whose payload predates this like.
       rememberRecentLike(p.id, p.likes, p.likeCount);
       // Keep the card cache in step so a background refresh doesn't rebuild it.
       const cached = _postCardCache.get(p.id);
       if (cached) cached.sig = _postCardSignature(p);
     },
-    request: () => api('/posts/like', { method: 'POST', body: { postId: p.id } }),
+    request: () => queueableMutation('/posts/like', { postId: p.id, liked: !wasLiked }, { kind: 'like', postId: p.id }),
     commit: (data) => {
+      if (data && data.queued) { p._queuedLike = true; if (card) card.classList.add('queued-like'); }
       // Sync with the server's authoritative count (in case of a race).
       if (data && typeof data.likeCount === 'number') p.likeCount = data.likeCount;
       rememberRecentLike(p.id, p.likes, p.likeCount);
@@ -6824,7 +7441,7 @@ function bindStoryReplyUI() {
         if (liked) { if (!story.likes.includes(meId)) story.likes.push(meId); }
         else story.likes = story.likes.filter(id => id !== meId);
       },
-      request: () => api('/posts/like', { method: 'POST', body: { postId: story.id } }),
+      request: () => queueableMutation('/posts/like', { postId: story.id, liked }, { kind: 'like', postId: story.id }),
       restore: (snap) => {
         story.likes = snap.likes;
         // Only repaint the button if this story is still the one on screen.
@@ -7056,6 +7673,41 @@ function bindStoryViewer() {
     content.addEventListener('touchstart', onDown, { passive: true });
     content.addEventListener('touchend', onUp);
     content.addEventListener('touchcancel', onUp);
+  }
+  // Pull-down dismissal with spring snapback. Vertical intent wins only after
+  // an 11px threshold, so taps and horizontal browser gestures stay native.
+  const viewer = $id('#storyViewer');
+  if (viewer && content) {
+    let pulling = false, startY = 0, startX = 0, startAt = 0, pullY = 0;
+    viewer.addEventListener('pointerdown', e => {
+      if (e.target.closest('button,input,textarea,a,.story-reply-bar')) return;
+      startY = e.clientY; startX = e.clientX; startAt = performance.now(); pullY = 0; pulling = true;
+    });
+    viewer.addEventListener('pointermove', e => {
+      if (!pulling) return;
+      const dy = e.clientY - startY, dx = e.clientX - startX;
+      if (Math.abs(dy) < 11 && Math.abs(dx) < 11) return;
+      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) { pulling = false; return; }
+      e.preventDefault(); clearTimeout(_holdTimer); pauseStoryForHold();
+      pullY = dy * 0.82;
+      content.style.transform = `translate3d(0,${pullY}px,0) scale(${Math.max(.88, 1 - pullY / 1600)})`;
+      viewer.style.backgroundColor = `rgba(0,0,0,${Math.max(.18, .92 - pullY / 420)})`;
+    });
+    const finishPull = () => {
+      if (!pulling) return;
+      pulling = false;
+      const velocity = pullY / Math.max(16, performance.now() - startAt) * 1000;
+      if (pullY > 110 || velocity > 720) { haptic('light'); closeStory(); content.style.transform = ''; viewer.style.backgroundColor = ''; return; }
+      const spring = SpringEngine.create('story_pull_down', { stiffness: 360, damping: 26, mass: 0.9, position: pullY });
+      SpringEngine.onUpdate(spring, y => {
+        content.style.transform = y > .5 ? `translate3d(0,${y}px,0) scale(${Math.max(.88, 1 - y / 1600)})` : '';
+        viewer.style.backgroundColor = y > .5 ? `rgba(0,0,0,${Math.max(.18, .92 - y / 420)})` : '';
+      });
+      SpringEngine.onComplete(spring, () => resumeStoryFromHold());
+      SpringEngine.release(spring, velocity, 0);
+    };
+    viewer.addEventListener('pointerup', finishPull);
+    viewer.addEventListener('pointercancel', finishPull);
   }
   // Also pause when the tab goes to background so audio/progress don't drift.
   document.addEventListener('visibilitychange', () => {
@@ -7502,6 +8154,7 @@ window.openStoryCreator = () => {
       // Multi-photo carousel: up to 3 images per story item. New picks are
       // appended to any existing selection (respecting the 3-photo cap).
       State.storyCreatorImages = Array.isArray(State.storyCreatorImages) ? State.storyCreatorImages : [];
+      State.storyCreatorBlurs = Array.isArray(State.storyCreatorBlurs) ? State.storyCreatorBlurs : [];
       const slotsLeft = 3 - State.storyCreatorImages.length;
       if (slotsLeft <= 0) { toast('You can add up to 3 photos per story', 'error'); return; }
       const batch = files.slice(0, slotsLeft);
@@ -7514,27 +8167,30 @@ window.openStoryCreator = () => {
         if (isGif) toast('GIF selected — keeping animation intact');
         if (f.size > 20 * 1024 * 1024) { toast('Skipped a photo over 20MB', 'error'); continue; }
         if (isHeicFile(f)) f = await convertHeicIfNeeded(f);
-        let url = null;
+        let url = null, blurDataUrl = '';
         try {
-          const uploadDataUrl = isGif
-            ? await new Promise((resolve, reject) => {
-                const r = new FileReader();
-                r.onload = () => resolve(r.result);
-                r.onerror = () => reject(new Error('gif read failed'));
-                r.readAsDataURL(f);
-              })
-            : await resizeImageToDataUrl(f, 1280, 0.82);
-          const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: uploadDataUrl, kind: 'post' } });
-          url = res.url || uploadDataUrl;
+          let encoded;
+          if (isGif) {
+            const uploadDataUrl = await new Promise((resolve, reject) => {
+              const r = new FileReader();
+              r.onload = () => resolve(r.result);
+              r.onerror = () => reject(new Error('gif read failed'));
+              r.readAsDataURL(f);
+            });
+            encoded = { dataUrl: uploadDataUrl, blurDataUrl: '' };
+          } else encoded = await compressResponsiveImage(f, { maxDim: 1080, quality: 0.82, targetBytes: 400 * 1024 });
+          const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: encoded.dataUrl, kind: 'post' } });
+          url = res.url || encoded.dataUrl;
+          blurDataUrl = encoded.blurDataUrl || '';
         } catch (err) {
           try {
-            const r2 = await uploadPermanentImage(f, { kind: 'post', maxDim: isGif ? null : 1200, quality: 0.82 });
-            url = r2.url;
+            const r2 = await uploadPermanentImage(f, { kind: 'post', maxDim: isGif ? null : 1080, quality: 0.82 });
+            url = r2.url; blurDataUrl = r2.blurDataUrl || '';
           } catch (_) {
             try { url = URL.createObjectURL(f); } catch (_) {}
           }
         }
-        if (url) State.storyCreatorImages.push(url);
+        if (url) { State.storyCreatorImages.push(url); State.storyCreatorBlurs.push(blurDataUrl); }
       }
       hide(loadingEl);
       // First image is the primary preview + legacy single-image field.
@@ -7578,6 +8234,7 @@ async function handleStoryVideoPick(file, ph, prev, loadingEl) {
 
   // Clear any photo selection (a story item is video OR photos, not both).
   State.storyCreatorImages = [];
+  State.storyCreatorBlurs = [];
   State.storyCreatorImgUrl = null;
   State.storyCreatorVideoUrl = null;
   renderStoryEditorPhotoStrip();
@@ -7639,6 +8296,7 @@ function renderStoryEditorPhotoStrip() {
     t.querySelector('.story-strip-del').addEventListener('click', (e) => {
       e.stopPropagation();
       State.storyCreatorImages.splice(idx, 1);
+      if (Array.isArray(State.storyCreatorBlurs)) State.storyCreatorBlurs.splice(idx, 1);
       State.storyCreatorImgUrl = State.storyCreatorImages[0] || null;
       const prev = $id('#storyEditorPreviewImg');
       if (prev) {
@@ -7664,6 +8322,7 @@ window.closeStoryCreator = () => {
   const mod = $id('#storyEditorModal');
   hide(mod);
   State.storyCreatorImages = [];
+  State.storyCreatorBlurs = [];
   State.storyCreatorVideoUrl = null;
   const strip = $id('#storyEditorPhotoStrip'); if (strip) { strip.classList.add('hidden'); strip.innerHTML = ''; }
   const countBadge = $id('#storyEditorPhotoCount'); hide(countBadge);
@@ -7933,6 +8592,7 @@ window.publishStoryWithMusic = async (isCf = false) => {
     ? State.storyCreatorImages.slice(0, 3)
     : (State.storyCreatorImgUrl ? [State.storyCreatorImgUrl] : []));
   const imageUrl = storyImages[0] || State.storyCreatorImgUrl || null;
+  const storyImageBlurs = videoUrl ? [] : (Array.isArray(State.storyCreatorBlurs) ? State.storyCreatorBlurs.slice(0, 3) : []);
   let song = storyMusicCatalog.find(s => s.id === selectedStoryMusicId);
   if (!song) song = liveSearchResults.find(s => s.id === selectedStoryMusicId);
   const music = song ? {
@@ -7966,6 +8626,8 @@ window.publishStoryWithMusic = async (isCf = false) => {
     text,
     imageUrl,
     images: storyImages,
+    imageBlur: storyImageBlurs[0] || '',
+    imageBlurs: storyImageBlurs,
     videoUrl,
     mediaType: videoUrl ? 'video' : ((imageUrl || storyImages.length) ? 'image' : 'text'),
     music,
@@ -8152,14 +8814,16 @@ function bindFeedComposer() {
       const st = $id('#postAttachStatus'); if (st) st.textContent = 'Uploading ' + f.name + '…';
       const pr = $id('#postAttachProgress'); if (pr) pr.style.width = '20%';
       try {
-        const res = await uploadPermanentImage(f, { kind: 'post', maxDim: 1200, quality: 0.82, onProgress: (p) => { if (pr) pr.style.width = p + '%'; } });
+        const res = await uploadPermanentImage(f, { kind: 'post', maxDim: 1080, quality: 0.82, onProgress: (p) => { if (pr) pr.style.width = p + '%'; } });
         tempItem.url = res.url;
+        tempItem.blurDataUrl = res.blurDataUrl || '';
         if (st) st.textContent = 'Ready!';
         if (pr) pr.style.width = '100%';
       } catch (err) {
         try {
           const res2 = await uploadImage(f, (p) => { if (pr) pr.style.width = p + '%'; });
           tempItem.url = res2.url;
+          tempItem.blurDataUrl = res2.blurDataUrl || '';
           if (st) st.textContent = 'Ready!';
           if (pr) pr.style.width = '100%';
         } catch (err2) {
@@ -8179,11 +8843,12 @@ function bindFeedComposer() {
     const btn = $id('#postSubmitBtn');
     const images = validAttaches.map(a => a.url);
     const imageUrl = images[0] || null;
+    const imageBlurs = validAttaches.map(a => a.blurDataUrl || '');
     const chk = $id('#postScratchCheckbox');
     const isScratch = !!(chk && chk.checked);
     const music = _postDraftMusic;
-    const body = { text, imageUrl, images, isScratch, music };
-    const tp = makeTempPost({ text, imageUrl, images, isScratch, music });
+    const body = { text, imageUrl, images, imageBlur: imageBlurs[0] || '', imageBlurs, isScratch, music };
+    const tp = makeTempPost({ text, imageUrl, images, imageBlur: imageBlurs[0] || '', imageBlurs, isScratch, music });
 
     // Close the composer and clear the draft right away: the post is already
     // on screen, so there is nothing left for the user to wait for.
@@ -8237,83 +8902,107 @@ function clearPostAttach() {
  * @param {number} maxDim — max width/height in px
  * @param {number} quality — 0..1
  */
-function resizeImageToDataUrl(file, maxDim = 600, quality = 0.85) {
-  // Prefer createImageBitmap: on most mobile browsers it decodes off the main
-  // thread, which avoids the "page freezes for a second" feeling that a
-  // synchronous <img>.decode-on-load can cause for large camera photos
-  // (e.g. 12MP+ shots) right when the story editor is trying to stay responsive.
-  if (typeof createImageBitmap === 'function') {
-    return createImageBitmap(file).then((bitmap) => {
-      try {
-        let width = bitmap.width, height = bitmap.height;
-        if (width > maxDim || height > maxDim) {
-          if (width >= height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
-          else { width = Math.round(width * (maxDim / height)); height = maxDim; }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(bitmap, 0, 0, width, height);
-        bitmap.close && bitmap.close();
-        return canvas.toDataURL('image/jpeg', quality);
-      } catch (e) {
-        bitmap.close && bitmap.close();
-        throw e;
-      }
-    }).catch(() => resizeImageToDataUrlLegacy(file, maxDim, quality));
-  }
-  return resizeImageToDataUrlLegacy(file, maxDim, quality);
+function _blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Image read failed'));
+    reader.readAsDataURL(blob);
+  });
 }
 
-function resizeImageToDataUrlLegacy(file, maxDim = 600, quality = 0.85) {
-  return new Promise((resolve, reject) => {
+function _canvasBlob(canvas, type, quality) {
+  return new Promise(resolve => canvas.toBlob(resolve, type, quality));
+}
+
+async function _decodeUploadImage(file) {
+  if (typeof createImageBitmap === 'function') {
+    try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (_) {}
+  }
+  const src = URL.createObjectURL(file);
+  try {
     const img = new Image();
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Read failed'));
-    reader.onload = () => { img.src = reader.result; };
-    img.onerror = () => reject(new Error('Decode failed'));
-    img.onload = () => {
-      try {
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width >= height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
-          else { width = Math.round(width * (maxDim / height)); height = maxDim; }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        resolve(dataUrl);
-      } catch (e) { reject(e); }
-    };
-    reader.readAsDataURL(file);
-  });
+    img.src = src;
+    if (img.decode) await img.decode();
+    else await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+    return img;
+  } finally { URL.revokeObjectURL(src); }
+}
+
+/** Responsive modern-image compressor: <=1080px and approximately <=400KB. */
+async function compressResponsiveImage(file, { maxDim = 1080, quality = 0.82, targetBytes = 400 * 1024 } = {}) {
+  const source = await _decodeUploadImage(file);
+  const sw = source.width || source.naturalWidth;
+  const sh = source.height || source.naturalHeight;
+  const cap = Math.min(1080, Math.max(320, Number(maxDim) || 1080));
+  const ratio = Math.min(1, cap / Math.max(sw, sh));
+  let width = Math.max(1, Math.round(sw * ratio));
+  let height = Math.max(1, Math.round(sh * ratio));
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { alpha: true });
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  let best = null;
+  let mime = 'image/webp';
+  // AVIF is preferred only when this browser can genuinely encode it.
+  const test = document.createElement('canvas'); test.width = test.height = 2;
+  const avif = await _canvasBlob(test, 'image/avif', 0.6).catch(() => null);
+  if (avif && avif.type === 'image/avif') mime = 'image/avif';
+  for (let resizePass = 0; resizePass < 5; resizePass++) {
+    canvas.width = width; canvas.height = height;
+    ctx.drawImage(source, 0, 0, width, height);
+    for (const q of [quality, 0.74, 0.66, 0.58, 0.50, 0.43]) {
+      const blob = await _canvasBlob(canvas, mime, q);
+      if (!blob) continue;
+      if (!best || blob.size < best.size) best = blob;
+      if (blob.size <= targetBytes) { best = blob; break; }
+    }
+    if (best && best.size <= targetBytes) break;
+    if (Math.max(width, height) <= 480) break;
+    width = Math.max(1, Math.round(width * 0.84));
+    height = Math.max(1, Math.round(height * 0.84));
+  }
+  if (!best) { if (source.close) source.close(); throw new Error('Image encoding failed'); }
+  // A real tiny blur preview travels with the post/message; it is typically <1KB.
+  const blur = document.createElement('canvas');
+  const br = Math.min(1, 24 / Math.max(sw, sh));
+  blur.width = Math.max(1, Math.round(sw * br)); blur.height = Math.max(1, Math.round(sh * br));
+  blur.getContext('2d').drawImage(source, 0, 0, blur.width, blur.height);
+  if (source.close) source.close();
+  const blurBlob = await _canvasBlob(blur, 'image/webp', 0.35);
+  return {
+    dataUrl: await _blobToDataUrl(best),
+    blurDataUrl: blurBlob ? await _blobToDataUrl(blurBlob) : '',
+    mime: best.type || mime, size: best.size, width, height,
+  };
+}
+
+function resizeImageToDataUrl(file, maxDim = 1080, quality = 0.82) {
+  return compressResponsiveImage(file, { maxDim, quality }).then(result => result.dataUrl);
 }
 
 /**
  * Permanent photo upload via /api/upload-photo (commits to GitHub repo → raw.githubusercontent.com CDN).
  * Returns: { url, persisted }
  */
-async function uploadPermanentImage(file, { kind = 'avatar', maxDim = 600, quality = 0.85, onProgress } = {}) {
+async function uploadPermanentImage(file, { kind = 'avatar', maxDim = 1080, quality = 0.82, onProgress } = {}) {
   if (onProgress) onProgress(10);
   const keepOriginal = maxDim == null || (String((file && file.type) || '').toLowerCase() === 'image/gif');
-  const dataUrl = keepOriginal
-    ? await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result);
-        r.onerror = () => reject(new Error('file read failed'));
-        r.readAsDataURL(file);
-      })
-    : await resizeImageToDataUrl(file, maxDim, quality);
+  let encoded;
+  if (keepOriginal) {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(new Error('file read failed'));
+      r.readAsDataURL(file);
+    });
+    encoded = { dataUrl, blurDataUrl: '', mime: file.type, size: file.size };
+  } else {
+    encoded = await compressResponsiveImage(file, { maxDim, quality, targetBytes: 400 * 1024 });
+  }
   if (onProgress) onProgress(40);
-  const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind } });
+  const res = await api('/upload-photo', { method: 'POST', body: { dataUrl: encoded.dataUrl, kind } });
   if (onProgress) onProgress(100);
-  return res;
+  return { ...res, blurDataUrl: encoded.blurDataUrl || '', mime: encoded.mime, encodedBytes: encoded.size, width: encoded.width, height: encoded.height };
 }
 
 function bindProfile() {
@@ -8438,17 +9127,43 @@ async function loadScheduled() {
 }
 
 // ====== Lightbox ======
-function openLightbox(url, uploaderName) {
-  $id('#lightboxImg').src = url;
+const MediaViewer = { scale: 1, x: 0, y: 0, source: null, pointers: new Map(), startScale: 1, startDistance: 0, startX: 0, startY: 0, startedAt: 0 };
+function applyMediaViewerTransform(animate = false) {
+  const img = $id('#lightboxImg'); if (!img) return;
+  img.style.transition = animate ? 'transform .28s cubic-bezier(.22,1,.36,1)' : 'none';
+  img.style.transform = `translate3d(${MediaViewer.x}px,${MediaViewer.y}px,0) scale(${MediaViewer.scale})`;
+}
+function resetMediaViewer(animate = false) {
+  MediaViewer.scale = 1; MediaViewer.x = 0; MediaViewer.y = 0; MediaViewer.pointers.clear();
+  applyMediaViewerTransform(animate);
+  const lb = $id('#lightbox'); if (lb) lb.style.backgroundColor = '';
+}
+function openLightbox(url, uploaderName, sourceEl = null) {
+  const image = $id('#lightboxImg');
+  image.src = url;
   $id('#lightboxUploader').textContent = uploaderName ? ('Shared by ' + uploaderName) : '';
   $id('#lightboxDownload').href = url;
   const lb = $id('#lightbox');
+  MediaViewer.source = sourceEl && sourceEl.isConnected ? sourceEl : null;
+  resetMediaViewer(false);
   lb.classList.remove('hidden');
   const inner = lb.querySelector('.lightbox-inner');
-  if (inner) motionAnimate(inner,
-    { opacity: [0, 1], transform: ['scale(.92)', 'scale(1)'] },
-    { duration: 0.28, easing: [0.2, 0.85, 0.2, 1] }
-  );
+  const reveal = () => {
+    if (!inner) return;
+    if (MediaViewer.source && MediaViewer.source.isConnected) {
+      const from = MediaViewer.source.getBoundingClientRect();
+      const to = image.getBoundingClientRect();
+      const sx = Math.max(.05, from.width / Math.max(1, to.width));
+      const sy = Math.max(.05, from.height / Math.max(1, to.height));
+      const dx = from.left + from.width / 2 - (to.left + to.width / 2);
+      const dy = from.top + from.height / 2 - (to.top + to.height / 2);
+      inner.animate([
+        { opacity: .45, transform: `translate3d(${dx}px,${dy}px,0) scale(${sx},${sy})` },
+        { opacity: 1, transform: 'translate3d(0,0,0) scale(1)' },
+      ], { duration: 320, easing: 'cubic-bezier(.2,.85,.2,1)', fill: 'both' });
+    } else motionAnimate(inner, { opacity: [0, 1], transform: ['scale(.92)', 'scale(1)'] }, { duration: 0.28, easing: [0.2, 0.85, 0.2, 1] });
+  };
+  if (image.complete) requestAnimationFrame(reveal); else image.addEventListener('load', reveal, { once: true });
   refreshIcons();
 }
 
@@ -10208,7 +10923,53 @@ function renderSearch(query) {
 
 function bindLightbox() {
   $id('#lightboxClose').addEventListener('click', closeLightbox);
-  $id('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
+  const lightbox = $id('#lightbox');
+  const image = $id('#lightboxImg');
+  lightbox.addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
+  lightbox.addEventListener('pointerdown', e => {
+    if (e.target.closest('button,a')) return;
+    lightbox.setPointerCapture && lightbox.setPointerCapture(e.pointerId);
+    MediaViewer.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    MediaViewer.startX = e.clientX - MediaViewer.x; MediaViewer.startY = e.clientY - MediaViewer.y; MediaViewer.startedAt = performance.now();
+    if (MediaViewer.pointers.size === 2) {
+      const p = Array.from(MediaViewer.pointers.values());
+      MediaViewer.startDistance = Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y);
+      MediaViewer.startScale = MediaViewer.scale;
+    }
+  });
+  lightbox.addEventListener('pointermove', e => {
+    if (!MediaViewer.pointers.has(e.pointerId)) return;
+    MediaViewer.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (MediaViewer.pointers.size >= 2) {
+      const p = Array.from(MediaViewer.pointers.values());
+      const distance = Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y);
+      MediaViewer.scale = Math.max(1, Math.min(4, MediaViewer.startScale * distance / Math.max(1, MediaViewer.startDistance)));
+    } else {
+      MediaViewer.x = e.clientX - MediaViewer.startX;
+      MediaViewer.y = e.clientY - MediaViewer.startY;
+      if (MediaViewer.scale === 1) {
+        MediaViewer.x *= .12;
+        if (MediaViewer.y < 0) MediaViewer.y *= .18;
+        lightbox.style.backgroundColor = `rgba(0,0,0,${Math.max(.2, .92 - Math.max(0, MediaViewer.y) / 420)})`;
+      }
+    }
+    e.preventDefault(); applyMediaViewerTransform(false);
+  });
+  const endPointer = e => {
+    MediaViewer.pointers.delete(e.pointerId);
+    if (MediaViewer.pointers.size) return;
+    const velocity = MediaViewer.y / Math.max(16, performance.now() - MediaViewer.startedAt) * 1000;
+    if (MediaViewer.scale === 1 && (MediaViewer.y > 125 || velocity > 760)) { haptic('light'); closeLightbox(); return; }
+    if (MediaViewer.scale <= 1.02) resetMediaViewer(true);
+  };
+  lightbox.addEventListener('pointerup', endPointer);
+  lightbox.addEventListener('pointercancel', endPointer);
+  image.addEventListener('dblclick', e => {
+    e.preventDefault(); MediaViewer.scale = MediaViewer.scale > 1 ? 1 : 2.5; MediaViewer.x = 0; MediaViewer.y = 0; applyMediaViewerTransform(true);
+  });
+  lightbox.addEventListener('wheel', e => {
+    e.preventDefault(); MediaViewer.scale = Math.max(1, Math.min(4, MediaViewer.scale + (e.deltaY < 0 ? .25 : -.25))); if (MediaViewer.scale === 1) { MediaViewer.x = 0; MediaViewer.y = 0; } applyMediaViewerTransform(false);
+  }, { passive: false });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (closeTopSurface()) {
@@ -10254,8 +11015,22 @@ function closeTopSurface() {
 }
 
 function closeLightbox() {
-  $id('#lightbox').classList.add('hidden');
-  $id('#lightboxImg').src = '';
+  const lightbox = $id('#lightbox');
+  const image = $id('#lightboxImg');
+  const inner = lightbox && lightbox.querySelector('.lightbox-inner');
+  const finish = () => { lightbox.classList.add('hidden'); image.src = ''; resetMediaViewer(false); };
+  if (inner && MediaViewer.source && MediaViewer.source.isConnected && !lightbox.classList.contains('hidden')) {
+    const from = image.getBoundingClientRect(), to = MediaViewer.source.getBoundingClientRect();
+    const sx = Math.max(.05, to.width / Math.max(1, from.width));
+    const sy = Math.max(.05, to.height / Math.max(1, from.height));
+    const dx = to.left + to.width / 2 - (from.left + from.width / 2);
+    const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+    const animation = inner.animate([
+      { opacity: 1, transform: 'translate3d(0,0,0) scale(1)' },
+      { opacity: .2, transform: `translate3d(${dx}px,${dy}px,0) scale(${sx},${sy})` },
+    ], { duration: 240, easing: 'cubic-bezier(.4,0,1,1)', fill: 'both' });
+    animation.finished.then(finish).catch(finish);
+  } else finish();
 }
 
 // ====== Init ======
@@ -10397,17 +11172,26 @@ function undoToast(msg, onUndo, durationMs = 6000) {
 
 /* ====== Lazy image with blur-up placeholder ====== */
 // Returns an <img> that shows a colored placeholder until the real image loads.
-function lazyImg(src, alt = '', seed = '') {
+function lazyImg(src, alt = '', seed = '', placeholder = '') {
   const img = document.createElement('img');
   img.alt = alt;
   img.loading = 'lazy';
   img.decoding = 'async';
-  img.style.background = `linear-gradient(135deg, ${colorOf(seed || src)}, ${colorOf((seed || src) + 'x')})`;
-  img.style.opacity = '0';
-  img.style.transition = 'opacity .35s ease';
+  if (/^data:image\/(?:webp|jpeg|png);base64,/i.test(placeholder)) {
+    img.style.backgroundImage = 'url("' + placeholder.replace(/"/g, '') + '")';
+    img.style.backgroundSize = 'cover';
+    img.style.backgroundPosition = 'center';
+  } else {
+    img.style.background = `linear-gradient(135deg, ${colorOf(seed || src)}, ${colorOf((seed || src) + 'x')})`;
+  }
+  img.style.opacity = '1';
+  img.style.filter = placeholder ? 'blur(8px)' : '';
+  img.style.transition = 'filter .32s ease, opacity .32s ease';
   img.addEventListener('load', () => {
     img.style.opacity = '1';
+    img.style.filter = '';
     img.style.background = '';
+    img.style.backgroundImage = '';
   });
   img.addEventListener('error', () => {
     img.style.opacity = '1';   // keep placeholder color visible
@@ -12006,7 +12790,7 @@ const AmbientShader = {
   _ptrX: 0.5, _ptrY: 0.5, _curX: 0.5, _curY: 0.5,
   _gyroX: 0, _gyroY: 0,
   _c1: [0.31, 0.50, 1.0], _c2: [0.55, 0.29, 1.0], _c3: [1.0, 0.40, 0.55],
-  _fc: 0, _fpsT: 0, _scale: 1,
+  _fc: 0, _fpsT: 0, _scale: 1, _frameSkip: 1, _frameNo: 0,
 
   init() {
     try {
@@ -12020,6 +12804,11 @@ const AmbientShader = {
       this._setupEvents();
       this._t0 = performance.now();
       this._fpsT = this._t0;
+      if (navigator.connection && navigator.connection.saveData) { this._scale = .5; this._frameSkip = 2; }
+      if (navigator.getBattery) navigator.getBattery().then(battery => {
+        const adapt = () => { this._frameSkip = (!battery.charging && battery.level < .2) ? 3 : Math.min(this._frameSkip, 2); };
+        adapt(); battery.addEventListener('levelchange', adapt); battery.addEventListener('chargingchange', adapt);
+      }).catch(() => {});
       this._running = true;
       this._draw();
     } catch(e) { console.warn('[AmbientShader] init failed:', e); }
@@ -12135,6 +12924,8 @@ const AmbientShader = {
     if (!this._running || !this.gl || this._paused) return;
     const gl = this.gl;
     const now = performance.now();
+    this._frameNo++;
+    if (this._frameSkip > 1 && this._frameNo % this._frameSkip !== 0) { requestAnimationFrame(() => this._draw()); return; }
     const time = (now - this._t0) / 1000;
     // Smooth pointer
     this._curX += (this._ptrX - this._curX) * 0.06;
@@ -12152,9 +12943,11 @@ const AmbientShader = {
     if (now - this._fpsT > 3000) {
       const fps = this._fc / ((now - this._fpsT) / 1000);
       this._fc = 0; this._fpsT = now;
-      if (fps < 45 && this._scale > 0.5) {
-        this._scale *= 0.75;
+      if (fps < 45 && this._frameSkip === 1 && this._scale > 0.5) {
+        this._scale = Math.max(.5, this._scale * 0.75);
         window.dispatchEvent(new Event('resize'));
+      } else if (fps < 38 && this._frameSkip === 1 && this._scale <= .5) {
+        this._frameSkip = 2;
       }
     }
     requestAnimationFrame(() => this._draw());
@@ -12193,6 +12986,7 @@ const Predictive = {
   _targets: [],
   _ok: true,
   _saveData: false,
+  _prewarmed: new Map(),
 
   init() {
     try {
@@ -12206,11 +13000,16 @@ const Predictive = {
       if (navigator.getBattery) {
         navigator.getBattery().then(b => {
           this._ok = b.level > 0.2 || b.charging;
-          b.addEventListener('levelchange', () => { this._ok = b.level > 0.2 || b.charging; });
+          b.addEventListener('levelchange', () => { this._ok = b.level > 0.2 || b.charging; if (!this._ok) this._evict(); });
+          b.addEventListener('chargingchange', () => { this._ok = b.level > 0.2 || b.charging; if (!this._ok) this._evict(); });
         }).catch(() => {});
       }
       if (navigator.connection) {
         this._saveData = !!navigator.connection.saveData;
+        navigator.connection.addEventListener('change', () => {
+          this._saveData = !!navigator.connection.saveData;
+          if (this._saveData || /(^|-)2g$/.test(navigator.connection.effectiveType || '')) this._evict();
+        });
       }
     } catch(e) { console.warn('[Predictive] init failed:', e); }
   },
@@ -12248,12 +13047,34 @@ const Predictive = {
       if (!token) return;
       if (t.type === 'tab') {
         const request = t.tab === 'chat' ? '/users' : t.tab === 'feed' ? '/feed' : t.tab === 'profile' ? '/auth/me' : null;
-        if (request) api(request, { omniTier: 2 }).catch(() => {});
+        if (request) {
+          const promise = api(request, { omniTier: 2 }).catch(() => null);
+          this._prewarmed.set(t.tab, { promise, at: Date.now() });
+          // Decode likely-next media while detached; mounting still belongs to
+          // the normal keyed renderer, so no duplicate listeners are created.
+          (window.requestIdleCallback || ((fn) => setTimeout(fn, 1)))(() => {
+            document.querySelectorAll('img').forEach((img, index) => {
+              if (index > 5 || !img.src) return;
+              const probe = new Image(); probe.decoding = 'async'; probe.src = img.currentSrc || img.src;
+              if (probe.decode) probe.decode().catch(() => {});
+            });
+          });
+        }
       }
     } catch(_) {}
   },
 
-  _resetScores() { this._targets.forEach(t => { t.score = 0; t.fetched = false; }); }
+  _evict() {
+    this._prewarmed.clear();
+    for (const [key, value] of _apiCache) {
+      if (/\/(feed|users|auth\/me)/.test(key) && Date.now() - Number(value.ts || 0) > 1000) _apiCache.delete(key);
+    }
+  },
+
+  _resetScores() {
+    this._targets.forEach(t => { t.score = 0; });
+    for (const [key, value] of this._prewarmed) if (Date.now() - value.at > 30000) this._prewarmed.delete(key);
+  }
 };
 
 // ─── 4. WEBAUTHN BIOMETRIC LOCK ──────────────────────────────────────────────
