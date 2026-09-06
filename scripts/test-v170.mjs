@@ -88,13 +88,13 @@ await test('APP_VERSION, SW_VERSION and immutable assets are synchronized at v17
   assert.match(sw, /priv-spaca-runtime-v170/);
   // Asset counters continue from v169's ?v=187/192 values to avoid colliding
   // with year-long immutable browser entries from historical releases.
-  for (const asset of ['style.min.css?v=188', 'app.min.js?v=193', 'boot-guard.min.js?v=170']) {
+  for (const asset of ['style.min.css?v=188', 'app.min.js?v=194', 'boot-guard.min.js?v=170']) {
     assert.ok(index.includes(asset), `index missing ${asset}`);
     assert.ok(sw.includes(`'/${asset}'`), `service worker missing ${asset}`);
   }
   assert.ok(!index.includes('auth.react.min.js'), 'auth bundle must not block authenticated startup');
-  assert.ok(app.includes("script.src = '/auth.react.min.js?v=193'"), 'app must lazy-load current auth bundle');
-  assert.ok(sw.includes("'/auth.react.min.js?v=193'"), 'service worker must retain offline auth bundle');
+  assert.ok(app.includes("script.src = '/auth.react.min.js?v=194'"), 'app must lazy-load current auth bundle');
+  assert.ok(sw.includes("'/auth.react.min.js?v=194'"), 'service worker must retain offline auth bundle');
   assert.equal(index.split(/\r?\n/).length, 1, 'index.html must remain one line');
 });
 
@@ -162,6 +162,14 @@ await test('auth-security mutations invalidate session, login and password cache
   assert.equal(_bcryptVerifyCache.has(`${user.id}|old-hash|old-password`), false);
   assert.equal(_bcryptVerifyCache.has('usr_someone_else|hash|password'), true);
   _bcryptVerifyCache.delete('usr_someone_else|hash|password');
+});
+
+await test('signed-in startup uses materialized unread state without DM request fan-out', async () => {
+  const app = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+  assert.ok(app.includes('const indexedUnread = Object.values(_unreadByRoom || {})'));
+  assert.ok(!app.includes('dmMembers.map(async (u) =>'), 'notification polling must not fetch every DM room');
+  assert.ok(app.includes("if ((p === '/auth/me' && m === 'GET') || (p === '/rtc/signals' && m === 'GET')) return 1;"));
+  assert.ok(app.includes('Object.values(State.pollTimers || {}).forEach(timer => clearInterval(timer));'));
 });
 
 await test('distributed session revocation uses durable user state instead of isolate cache', async () => {

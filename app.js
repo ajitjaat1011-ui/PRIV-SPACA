@@ -235,6 +235,7 @@ const ClientOmni = (() => {
   function classify(path, method) {
     const p = String(path || '/').split('?')[0];
     const m = String(method || 'GET').toUpperCase();
+    if ((p === '/auth/me' && m === 'GET') || (p === '/rtc/signals' && m === 'GET')) return 1;
     if (p.startsWith('/auth/') || p.startsWith('/rtc/') || p === '/stream' || p === '/stream/token'
         || p === '/messages' || p === '/messages/send' || p === '/messages/reaction' || p === '/user/typing' || p === '/user/heartbeat') return 0;
     if (p === '/messages/read' || p === '/messages/read-batch' || p === '/messages/receipt' || p === '/notifications/seen'
@@ -935,7 +936,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=193';
+    script.src = '/auth.react.min.js?v=194';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -4552,6 +4553,11 @@ function isStorySurfaceOpen() {
   });
 }
 function startPolls() {
+  // Idempotent startup: session restoration and auth handoff can converge on
+  // showApp() in the same page. Never leave the previous polling set alive.
+  Object.values(State.pollTimers || {}).forEach(timer => clearInterval(timer));
+  State.pollTimers = {};
+  disconnectSSE();
   sendHeartbeat();
   loadMembers();
   pollTyping();
@@ -4866,57 +4872,16 @@ async function pollNotifications() {
     }
   } catch (_) {}
 
-  // 2) New general-group messages (client tracks per-tab lastSeen so unread is true unread)
-  const seenChat = _getLastSeen('ps_seenChatAt') || (Date.now() - 24*3600*1000);
+  // 2) Unread state is already materialized server-side and returned by the
+  // single /users request. The old implementation fetched general-group plus
+  // up to 20 separate DM rooms on every notification poll; one signed-in page
+  // therefore exhausted its own admission and Turso limits before rendering.
+  const indexedUnread = Object.values(_unreadByRoom || {})
+    .reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+  chatUnread = Math.max(chatUnread, indexedUnread);
   let _latestUnreadMsg = null;
-  try {
-    const r = await api('/messages?roomId=general-group');
-    (r.messages || []).forEach(m => {
-      if (m.userId !== meId && m.createdAt > seenChat) {
-        chatUnread++;
-        // Track the latest unread message for the topbar banner
-        if (!_latestUnreadMsg || m.createdAt > _latestUnreadMsg.createdAt) {
-          const sender = (State.members || []).find(u => u.id === m.userId) || m.authorSnapshot || m.author || {};
-          _latestUnreadMsg = {
-            sender,
-            roomId: m.roomId || 'general-group',
-            preview: m.text || (m.kind === 'voice' ? '🎤 Voice note' : (m.imageUrl ? '📷 Photo' : 'New message')),
-            createdAt: m.createdAt
-          };
-        }
-      }
-    });
-  } catch (_) {}
 
-  // v93.9: Also scan DM rooms for unread messages (not just general-group).
-  // Check DM rooms for ALL members (not just connected) since DMs can happen
-  // between any two users. Limit to 20 most recent to avoid hammering the API.
-  try {
-    const dmMembers = (State.members || [])
-      .filter(u => u.id !== meId)
-      .slice(0, 20);
-    await Promise.all(dmMembers.map(async (u) => {
-      try {
-        const dmRoom = dmRoomId(meId, u.id);
-        const r = await api('/messages?roomId=' + encodeURIComponent(dmRoom));
-        (r.messages || []).forEach(m => {
-          if (m.userId !== meId && m.createdAt > seenChat) {
-            chatUnread++;
-            if (!_latestUnreadMsg || m.createdAt > _latestUnreadMsg.createdAt) {
-              _latestUnreadMsg = {
-                sender: u,
-                roomId: dmRoom,
-                preview: m.text || (m.kind === 'voice' ? '🎤 Voice note' : (m.imageUrl ? '📷 Photo' : 'New message')),
-                createdAt: m.createdAt
-              };
-            }
-          }
-        });
-      } catch (_) {}
-    }));
-  } catch (_) {}
-
-  // Also scan server message notifications for a sender (covers DMs)
+  // Scan server message notifications for a sender (covers group + DMs).
   try {
     (_notifData && _notifData.notifications || []).forEach(n => {
       if (n.seenAt || n.kind !== 'message') return;
