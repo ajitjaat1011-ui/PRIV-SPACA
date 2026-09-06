@@ -26,7 +26,7 @@ export const uid = (p = 'id') => p + '_' + Date.now().toString(36) + '_' + Math.
 
 export const safeJson = (s, f) => { try { return JSON.parse(s); } catch (_) { return f; } };
 
-export const isRepo = () => !!(cfg.GITHUB_PAT && cfg.GH_REPO && cfg.GH_BRANCH);
+export const isGithubMediaConfigured = () => !!(cfg.GITHUB_PAT && cfg.GH_REPO && cfg.GH_BRANCH);
 
 export const isEmail = s => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
@@ -170,10 +170,11 @@ export function canViewerSeeStory(post, viewerId, db) {
 
 export function sanitizeUser(u, includePrivate = false) {
   if (!u) return null;
-  const out = { id: u.id, email: u.email, username: u.username, displayName: u.displayName,
+  const out = { id: u.id, username: u.username, displayName: u.displayName,
            bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt,
-           publicKey: u.publicKey || null, verified: !!u.verified, isPrivate: !!u.isPrivate, note: activeNote(u) };
+           publicKey: u.publicKey || null, verified: !!u.verified, isOwner: isAdminUser(u), isPrivate: !!u.isPrivate, note: activeNote(u) };
   if (includePrivate) {
+    out.email = typeof u.email === 'string' ? u.email : '';
     out.dateOfBirth = typeof u.dateOfBirth === 'string' ? u.dateOfBirth : '';
     out.cardVisibility = ['everyone','close_friends','private'].includes(u.cardVisibility) ? u.cardVisibility : 'everyone';
   }

@@ -74,7 +74,7 @@ export async function requireAuth(c, next) {
   const tokenVersion = Number(p.sv || 0);
   let userVersion = Number(u.tokenVersion || 0);
   if (tokenVersion !== userVersion) {
-    // Same rare Neon read-after-write consistency window as login (see the
+    // Same rare distributed read-after-write window as login (see the
     // matching comment in /api/auth/login): a password/PIN reset that just
     // bumped tokenVersion on one connection can briefly not be visible yet
     // on the next read. Without this retry, the very token that reset-by-pin

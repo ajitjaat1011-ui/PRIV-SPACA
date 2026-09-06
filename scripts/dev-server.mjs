@@ -12,7 +12,7 @@
  * Environment (all optional — without them the API uses in-memory storage):
  *   JWT_SECRET, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, GITHUB_PAT, ...
  *
- * Requires Node >= 20 (global fetch/Request/Response, node:async_hooks).
+ * Requires Node >= 22 (matches Wrangler and the supported production toolchain).
  */
 
 import { createServer } from 'node:http';
@@ -50,6 +50,7 @@ const MIME = {
 
 // Files that must never be served, mirroring _worker.js / _redirects.
 const BLOCKED = [/^\/\.git/, /^\/\.github\//, /^\/scripts\//, /^\/backups\//, /^\/api\//,
+  /^\/react-auth\//, /^\/AUDIT_/, /^\/SECURITY_AUDIT/, /^\/(app\.js|style\.css)$/,
   /^\/(package(-lock)?\.json|wrangler\.toml|README\.md|\.cloudflareignore|\.gitlab-ci\.yml)$/];
 
 async function serveStatic(pathname) {

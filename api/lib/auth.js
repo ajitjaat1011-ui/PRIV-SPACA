@@ -1,18 +1,20 @@
 /**
- * PRIV SPACA — Library — auth
- *
- * JWT signing/verification, HMAC + base64url primitives, auth caches.
- *
- * Part of the modular Hono API (api/). Entry point: api/cf-worker.js
+ * PRIV SPACA — JWT and session-cookie primitives.
  */
 
-import { cfg } from './config.js';
-import { JWT_EXPIRES_DAYS } from './config.js';
+import { cfg, JWT_EXPIRES_DAYS } from './config.js';
 
-// Manual JWT (HS256) — avoids jsonwebtoken which uses Node-specific bits
+const enc = new TextEncoder();
+export const SESSION_COOKIE = '__Host-ps_session';
+export const TOKEN_ISSUER = 'priv-spaca';
+export const TOKEN_AUDIENCE = 'priv-spaca-web';
+
+async function hmacKey(secret, usages = ['sign', 'verify']) {
+  return crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, usages);
+}
+
 export async function hmacSha256(secret, msg) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  const key = await hmacKey(secret, ['sign']);
   return new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(msg)));
 }
 
@@ -23,21 +25,33 @@ export function b64url(buf) {
   return btoa(s).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
+function b64urlBytes(str, max = 16 * 1024) {
+  const input = String(str || '');
+  if (!input || input.length > Math.ceil(max * 4 / 3) + 8 || !/^[A-Za-z0-9_-]+$/.test(input)) throw new Error('Bad base64url');
+  const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(normalized + '='.repeat((4 - normalized.length % 4) % 4));
+  if (bin.length > max) throw new Error('Decoded value too large');
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+
 export function b64urlDecode(str) {
-  str = str.replace(/-/g, '+').replace(/_/g, '/');
-  while (str.length % 4) str += '=';
-  return atob(str);
+  return new TextDecoder().decode(b64urlBytes(str));
 }
 
 export function b64urlJson(obj) {
-  return b64url(new TextEncoder().encode(JSON.stringify(obj)));
+  return b64url(enc.encode(JSON.stringify(obj)));
 }
 
 export async function signToken(user) {
   const header = { alg: 'HS256', typ: 'JWT' };
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + JWT_EXPIRES_DAYS * 24 * 3600;
-  const payload = { uid: user.id, username: user.username, sv: Number(user.tokenVersion || 0), iat, exp };
+  const payload = {
+    iss: TOKEN_ISSUER, aud: TOKEN_AUDIENCE,
+    uid: user.id, username: user.username, sv: Number(user.tokenVersion || 0),
+    iat, nbf: iat - 5, exp,
+    jti: crypto.randomUUID ? crypto.randomUUID() : b64url(crypto.getRandomValues(new Uint8Array(16))),
+  };
   const head = b64urlJson(header);
   const body = b64urlJson(payload);
   const sig = b64url(await hmacSha256(cfg.JWT_SECRET, head + '.' + body));
@@ -45,38 +59,65 @@ export async function signToken(user) {
 }
 
 export async function verifyToken(token) {
-  if (!token || typeof token !== 'string') throw new Error('No token');
+  if (!token || typeof token !== 'string' || token.length > 8192) throw new Error('No token');
   const parts = token.split('.');
   if (parts.length !== 3) throw new Error('Bad token');
   const [head, body, sig] = parts;
-  const expected = b64url(await hmacSha256(cfg.JWT_SECRET, head + '.' + body));
-  if (expected !== sig) throw new Error('Bad signature');
-  let payload;
-  try { payload = JSON.parse(b64urlDecode(body)); } catch (_) { throw new Error('Bad payload'); }
-  if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) throw new Error('Expired');
+  let header, payload;
+  try {
+    header = JSON.parse(new TextDecoder().decode(b64urlBytes(head, 2048)));
+    payload = JSON.parse(new TextDecoder().decode(b64urlBytes(body, 4096)));
+  } catch (_) { throw new Error('Bad token JSON'); }
+  if (!header || header.alg !== 'HS256' || header.typ !== 'JWT') throw new Error('Bad token header');
+  const key = await hmacKey(cfg.JWT_SECRET, ['verify']);
+  const signature = b64urlBytes(sig, 128);
+  const valid = await crypto.subtle.verify('HMAC', key, signature, enc.encode(head + '.' + body));
+  if (!valid) throw new Error('Bad signature');
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.iss !== TOKEN_ISSUER || payload.aud !== TOKEN_AUDIENCE) throw new Error('Bad token scope');
+  if (!payload.uid || !/^[A-Za-z0-9_-]{1,128}$/.test(String(payload.uid))) throw new Error('Bad subject');
+  if (!Number.isFinite(payload.iat) || !Number.isFinite(payload.exp) || payload.exp <= now || payload.iat > now + 60) throw new Error('Expired');
+  if (payload.nbf && payload.nbf > now + 5) throw new Error('Not active');
   return payload;
 }
 
-export async function authFromRequest(c) {
+function parseCookies(header) {
+  const out = {};
+  for (const part of String(header || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i <= 0) continue;
+    const key = part.slice(0, i).trim();
+    try { out[key] = decodeURIComponent(part.slice(i + 1).trim()); } catch (_) {}
+  }
+  return out;
+}
+
+export function tokenFromRequest(c) {
   const auth = c.req.header('authorization') || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (/^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
+  return parseCookies(c.req.header('cookie') || '')[SESSION_COOKIE] || null;
+}
+
+export function hasSessionCookie(c) {
+  return !!parseCookies(c.req.header('cookie') || '')[SESSION_COOKIE];
+}
+
+export function setSessionCookie(c, token) {
+  const maxAge = JWT_EXPIRES_DAYS * 24 * 3600;
+  c.header('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Strict`);
+}
+
+export function clearSessionCookie(c) {
+  c.header('Set-Cookie', `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
+}
+
+export async function authFromRequest(c) {
+  const token = tokenFromRequest(c);
   if (!token) return null;
   try { return await verifyToken(token); } catch (_) { return null; }
 }
 
-// v66: in-memory auth-user cache. Avoids hitting Turso on every
-// authenticated request (which is most of the API). Cloudflare Workers
-// can have multiple isolates per region, so this cache is per-isolate
-// (each isolate's cache is independent). That's fine: the worst case
-// after a deploy is one extra Turso round-trip per isolate, then the
-// cache warms up.
 export const _authUserCache = new Map();
-
-          // uid -> { user, fetchedAt }
 export const _loginUserCache = new Map();
-
-          // idLower -> { _user, _cachedAt }
 export const _bcryptVerifyCache = new Map();
-
-       // bcryptCacheKey -> { ok, ts }
 export const _AUTH_CACHE_TTL_MS = 30000;

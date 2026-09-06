@@ -18,7 +18,7 @@ import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dmRoomFor } from '../lib/rooms.js';
 import { normalizeDb } from '../lib/schema.js';
-import { isTursoConfigured, tursoRefreshDmIndexForOwners, tursoUpsertMessages, tursoUpsertNotifications, tursoUpsertPosts } from '../lib/store-turso.js';
+import { fetchTursoUserFeed, isTursoConfigured, tursoRefreshDmIndexForOwners, tursoUpsertMessages, tursoUpsertNotifications, tursoUpsertPosts } from '../lib/store-turso.js';
 
 // ---------- Posts ----------
 app.get('/api/posts', requireAuth, async (c) => {
@@ -336,24 +336,24 @@ app.get('/api/feed', requireAuth, async (c) => {
   try {
   const myId = c.get('userId');
   const limit = Math.min(50, Math.max(5, parseInt(c.req.query('limit') || '20')));
-  const db = await fetchDatabase();
+  const [db, materialized] = await Promise.all([
+    fetchDatabase(),
+    isTursoConfigured() ? fetchTursoUserFeed(myId, limit) : Promise.resolve(null),
+  ]);
   const me = (db.users || []).find(u => u.id === myId);
   const following = (me && Array.isArray(me.following)) ? me.following : [];
   const allFollowing = new Set([...following, myId]);
   const usersById = new Map((db.users || []).map(u => [u.id, u]));
-  const posts = (db.posts || [])
+  const sourcePosts = Array.isArray(materialized) ? materialized : (db.posts || []);
+  const posts = sourcePosts
     .filter(p => !p.deletedAt && allFollowing.has(p.userId) && !p.story)
-    .sort((a,b) => {
-      const engA = ((a.likes || []).length * 3) + ((a.comments || []).length * 5);
-      const engB = ((b.likes || []).length * 3) + ((b.comments || []).length * 5);
-      return ((b.createdAt||0) * 0.7 + engB * 0.3) - ((a.createdAt||0) * 0.7 + engA * 0.3);
-    })
+    .sort((a,b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
     .slice(0, limit)
     .map(p => {
       const liveUser = usersById.get(p.userId);
       const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
       return { ...p, author: authorObj };
     });
-  return c.json({ posts, source: isTursoConfigured() ? 'hybrid-turso-feed' : 'full-db-fallback' });
+  return c.json({ posts, source: Array.isArray(materialized) ? 'turso-user-feed-index' : 'in-memory-fallback' });
   } catch (e) { throw wrapUnexpected(e); }
 });

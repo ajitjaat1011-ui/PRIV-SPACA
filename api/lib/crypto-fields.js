@@ -176,7 +176,12 @@ export async function encryptUserPII(user) {
   if (Array.isArray(out.pushSubs) && out.pushSubs.length) {
     out.pushSubs = await Promise.all(out.pushSubs.map(async (s) => {
       if (!s || typeof s !== 'object' || typeof s.endpoint !== 'string') return s;
-      return { ...s, endpoint: await encryptField(s.endpoint) };
+      const keys = s.keys && typeof s.keys === 'object' ? {
+        ...s.keys,
+        p256dh: await encryptField(s.keys.p256dh),
+        auth: await encryptField(s.keys.auth),
+      } : s.keys;
+      return { ...s, endpoint: await encryptField(s.endpoint), keys };
     }));
   }
   return out;
@@ -194,16 +199,38 @@ export async function decryptUserPII(user) {
       touched = true;
     }
   }
-  if (Array.isArray(out.pushSubs) && out.pushSubs.some((s) => s && isEncrypted(s.endpoint))) {
+  if (Array.isArray(out.pushSubs) && out.pushSubs.some((s) => s && (
+    isEncrypted(s.endpoint) || isEncrypted(s.keys?.p256dh) || isEncrypted(s.keys?.auth)
+  ))) {
     out.pushSubs = await Promise.all(out.pushSubs.map(async (s) => {
-      if (!s || !isEncrypted(s.endpoint)) return s;
-      const ep = await decryptField(s.endpoint);
-      return ep === null ? null : { ...s, endpoint: ep };
+      if (!s || typeof s !== 'object') return s;
+      const endpoint = isEncrypted(s.endpoint) ? await decryptField(s.endpoint) : s.endpoint;
+      const p256dh = isEncrypted(s.keys?.p256dh) ? await decryptField(s.keys.p256dh) : s.keys?.p256dh;
+      const auth = isEncrypted(s.keys?.auth) ? await decryptField(s.keys.auth) : s.keys?.auth;
+      if (endpoint === null || p256dh === null || auth === null) return null;
+      return { ...s, endpoint, keys: s.keys ? { ...s.keys, p256dh, auth } : s.keys };
     }));
     out.pushSubs = out.pushSubs.filter(Boolean);
     touched = true;
   }
   return touched ? out : user;
+}
+
+/** Encrypt/decrypt the user PII inside the legacy whole-database mirror. */
+export async function encryptDatabasePII(database) {
+  if (!database || typeof database !== 'object') return database;
+  return {
+    ...database,
+    users: await Promise.all((Array.isArray(database.users) ? database.users : []).map(encryptUserPII)),
+  };
+}
+
+export async function decryptDatabasePII(database) {
+  if (!database || typeof database !== 'object') return database;
+  return {
+    ...database,
+    users: await Promise.all((Array.isArray(database.users) ? database.users : []).map(decryptUserPII)),
+  };
 }
 
 /**

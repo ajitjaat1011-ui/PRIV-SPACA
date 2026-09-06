@@ -8,7 +8,7 @@
 
 import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
-import { b64url, b64urlJson, hmacSha256, verifyToken } from '../lib/auth.js';
+import { b64url, b64urlJson, hmacSha256, tokenFromRequest, verifyToken } from '../lib/auth.js';
 import { loadConfig } from '../lib/config.js';
 import { fetchPrimaryDatabase } from '../lib/db.js';
 import { _eventQueues, _eventSubscribers } from '../lib/events.js';
@@ -49,7 +49,9 @@ app.get('/api/stream/token', requireAuth, async (c) => {
 
 // ---------- SSE stream — real streaming on Workers using ReadableStream ----------
 app.get('/api/stream', async (c) => {
-  const token = c.req.query('token') || (c.req.header('authorization') || '').replace(/^Bearer\s+/i, '');
+  // EventSource sends same-origin cookies automatically; never put bearer
+  // tokens in URLs where they leak through history, referrers and logs.
+  const token = tokenFromRequest(c);
   const unauthorizedStream = () => c.json(errorBody(
     ErrorCodes.UNAUTHORIZED,
     'Missing or invalid stream token.',
@@ -126,8 +128,8 @@ app.get('/api/stream', async (c) => {
             }), 'stream.event-cleanup');
           }
         } catch (e) { console.warn('[SSE primaryPoller] error:', e && e.message); }
-      }, 1500) : null;
-      const autoclose = setTimeout(() => cleanup(), 24000);
+      }, 4000) : null;
+      const autoclose = setTimeout(() => cleanup(), 10 * 60 * 1000);
       function cleanup() {
         if (sub.closed) return;
         sub.closed = true;

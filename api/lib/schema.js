@@ -93,6 +93,119 @@ export function mergeMaps(remoteObj, localObj) {
   return { ...(remoteObj && typeof remoteObj === 'object' ? remoteObj : {}), ...(localObj && typeof localObj === 'object' ? localObj : {}) };
 }
 
+export const DATABASE_BASE_SNAPSHOT = Symbol('priv-spaca-database-base');
+
+function cloneJson(value) {
+  if (value === undefined || value === null || typeof value !== 'object') return value;
+  if (typeof structuredClone === 'function') return structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
+}
+
+export function databaseWorkingCopy(database) {
+  const normalized = normalizeDb(database);
+  const base = cloneJson(normalized);
+  const working = cloneJson(normalized);
+  Object.defineProperty(working, DATABASE_BASE_SNAPSHOT, { value: base, enumerable: false, configurable: false });
+  return working;
+}
+
+function sameValue(a, b) {
+  if (a === b) return true;
+  try { return JSON.stringify(a) === JSON.stringify(b); } catch (_) { return false; }
+}
+
+function arrayItemKey(value) {
+  if (value === null || typeof value !== 'object') return `${typeof value}:${String(value)}`;
+  if (value.id != null) return `id:${value.id}`;
+  if (value.endpoint != null) return `endpoint:${value.endpoint}`;
+  if (value.userId != null && value.emoji != null) return `reaction:${value.userId}:${value.emoji}`;
+  if (value.userId != null && value.roomId != null) return `user-room:${value.userId}:${value.roomId}`;
+  if (value.postId != null && value.userId != null) return `post-user:${value.postId}:${value.userId}`;
+  return `json:${JSON.stringify(value)}`;
+}
+
+function mergeArrayThreeWay(remote, base, local) {
+  if (sameValue(local, base)) return cloneJson(Array.isArray(remote) ? remote : []);
+  const r = new Map((Array.isArray(remote) ? remote : []).map(v => [arrayItemKey(v), v]));
+  const b = new Map((Array.isArray(base) ? base : []).map(v => [arrayItemKey(v), v]));
+  const l = new Map((Array.isArray(local) ? local : []).map(v => [arrayItemKey(v), v]));
+  const ordered = [...r.keys(), ...l.keys().filter(k => !r.has(k))];
+  const out = [];
+  for (const key of ordered) {
+    const hasR = r.has(key), hasB = b.has(key), hasL = l.has(key);
+    if (hasB && !hasL) continue;
+    if (!hasL) { if (hasR) out.push(cloneJson(r.get(key))); continue; }
+    if (!hasR) {
+      if (!hasB || !sameValue(l.get(key), b.get(key))) out.push(cloneJson(l.get(key)));
+      continue;
+    }
+    out.push(mergeValueThreeWay(r.get(key), hasB ? b.get(key) : undefined, l.get(key)));
+  }
+  return out;
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeValueThreeWay(remote, base, local) {
+  if (sameValue(local, base)) return cloneJson(remote);
+  if (Array.isArray(local) && Array.isArray(base)) return mergeArrayThreeWay(remote, base, local);
+  if (isPlainObject(local) && isPlainObject(base) && isPlainObject(remote)) {
+    const out = {};
+    const keys = new Set([...Object.keys(remote), ...Object.keys(base), ...Object.keys(local)]);
+    for (const key of keys) {
+      const hasR = Object.prototype.hasOwnProperty.call(remote, key);
+      const hasB = Object.prototype.hasOwnProperty.call(base, key);
+      const hasL = Object.prototype.hasOwnProperty.call(local, key);
+      if (hasB && !hasL) continue;
+      if (!hasL) { if (hasR) out[key] = cloneJson(remote[key]); continue; }
+      if (!hasR) {
+        if (!hasB || !sameValue(local[key], base[key])) out[key] = cloneJson(local[key]);
+        continue;
+      }
+      out[key] = mergeValueThreeWay(remote[key], hasB ? base[key] : undefined, local[key]);
+    }
+    return out;
+  }
+  return cloneJson(local);
+}
+
+function mergeEntitiesThreeWay(remote, base, local) {
+  const r = new Map((remote || []).filter(x => x && x.id).map(x => [x.id, x]));
+  const b = new Map((base || []).filter(x => x && x.id).map(x => [x.id, x]));
+  const l = new Map((local || []).filter(x => x && x.id).map(x => [x.id, x]));
+  const keys = new Set([...r.keys(), ...b.keys(), ...l.keys()]);
+  const out = [];
+  for (const key of keys) {
+    const hasR = r.has(key), hasB = b.has(key), hasL = l.has(key);
+    if (hasB && !hasL) continue;
+    if (!hasL) { if (hasR) out.push(cloneJson(r.get(key))); continue; }
+    if (!hasR) {
+      if (!hasB || !sameValue(l.get(key), b.get(key))) out.push(cloneJson(l.get(key)));
+      continue;
+    }
+    out.push(mergeValueThreeWay(r.get(key), hasB ? b.get(key) : {}, l.get(key)));
+  }
+  return out.sort((a, b2) => Number(a.createdAt || 0) - Number(b2.createdAt || 0));
+}
+
+/** Preserve independent concurrent field/array mutations after a CAS retry. */
+export function mergeDatabaseThreeWay(remoteRaw, baseRaw, localRaw) {
+  const remote = normalizeDb(remoteRaw), base = normalizeDb(baseRaw), local = normalizeDb(localRaw);
+  return {
+    users: mergeEntitiesThreeWay(remote.users, base.users, local.users),
+    messages: mergeEntitiesThreeWay(remote.messages, base.messages, local.messages),
+    scheduledMessages: mergeEntitiesThreeWay(remote.scheduledMessages, base.scheduledMessages, local.scheduledMessages),
+    posts: mergeEntitiesThreeWay(remote.posts, base.posts, local.posts),
+    notifications: mergeEntitiesThreeWay(remote.notifications, base.notifications, local.notifications),
+    rtcSignals: mergeEntitiesThreeWay(remote.rtcSignals, base.rtcSignals, local.rtcSignals).slice(-200),
+    typing: mergeValueThreeWay(remote.typing, base.typing, local.typing),
+    heartbeat: mergeValueThreeWay(remote.heartbeat, base.heartbeat, local.heartbeat),
+    meta: { ...remote.meta, ...local.meta, updatedAt: nowMs(), storage: 'turso-three-way-v1' },
+  };
+}
+
 export function mergeDatabase(remoteRaw, localRaw) {
   const remote = normalizeDb(remoteRaw);
   const local = normalizeDb(localRaw);

@@ -17,7 +17,8 @@ pages_build_output_dir = "."
 [vars]
 GH_REPO = "ajitjaat1011-ui/PRIV-SPACA"
 GH_BRANCH = "data"
-GH_FILE = "db.json"
+# GitHub variables are used only for optional media-file fallback; database
+# persistence is Turso-only and no db.json path exists.
 # Turso/libSQL is the only primary store. Neon has been removed.
 # Bug #11 fix: Admin users should be set as encrypted Pages secrets, not here
 # in plaintext. Use: wrangler pages secret put ADMIN_USERS --project-name priv-spaca

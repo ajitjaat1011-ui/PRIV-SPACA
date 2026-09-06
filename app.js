@@ -1,6 +1,6 @@
 /**
  * PRIV SPACA — Frontend Application (Instagram-grade)
- * Vanilla JS, modular, JWT in localStorage, fetch() to /api.
+ * Vanilla JS, modular, HttpOnly cookie sessions, fetch() to /api.
  */
 (() => {
 'use strict';
@@ -13,8 +13,11 @@ function safeJsonParse(raw, fallback = null) {
   try { return raw ? JSON.parse(raw) : fallback; } catch (_) { return fallback; }
 }
 
+// Migrate away from script-readable bearer tokens. The cookie is HttpOnly;
+// this boolean-like sentinel only controls authenticated UI/poll lifecycles.
+try { localStorage.removeItem('ps_token'); } catch (_) {}
 const State = {
-  token: safeLocalGet('ps_token', null),
+  token: safeLocalGet('ps_session_hint', null) === '1' ? 'cookie' : null,
   user: safeJsonParse(safeLocalGet('ps_user', null), null),
   currentTab: 'feed',
   currentRoom: { id: 'general-group', kind: 'group', label: '#general-group', target: null },
@@ -45,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v169';
+const APP_VERSION = 'priv-spaca-v170';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -166,7 +169,7 @@ function loadHeic2Any() {
   if (_heic2anyLoadPromise) return _heic2anyLoadPromise;
   _heic2anyLoadPromise = new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+    s.src = '/vendor/heic2any.min.js?v=0.0.4';
     s.onload = () => resolve(window.heic2any);
     s.onerror = () => reject(new Error('Could not load HEIC converter'));
     document.head.appendChild(s);
@@ -198,7 +201,8 @@ async function convertHeicIfNeeded(file) {
 
 // ====== API helper ======
 function authHeaders() {
-  return State.token ? { 'Authorization': 'Bearer ' + State.token } : {};
+  // Authentication is carried only by the Secure HttpOnly session cookie.
+  return {};
 }
 // Tiny GET cache (5s TTL) + in-flight de-duplication so notification poller
 // and view loaders don't double-fetch the same endpoint within the same tick.
@@ -302,7 +306,7 @@ const ClientOmni = (() => {
 })();
 
 async function api(path, options = {}) {
-  const opts = Object.assign({ method: 'GET', headers: {} }, options);
+  const opts = Object.assign({ method: 'GET', headers: {}, credentials: 'same-origin' }, options);
   const omniTierOverride = options.omniTier === 2 ? 2 : null;
   delete opts.omniTier;
   delete opts.correlationId;
@@ -556,12 +560,8 @@ function bubbleTintFor(seed) {
 }
 
 function isPrivOwner(user) {
-  // SECURITY: owner identification must be the server's job, not hardcoded
-  // in the publicly-downloadable client bundle. The server sets user.verified
-  // = true on owner accounts; we just trust that flag. Previously this fn
-  // hardcoded the owner's usernames + emails + a specific user ID, leaking
-  // a phishing target list to anyone who downloaded app.min.js.
-  return !!(user && user.verified && (user.id === 'usr_mr1p9tls_xj3xdw1' || user.id === 'usr_admin_arvind_1011'));
+  // Presentation-only server claim. All real privilege checks remain on the API.
+  return !!(user && user.isOwner === true);
 }
 
 // Blue tick: owner OR users who redeem VIP key
@@ -743,7 +743,7 @@ function refreshIcons(scopeEl) {
 // reload. Previously this list was defined 3× with DIFFERENT members — a
 // latent bug where one path preserved ps_close_friends and another didn't.
 const PROTECTED_LS_KEYS = [
-  'ps_token', 'ps_user', 'ps_theme', 'ps_accent',
+  'ps_session_hint', 'ps_user', 'ps_theme', 'ps_accent',
   'ps_closeFriends', 'ps_saved_posts', 'ps_secret', 'ps_story_views',
   'ps_sw_reload_once', 'ps_version_reload_done', 'ps_heal_attempts',
   'ps_rtcLastSignalAt'
@@ -771,11 +771,17 @@ function syncPolaroidCaption(name) {
   if (el) el.textContent = name || '';
 }
 function persistUser() {
-  if (State.user) lsSet('ps_user', JSON.stringify(State.user));
+  if (!State.user) return;
+  // Cache only presentation state. Email/recovery/passkey/private fields stay
+  // server-side and are rehydrated from the cookie-authenticated /auth/me.
+  const cached = { ...State.user };
+  for (const key of ['email','dateOfBirth','pushSubs','passwordHash','pinHash','recoveryCodeHashes','passkeyPublicKey','passkeyPublicKeyJwk','passkeyCredentialId','tokenVersion']) delete cached[key];
+  lsSet('ps_user', JSON.stringify(cached));
 }
 
-// Clear localStorage but preserve auth tokens + user prefs across version
-// updates. Was duplicated 3× with divergent key lists (bug).
+// Clear localStorage but preserve the non-secret session hint + user prefs
+// across version updates. Auth credentials stay only in the HttpOnly cookie.
+// This was duplicated 3× with divergent key lists (bug).
 function clearStoragePreservingAuth() {
   try {
     const preserved = {};
@@ -892,10 +898,9 @@ function resolveAuthor(rawAuthor, fallbackUserId, authorSnapshot) {
 // tmpfiles.org links expire/get pruned (confirmed live — multiple posts'
 // images returned 404 within days), so using it as a fallback quietly
 // trades a transient upload failure for a guaranteed-to-break-later image.
-// This now always produces a durable result: it persists the image as a
-// data URL via the same /api/upload-photo endpoint the primary path uses
-// (which commits it to the GitHub media CDN), so there is no unreliable
-// third-party host in the chain at all anymore.
+// This now only accepts a durable server-backed result. If Cloudinary/GitHub
+// storage is unavailable, the action fails visibly instead of embedding a
+// temporary data URL into the social database.
 async function uploadImage(file, onProgress) {
   if (!file) throw new Error('No file');
   if (file.size > MAX_UPLOAD_BYTES) throw new Error('File too large (max 15MB)');
@@ -908,19 +913,12 @@ async function uploadImage(file, onProgress) {
   } : await compressResponsiveImage(file, { maxDim: 1080, quality: .82, targetBytes: 400 * 1024 });
   const dataUrl = encoded.dataUrl;
   if (onProgress) onProgress(50);
-  try {
-    const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind: 'media' } });
-    if (onProgress) onProgress(100);
-    return { url: res.url || dataUrl, name: file.name, size: encoded.size || file.size, blurDataUrl: encoded.blurDataUrl || '', persisted: res.persisted !== false };
-  } catch (e) {
-    // Last resort: inline data URL only (works everywhere, but bloats the
-    // DB record and won't persist across a full post-storage rewrite). Only
-    // reached if /api/upload-photo itself is unreachable/erroring, and only
-    // for small files so we don't balloon storage with large inline blobs.
-    if ((encoded.size || file.size) > 800 * 1024) throw new Error('Image upload service unavailable. Please use a smaller image (<800KB) or try again later.');
-    if (onProgress) onProgress(100);
-    return { url: dataUrl, name: file.name, size: encoded.size || file.size, blurDataUrl: encoded.blurDataUrl || '', persisted: false };
+  const res = await api('/upload-photo', { method: 'POST', body: { dataUrl, kind: 'media' } });
+  if (!res || !res.url || res.persisted === false || String(res.url).startsWith('data:')) {
+    throw new Error('Durable image storage is unavailable. Please try again later.');
   }
+  if (onProgress) onProgress(100);
+  return { url: res.url, name: file.name, size: encoded.size || file.size, blurDataUrl: encoded.blurDataUrl || '', persisted: true };
 }
 
 // ====== Splash / Shells ======
@@ -931,20 +929,32 @@ function hideSplash() {
   setTimeout(() => s.classList.add('hidden'), 320);
 }
 
+let _reactAuthBundlePromise = null;
+function ensureReactAuthBundle() {
+  if (window.__PSAuthReact && window.__PSAuthReact.mount) return Promise.resolve(window.__PSAuthReact);
+  if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
+  _reactAuthBundlePromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '/auth.react.min.js?v=193';
+    script.async = true;
+    script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
+    script.onerror = () => reject(new Error('Auth module failed to load'));
+    document.head.appendChild(script);
+  });
+  return _reactAuthBundlePromise;
+}
+
 function showAuth() {
   if (typeof startupFallback !== 'undefined') try { clearTimeout(startupFallback); } catch (_) {}
   $id('#authShell').classList.remove('hidden');
   $id('#appShell').classList.add('hidden');
   hideSplash();
   refreshIcons();
-  // React-owned auth UI (Glass One UI, wordmark-only): mount when the auth
-  // shell becomes visible — covers first boot (no session), logout and the
-  // slow-startup fallback. Unmounts via showApp().
-  try {
-    if (window.__PSAuthReact && window.__PSAuthReact.mount) {
-      window.__PSAuthReact.mount($id('#psAuthRoot'));
-    }
-  } catch (e) { console.error('[auth] react mount failed:', e && e.message); }
+  // Load React auth only for signed-out users. Existing sessions avoid parsing
+  // React/ReactDOM and the auth bundle on their critical startup path.
+  ensureReactAuthBundle().then((auth) => {
+    if (!$id('#authShell').classList.contains('hidden')) auth.mount($id('#psAuthRoot'));
+  }).catch((e) => console.error('[auth] react mount failed:', e && e.message));
 }
 
 function showApp() {
@@ -1009,6 +1019,7 @@ function hydrateMeChips() {
 }
 
 function logout(silent) {
+  const hadSession = !!State.token;
   Object.values(State.pollTimers).forEach(t => clearInterval(t));
   State.pollTimers = {};
   disconnectSSE();
@@ -1022,9 +1033,16 @@ function logout(silent) {
   _previousMessageIds = new Set();
   _previousPostIds = new Set();
   _storiesRendered = false;
-  try { localStorage.removeItem('ps_token'); } catch (_) {}
-  try { localStorage.removeItem('ps_user'); } catch (_) {}
-  try { localStorage.removeItem('ps_closeFriends'); } catch (_) {}
+  lsRemove('ps_token');
+  lsRemove('ps_session_hint');
+  lsRemove('ps_user');
+  lsRemove('ps_closeFriends');
+  if (hadSession) {
+    fetch('/api/auth/logout', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'X-App-Version': APP_VERSION, 'X-Correlation-ID': ClientOmni.correlationId() }
+    }).catch(() => {});
+  }
   showAuth();
   if (!silent) toast('Signed out');
 }
@@ -1333,9 +1351,10 @@ function bindAuth() {
       const data = await api('/auth/reset-by-pin', { method: 'POST', body: {
         identifier: String(fd.get('identifier') || '').trim(),
         pin,
+        recoveryCode: String(fd.get('recoveryCode') || prompt('Enter one of your one-time recovery codes:') || ''),
         newPassword: String(fd.get('newPassword') || ''),
       }});
-      if (data && data.token && data.user) {
+      if (data && data.user) {
         acceptSession(data);
       } else {
         errEl.style.color = 'var(--green)';
@@ -1354,10 +1373,16 @@ function bindAuth() {
 }
 
 function acceptSession(data) {
-  State.token = data.token;
+  State.token = 'cookie';
   State.user = data.user;
-  lsSet('ps_token', State.token);
-  persistUser()
+  lsRemove('ps_token');
+  lsSet('ps_session_hint', '1');
+  persistUser();
+  if (Array.isArray(data.recoveryCodes) && data.recoveryCodes.length) {
+    const text = data.recoveryCodes.join('\n');
+    if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+    alert('Save these one-time recovery codes somewhere safe. They were copied to your clipboard when permitted.\n\n' + text);
+  }
   // Clear PIN fields
   $$('.pin-input').forEach(clearPin);
   showApp();
@@ -4609,8 +4634,7 @@ function connectSSE() {
   if (!('EventSource' in window)) return;
   if (_sseUnsupported) return;
   disconnectSSE();
-  const url = '/api/stream?token=' + encodeURIComponent(State.token)
-            + '&correlationId=' + encodeURIComponent(ClientOmni.correlationId())
+  const url = '/api/stream?correlationId=' + encodeURIComponent(ClientOmni.correlationId())
             + (_sseLastEventId ? '&lastEventId=' + encodeURIComponent(_sseLastEventId) : '');
   try {
     _sseSource = new EventSource(url);
@@ -9024,7 +9048,7 @@ function bindProfile() {
       _brokenPhotoUrls.delete(res.url);
       try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {}
       hydrateMeChips();
-      status.textContent = res.persisted ? 'Photo updated ✓ (permanent)' : 'Photo updated (inline fallback)';
+      status.textContent = 'Photo updated ✓ (permanent)';
       toast('Profile photo updated', 'success');
     } catch (err) { status.textContent = ''; toast('Upload failed: ' + (err.message || ''), 'error'); }
   });
@@ -9596,6 +9620,49 @@ function bindSettingsSheet() {
     const m = $id('#termsModal');
     m.classList.remove('hidden');
     refreshIcons();
+  });
+  const recoveryBtn = $id('#settingsRecoveryCodes');
+  if (recoveryBtn) recoveryBtn.addEventListener('click', async () => {
+    const password = prompt('Confirm your password to replace your recovery codes:');
+    if (password === null) return;
+    recoveryBtn.disabled = true;
+    try {
+      const data = await api('/user/recovery-codes', { method: 'POST', body: { password }, timeoutMs: 20000 });
+      const text = (data.recoveryCodes || []).join('\n');
+      if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+      alert('These codes replace all previous recovery codes. Save them now.\n\n' + text);
+    } catch (e) { toast(e.message || 'Could not generate recovery codes', 'error'); }
+    finally { recoveryBtn.disabled = false; }
+  });
+  const exportBtn = $id('#settingsExportData');
+  if (exportBtn) exportBtn.addEventListener('click', async () => {
+    exportBtn.disabled = true;
+    try {
+      const data = await api('/user/export', { method: 'POST', timeoutMs: 20000 });
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'priv-spaca-export-' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      toast('Your data export is ready', 'success');
+    } catch (e) { toast(e.message || 'Export failed', 'error'); }
+    finally { exportBtn.disabled = false; }
+  });
+  const deleteBtn = $id('#settingsDeleteAccount');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm('Permanently delete your PRIV SPACA account and authored content? This cannot be undone.')) return;
+    const password = prompt('Enter your account password:');
+    if (password === null) return;
+    const pin = prompt('Enter your 4-digit recovery PIN:');
+    if (pin === null) return;
+    const confirmation = prompt('Type DELETE to confirm permanent deletion:');
+    if (confirmation !== 'DELETE') { toast('Deletion cancelled', 'info'); return; }
+    deleteBtn.disabled = true;
+    try {
+      await api('/user/delete', { method: 'POST', body: { password, pin, confirmation }, timeoutMs: 30000 });
+      closeSettings(); logout(true); toast('Account deleted', 'success');
+    } catch (e) { toast(e.message || 'Account deletion failed', 'error'); deleteBtn.disabled = false; }
   });
   const lo = $id('#settingsLogout');
   if (lo) lo.addEventListener('click', () => {
@@ -11527,6 +11594,9 @@ const SelfHeal = {
     try { location.replace(url.toString()); } catch (_) { location.reload(true); }
   },
   async bootHeal() {
+    // Offline is a valid PWA mode, not corruption. Never unregister the worker
+    // or delete the very caches needed to launch without a network.
+    if (!navigator.onLine) return { healed: false, healthy: true, offline: true };
     const attempts = parseInt(sessionStorage.getItem('ps_heal_attempts') || '0', 10);
     if (attempts >= HEAL_MAX_ATTEMPTS) {
       // Too many attempts — stop trying, just log and reset counter
@@ -11558,13 +11628,13 @@ const SelfHeal = {
       return { healed: false, reason: 'version-mismatch-soft' };
     }
 
-    // API health failure: this is more serious, try deepHeal but with
-    // the attempt counter so we don't loop forever.
+    // An API outage, captive portal or flaky radio cannot be repaired by
+    // deleting local data. Keep the offline shell/caches intact and retry on
+    // the next natural health check instead of causing a destructive loop.
     const reason = 'health:' + (health.error || health.status || 'fail');
-    console.warn('[heal] API health failure, attempt ' + (attempts + 1) + ': ' + reason);
-    sessionStorage.setItem('ps_heal_attempts', String(attempts + 1));
-    await SelfHeal.deepHeal(reason);
-    return { healed: true, reason };
+    console.warn('[heal] API health unavailable — preserving offline state:', reason);
+    sessionStorage.removeItem('ps_heal_attempts');
+    return { healed: false, reason };
   },
   startPeriodicCheck() {
     // After boot, keep an eye on API health. If it disappears while the tab
@@ -11833,7 +11903,21 @@ function boot() {
       }
     });
   } else {
-    showAuth();
+    // The session credential is intentionally HttpOnly, so localStorage is
+    // only a performance hint and cannot be the source of truth. Recover a
+    // valid cookie session after cleared/site-migrated storage before showing
+    // the auth shell; otherwise users with a live cookie appear logged out.
+    api('/auth/me').then(d => {
+      if (d && d.user) {
+        State.token = 'cookie';
+        State.user = d.user;
+        lsSet('ps_session_hint', '1');
+        persistUser();
+        showApp();
+      } else {
+        showAuth();
+      }
+    }).catch(() => showAuth());
   }
 
   // v159: Initialize advanced engines (Spring, Shader, Predictive, BioLock, Ephemeral)
@@ -13043,7 +13127,7 @@ const Predictive = {
     t.fetched = true;
     // Pre-fetch data for target tab (best-effort, fire and forget)
     try {
-      const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
+      const token = (typeof State !== 'undefined' && State.token);
       if (!token) return;
       if (t.type === 'tab') {
         const request = t.tab === 'chat' ? '/users' : t.tab === 'feed' ? '/feed' : t.tab === 'profile' ? '/auth/me' : null;
@@ -13078,6 +13162,35 @@ const Predictive = {
 };
 
 // ─── 4. WEBAUTHN BIOMETRIC LOCK ──────────────────────────────────────────────
+function webAuthnEncode(value) {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function webAuthnDecode(value) {
+  const text = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(text + '='.repeat((4 - text.length % 4) % 4));
+  return Uint8Array.from(binary, ch => ch.charCodeAt(0));
+}
+function webAuthnCredentialJSON(credential) {
+  const response = credential.response;
+  const out = {
+    id: credential.id,
+    rawId: webAuthnEncode(credential.rawId),
+    type: credential.type,
+    response: {
+      clientDataJSON: webAuthnEncode(response.clientDataJSON),
+    },
+  };
+  if (response.attestationObject) out.response.attestationObject = webAuthnEncode(response.attestationObject);
+  if (response.authenticatorData) out.response.authenticatorData = webAuthnEncode(response.authenticatorData);
+  if (response.signature) out.response.signature = webAuthnEncode(response.signature);
+  if (response.userHandle) out.response.userHandle = webAuthnEncode(response.userHandle);
+  if (typeof response.getTransports === 'function') out.response.transports = response.getTransports();
+  return out;
+}
+
 const BioLock = {
   enabled: false,
   _credId: null,
@@ -13092,87 +13205,50 @@ const BioLock = {
   async enable() {
     const bioStatus = document.getElementById('bioLockStatus');
     if (bioStatus) { bioStatus.textContent = '...'; bioStatus.className = 'settings-chip'; }
-
     if (!window.PublicKeyCredential) {
-      if (typeof toast === 'function') toast('WebAuthn not supported in this browser', 'error');
-      if (bioStatus) { bioStatus.textContent = 'Off'; }
+      toast('WebAuthn not supported in this browser', 'error');
+      if (bioStatus) bioStatus.textContent = 'Off';
       return;
     }
-
     try {
       const hasPlatform = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (!hasPlatform) {
-        if (typeof toast === 'function') toast('No biometric sensor detected on this device', 'error');
-        if (bioStatus) { bioStatus.textContent = 'Off'; }
-        return;
-      }
-
-      const uid = (typeof State !== 'undefined' && State.user && State.user.id) || 'user-' + Date.now();
-      const uname = (typeof State !== 'undefined' && State.user && (State.user.displayName || State.user.username)) || 'User';
-      
-      if (typeof toast === 'function') toast('Scan your fingerprint / face...', 'info');
-
-      const cred = await navigator.credentials.create({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          rp: { name: 'Priv Spaca', id: location.hostname },
-          user: { id: new TextEncoder().encode(uid), name: uname, displayName: uname },
-          pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-          timeout: 120000,
-          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
-          attestation: 'none'
-        }
+      if (!hasPlatform) throw new Error('No biometric sensor detected on this device');
+      toast('Scan your fingerprint / face...', 'info');
+      const options = await api('/auth/passkey/register/options', { method: 'POST' });
+      const publicKey = { ...options.publicKey };
+      publicKey.challenge = webAuthnDecode(publicKey.challenge);
+      publicKey.user = { ...publicKey.user, id: webAuthnDecode(publicKey.user.id) };
+      const credential = await navigator.credentials.create({ publicKey });
+      if (!credential) throw new Error('Passkey creation was cancelled');
+      await api('/auth/passkey/register', {
+        method: 'POST',
+        body: { challengeId: options.challengeId, credential: webAuthnCredentialJSON(credential) },
       });
-
-      if (cred) {
-        const idB64 = btoa(String.fromCharCode(...new Uint8Array(cred.rawId)));
-        this._credId = idB64;
-        this.enabled = true;
-        localStorage.setItem('ps_biometric_lock', '1');
-        localStorage.setItem('ps_biometric_cred', idB64);
-
-        // Register passkey on server for login 2FA
-        try {
-          const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
-          if (token) {
-            const pubKey = cred.response.getPublicKey ? cred.response.getPublicKey() : null;
-            const pubKeyB64 = pubKey ? btoa(String.fromCharCode(...new Uint8Array(pubKey.buffer || pubKey))) : '';
-            await api('/auth/passkey/register', {
-              method: 'POST',
-              body: {
-                credentialId: idB64,
-                publicKey: pubKeyB64,
-                algorithm: cred.response.getPublicKeyAlgorithm ? cred.response.getPublicKeyAlgorithm() : -7
-              }
-            });
-          }
-        } catch (regErr) { console.warn('[BioLock] server register:', regErr); }
-
-        if (bioStatus) { bioStatus.textContent = 'On'; bioStatus.className = 'settings-chip on'; }
-        if (typeof toast === 'function') toast('✅ Biometric 2FA enabled for login!', 'success');
-      }
+      this._credId = webAuthnEncode(credential.rawId);
+      this.enabled = true;
+      localStorage.setItem('ps_biometric_lock', '1');
+      localStorage.setItem('ps_biometric_cred', this._credId);
+      if (bioStatus) { bioStatus.textContent = 'On'; bioStatus.className = 'settings-chip on'; }
+      toast('Biometric 2FA enabled for login!', 'success');
     } catch (err) {
       console.error('[BioLock] enable error:', err);
       if (bioStatus) { bioStatus.textContent = 'Off'; bioStatus.className = 'settings-chip'; }
-      let msg = 'Biometric failed: ';
-      if (err.name === 'NotAllowedError') msg = 'Scan cancelled or denied';
-      else if (err.name === 'SecurityError') msg = 'HTTPS required';
-      else if (err.name === 'NotSupportedError') msg = 'Not supported on this device';
-      else msg += err.message || err.name || 'unknown';
-      if (typeof toast === 'function') toast(msg, 'error');
+      const msg = err.name === 'NotAllowedError' ? 'Scan cancelled or denied'
+        : err.name === 'SecurityError' ? 'HTTPS and the registered site domain are required'
+        : err.name === 'NotSupportedError' ? 'Not supported on this device'
+        : (err.message || 'Biometric setup failed');
+      toast(msg, 'error');
     }
   },
 
-  disable() {
+  async disable() {
+    try { await api('/auth/passkey/disable', { method: 'POST' }); }
+    catch (error) { toast(error.message || 'Could not disable passkey', 'error'); return false; }
     this.enabled = false;
     localStorage.removeItem('ps_biometric_lock');
     localStorage.removeItem('ps_biometric_cred');
     this._credId = null;
-    // Remove from server
-    try {
-      const token = (typeof State !== 'undefined' && State.token) || localStorage.getItem('ps_token');
-      if (token) api('/auth/passkey/disable', { method: 'POST' }).catch(() => {});
-    } catch(_) {}
+    return true;
   }
 };
 
@@ -13259,9 +13335,9 @@ function _bindEngineSettings() {
         e.stopPropagation();
         const isOn = localStorage.getItem('ps_biometric_lock') === '1';
         if (isOn) {
-          BioLock.disable();
+          const disabled = await BioLock.disable();
           syncBio();
-          if (typeof toast === 'function') toast('Biometric lock disabled', 'info');
+          if (disabled && typeof toast === 'function') toast('Biometric lock disabled', 'info');
         } else {
           // Show immediate feedback
           if (bioStatus) { bioStatus.textContent = 'Starting...'; }
@@ -13306,43 +13382,88 @@ function _bindEngineSettings() {
 
 // ─── Passkey Login Flow (2-step verification) ────────────────────────────────
 async function _passkeyLoginFlow(challengeData, identifier, password) {
-  const { challengeId, credentialId, userId } = challengeData;
-  
-  if (!window.PublicKeyCredential) {
-    throw new Error('Biometric authentication not supported in this browser');
-  }
-
-  // Get biometric assertion
-  const rawCredId = Uint8Array.from(atob(credentialId), c => c.charCodeAt(0));
+  const { challengeId, challenge, credentialId, userId, rpId, timeout } = challengeData;
+  if (!window.PublicKeyCredential) throw new Error('Biometric authentication not supported in this browser');
   const assertion = await navigator.credentials.get({
     publicKey: {
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
-      timeout: 120000,
-      rpId: location.hostname,
-      allowCredentials: [{ id: rawCredId, type: 'public-key', transports: ['internal'] }],
-      userVerification: 'required',
-      authenticatorAttachment: 'platform'
+      challenge: webAuthnDecode(challenge),
+      timeout: timeout || 120000,
+      rpId: rpId || location.hostname,
+      allowCredentials: [{ id: webAuthnDecode(credentialId), type: 'public-key', transports: ['internal'] }],
+      userVerification: 'required'
     }
   });
-
   if (!assertion) throw new Error('Biometric scan cancelled');
-
-  // Extract signature data
-  const authData = btoa(String.fromCharCode(...new Uint8Array(assertion.response.authenticatorData)));
-  const sig = btoa(String.fromCharCode(...new Uint8Array(assertion.response.signature)));
-
-  // Send to server for verification
-  const result = await api('/auth/passkey/verify', {
+  return api('/auth/passkey/verify', {
     method: 'POST',
-    body: {
-      userId,
-      challengeId,
-      signature: sig,
-      authenticatorData: authData
-    }
+    body: { userId, challengeId, credential: webAuthnCredentialJSON(assertion) }
   });
+}
 
-  return result;
+// CSP-safe replacement for legacy inline event attributes in index.html.
+function _runDeclarativeUiAction(encoded, event, el) {
+  let action = '';
+  try {
+    const b64 = String(encoded || '').replace(/-/g, '+').replace(/_/g, '/');
+    action = decodeURIComponent(escape(atob(b64 + '='.repeat((4 - b64.length % 4) % 4))));
+  } catch (_) { return; }
+  switch (action) {
+    case 'closeStoryCreator()': return closeStoryCreator();
+    case 'selectStorySticker(event,this)': return selectStorySticker(event, el);
+    case 'removeStoryMusic(event)': return removeStoryMusic(event);
+    case 'startStickerScale(event,"storyStageMusicSticker")': return startStickerScale(event, 'storyStageMusicSticker');
+    case 'removeStoryTextOverlay(event)': return removeStoryTextOverlay(event);
+    case 'startStickerScale(event,"storyStageTextOverlay")': return startStickerScale(event, 'storyStageTextOverlay');
+    case 'closeMusicTrimmer()': return closeMusicTrimmer();
+    case 'setStoryMusicLayout("pill",this)': return setStoryMusicLayout('pill', el);
+    case 'setStoryMusicLayout("card",this)': return setStoryMusicLayout('card', el);
+    case 'setStoryMusicLayout("minimal",this)': return setStoryMusicLayout('minimal', el);
+    case 'setMusicClipDuration(10,this)': return setMusicClipDuration(10, el);
+    case 'setMusicClipDuration(15,this)': return setMusicClipDuration(15, el);
+    case 'setMusicClipDuration(20,this)': return setMusicClipDuration(20, el);
+    case 'setMusicClipDuration(30,this)': return setMusicClipDuration(30, el);
+    case 'updateMusicStartTime(this.value)': return updateMusicStartTime(el.value);
+    case 'openStoryTextEditor()': return openStoryTextEditor();
+    case 'openStoryMusicSheet()': return openStoryMusicSheet();
+    case 'promptStoryMention()': return promptStoryMention();
+    case 'closeStoryTextEditor()': return closeStoryTextEditor();
+    case 'finishStoryTextEditor()': return finishStoryTextEditor();
+    case 'updateStoryTextLivePreview()': return updateStoryTextLivePreview();
+    case 'setStoryFont("modern",this)': return setStoryFont('modern', el);
+    case 'setStoryFont("SQUEEZE",this)': return setStoryFont('SQUEEZE', el);
+    case 'setStoryFont("Bubble",this)': return setStoryFont('Bubble', el);
+    case 'setStoryFont("Deco",this)': return setStoryFont('Deco', el);
+    case 'setStoryFont("Typewriter",this)': return setStoryFont('Typewriter', el);
+    case 'setStoryFont("script",this)': return setStoryFont('script', el);
+    case 'toggleTextColorsRow()': return toggleTextColorsRow();
+    case 'cycleOverlayTextBgMode()': return cycleOverlayTextBgMode();
+    case 'cycleOverlayTextAlign()': return cycleOverlayTextAlign();
+    case 'setOverlayTextColor("#ffffff")': return setOverlayTextColor('#ffffff');
+    case 'setOverlayTextColor("#000000")': return setOverlayTextColor('#000000');
+    case 'setOverlayTextColor("#ec4899")': return setOverlayTextColor('#ec4899');
+    case 'setOverlayTextColor("#38bdf8")': return setOverlayTextColor('#38bdf8');
+    case 'setOverlayTextColor("#10b981")': return setOverlayTextColor('#10b981');
+    case 'setOverlayTextColor("#fbbf24")': return setOverlayTextColor('#fbbf24');
+    case 'setOverlayTextColor("#a855f7")': return setOverlayTextColor('#a855f7');
+    case 'publishStoryWithMusic()': return publishStoryWithMusic();
+    case 'publishStoryWithMusic(!0)': return publishStoryWithMusic(true);
+    case 'closeStoryMusicSheetOnBackdrop(event)': return closeStoryMusicSheetOnBackdrop(event);
+    case 'closeStoryMusicSheet()': return closeStoryMusicSheet();
+    case 'filterStorySongs()': return filterStorySongs();
+    case 'selectStoryMusicCategory("all",this)': return selectStoryMusicCategory('all', el);
+    case 'selectStoryMusicCategory("trending",this)': return selectStoryMusicCategory('trending', el);
+    case 'selectStoryMusicCategory("lofi",this)': return selectStoryMusicCategory('lofi', el);
+    case 'selectStoryMusicCategory("pop",this)': return selectStoryMusicCategory('pop', el);
+    case 'selectStoryMusicCategory("acoustic",this)': return selectStoryMusicCategory('acoustic', el);
+    default: console.warn('[ui] Blocked unknown declarative action');
+  }
+}
+for (const type of ['click', 'input', 'mousedown', 'touchstart']) {
+  document.addEventListener(type, (event) => {
+    const attr = 'data-ps-on' + type;
+    const el = event.target && event.target.closest ? event.target.closest('[' + attr + ']') : null;
+    if (el) _runDeclarativeUiAction(el.getAttribute(attr), event, el);
+  }, type === 'touchstart' ? { passive: false } : false);
 }
 
 // ─── MASTER INIT ─────────────────────────────────────────────────────────────

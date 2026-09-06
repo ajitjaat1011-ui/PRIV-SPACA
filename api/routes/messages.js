@@ -14,16 +14,13 @@ import { isSafeMediaUrl, nowMs, sanitizeText, sanitizeUser, uid } from '../lib/h
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
-import { dmRoomFor, normalizeRoomId } from '../lib/rooms.js';
+import { canAccessRoom, dmRoomFor, normalizeRoomId } from '../lib/rooms.js';
 import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoHealNotificationColumns, tursoMarkRoomRead, tursoMarkRoomsRead, tursoRefreshDmIndexForOwners, tursoSetMessageReaction, tursoUpsertMessageReceipts, tursoUpsertMessages } from '../lib/store-turso.js';
 
 // ---------- Messages ----------
 app.get('/api/messages', requireAuth, async (c) => {
   const roomId = normalizeRoomId(c.req.query('roomId') || 'general-group', c.get('userId'));
-  if (roomId.startsWith('dm:')) {
-    const parts = roomId.slice(3).split(':');
-    if (!parts.includes(c.get('userId'))) return c.json({ error: 'Forbidden' }, 403);
-  }
+  if (!canAccessRoom(roomId, c.get('userId'), null)) return c.json({ error: 'Forbidden' }, 403);
   const now = nowMs();
   const beforeTimestamp = Math.max(0, Number(c.req.query('beforeTimestamp') || 0));
   const sinceTimestamp = Math.max(0, Number(c.req.query('sinceTimestamp') || 0));
@@ -109,6 +106,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     }
 
     const db = await fetchDatabase();
+    if (!canAccessRoom(roomId, myId, db)) return c.json({ error: 'Forbidden' }, 403);
     // SECURITY: block self-DMs.
     if (targetUserId && targetUserId === myId) {
       return c.json({ error: 'Cannot message yourself' }, 400);
@@ -289,8 +287,7 @@ app.post('/api/messages/reaction', requireAuth, async (c) => {
     const message = (db.messages || []).find(m => m.id === body.messageId && !m.deletedAt);
     if (!message) return c.json({ error: 'Not found' }, 404);
     const roomId = String(message.roomId || '');
-    const allowed = roomId === 'general-group' || (roomId.startsWith('dm:') && roomId.slice(3).split(':').includes(myId));
-    if (!allowed) return c.json({ error: 'Forbidden' }, 403);
+    if (!canAccessRoom(roomId, myId, db)) return c.json({ error: 'Forbidden' }, 403);
     message.reactions = Array.isArray(message.reactions) ? message.reactions : [];
     const active = body.active !== false;
     message.reactions = message.reactions.filter(r => !(r && r.userId === myId && r.emoji === emoji));
@@ -311,8 +308,7 @@ app.post('/api/messages/receipt', requireAuth, async (c) => {
     const myId = c.get('userId');
     const roomId = normalizeRoomId(body.roomId, myId);
     const stateName = body.state === 'read' ? 'read' : 'delivered';
-    const allowed = roomId === 'general-group' || (roomId.startsWith('dm:') && roomId.slice(3).split(':').includes(myId));
-    if (!allowed) return c.json({ error: 'Forbidden' }, 403);
+    if (!canAccessRoom(roomId, myId, null)) return c.json({ error: 'Forbidden' }, 403);
     const ids = [...new Set((body.messageIds || []).map(String))].slice(0, 100);
     const at = Number(body.at) > 0 ? Number(body.at) : nowMs();
     const db = await fetchDatabase();
@@ -394,6 +390,7 @@ app.post('/api/messages/schedule', requireAuth, async (c) => {
       if (!parts.includes(myId)) return c.json({ error: 'Forbidden' }, 403);
     }
     const db = await fetchDatabase();
+    if (!canAccessRoom(roomId, myId, db)) return c.json({ error: 'Forbidden' }, 403);
     let replyRef = null;
     if (replyTo && typeof replyTo === 'object' && replyTo.id) {
       replyRef = {
@@ -444,9 +441,7 @@ app.post('/api/messages/read', requireAuth, async (c) => {
     if (!roomId) return c.json({ error: 'roomId required' }, 400);
     // Only rooms the caller is actually in: the shared group, or a dm room
     // whose id contains their user id.
-    const allowed = roomId === 'general-group'
-      || (roomId.startsWith('dm:') && roomId.slice(3).split(':').includes(myId));
-    if (!allowed) return c.json({ error: 'Forbidden' }, 403);
+    if (!canAccessRoom(normalizeRoomId(roomId, myId), myId, null)) return c.json({ error: 'Forbidden' }, 403);
     const ts = Number(body.at) > 0 ? Number(body.at) : nowMs();
     if (isTursoConfigured()) await tursoMarkRoomRead(myId, roomId, ts);
     return c.json({ ok: true, roomId, at: ts });
@@ -464,8 +459,7 @@ app.post('/api/messages/read-batch', requireAuth, async (c) => {
       at: Number(receipt.at) > 0 ? Number(receipt.at) : nowMs(),
     }));
     if (!receipts.length) return c.json({ ok: true, count: 0 });
-    const allowed = receipts.every(({ roomId }) => roomId === 'general-group'
-      || (roomId.startsWith('dm:') && roomId.slice(3).split(':').includes(myId)));
+    const allowed = receipts.every(({ roomId }) => canAccessRoom(normalizeRoomId(roomId, myId), myId, null));
     if (!allowed) return c.json({ error: 'Forbidden' }, 403);
     if (isTursoConfigured()) await tursoMarkRoomsRead(myId, receipts);
     return c.json({ ok: true, count: receipts.length, at: nowMs() });

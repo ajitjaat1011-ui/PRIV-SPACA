@@ -6,6 +6,10 @@
 /backups/*                 /404  404
 /scripts/*                 /404  404
 /SECURITY_AUDIT*           /404  404
+/AUDIT_*                   /404  404
+/app.js                    /404  404
+/style.css                 /404  404
+/react-auth/*              /404  404
 /README.md                 /404  404
 /package.json              /404  404
 /package-lock.json         /404  404

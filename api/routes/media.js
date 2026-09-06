@@ -8,8 +8,8 @@
 
 import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
-import { isRepo, uid } from '../lib/helpers.js';
-import { MEDIA_MAX_BYTES, MEDIA_MIME_EXT, _mediaKindFromMime, base64DecodedSize, decodeBase64Chunked, isCloudinaryConfigured, uploadToCloudinary } from '../lib/media.js';
+import { isGithubMediaConfigured, uid } from '../lib/helpers.js';
+import { MEDIA_MAX_BYTES, MEDIA_MIME_EXT, _mediaKindFromMime, base64DecodedSize, decodeBase64Chunked, isCloudinaryConfigured, mediaMagicMatches, uploadToCloudinary } from '../lib/media.js';
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
@@ -31,6 +31,7 @@ app.post('/api/upload-media', requireAuth, async (c) => {
     const decodedBytes = base64DecodedSize(m[2]);
     if (!decodedBytes) return c.json({ error: 'Empty media' }, 400);
     if (decodedBytes > MEDIA_MAX_BYTES) return c.json({ error: 'Media too large (24MB max)' }, 413);
+    if (!mediaMagicMatches(m[2], mime)) return c.json({ error: 'Media content does not match its declared type' }, 415);
     const safeName = String((body && body.name) || 'media').replace(/[^a-z0-9_.-]+/gi, '-').slice(-64) || ('media.' + ext);
     const key = `media/${Date.now()}-${uid('m')}-${safeName.replace(/\.[^.]+$/, '')}.${ext}`;
 
@@ -50,7 +51,7 @@ app.post('/api/upload-media', requireAuth, async (c) => {
       return c.json({ url, mediaUrl: url, type: kind, mimeType: mime, bytes: decodedBytes, storage: 'cloudflare-r2' });
     }
 
-    if (isRepo()) {
+    if (isGithubMediaConfigured()) {
       const ghUrl = `https://api.github.com/repos/${cfg.GH_REPO}/contents/${key}`;
       const r = await omniFetch('media.github', ghUrl, {
         method: 'PUT',
@@ -85,7 +86,11 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     const isVideo = m[1] === 'video';
     let ext = m[2] === 'jpeg' ? 'jpg' : (m[2] === 'quicktime' ? 'mov' : m[2]);
     const b64 = m[3];
-    const size = Math.floor(b64.length * 3 / 4);
+    const declaredMime = m[1] === 'audio' && m[2] === 'mp3' ? 'audio/mpeg'
+      : m[1] === 'video' && ['quicktime','mov'].includes(m[2]) ? 'video/quicktime'
+      : `${m[1]}/${m[2] === 'jpg' ? 'jpeg' : m[2]}`;
+    const size = base64DecodedSize(b64);
+    if (!size || !mediaMagicMatches(b64, declaredMime)) return c.json({ error: 'Media content does not match its declared type' }, 415);
     // Videos get a larger cap (short story clips); images/audio stay at 5 MB.
     const maxBytes = isVideo ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
     if (size > maxBytes) return c.json({ error: (isVideo ? 'Video too large (max 10 MB)' : 'Image too large (max 5 MB)') }, 413);
@@ -102,7 +107,7 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     }
     // GitHub: legacy fallback. Stable but slow + has rate limits.
     const path = `media/${folder}/${id}.${ext}`;
-    if (!isRepo()) return c.json({ url: dataUrl, persisted: false });
+    if (!isGithubMediaConfigured()) return c.json({ error: 'Media storage is temporarily unavailable' }, 503);
     let priorSha = null;
     try {
       const h = await omniFetch('media.github', `https://api.github.com/repos/${cfg.GH_REPO}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.GH_BRANCH)}`, {
@@ -120,7 +125,9 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     if (!put.ok) {
       const t = await put.text().catch(() => '');
       console.error('[upload]', put.status, t.slice(0, 200));
-      return c.json({ url: dataUrl, persisted: false, warning: 'GitHub upload failed; using inline data URL.' });
+      // Never report an inline data URL as a successful upload: it is neither
+      // durable nor shareable across devices and can silently disappear.
+      return c.json({ error: 'Media storage failed. Please try again.' }, 502);
     }
     const cdn = `https://raw.githubusercontent.com/${cfg.GH_REPO}/${encodeURIComponent(cfg.GH_BRANCH)}/${path}?t=${Date.now()}`;
     return c.json({ url: cdn, persisted: true });

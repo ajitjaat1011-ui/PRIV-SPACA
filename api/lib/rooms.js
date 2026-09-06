@@ -20,12 +20,25 @@ export function normalizeRoomId(roomId, currentUserId) {
       return 'dm:' + [...parts].sort().join(':');
     }
     // Invalid DM format
-    console.warn('[normalizeRoomId] Invalid DM roomId format, coercing to general-group:', raw);
+    console.warn('[normalizeRoomId] Invalid DM roomId format rejected:', raw);
   } else if (raw !== 'general-group') {
     // Unrecognized format
-    console.warn('[normalizeRoomId] Unrecognized roomId format, coercing to general-group:', raw);
+    console.warn('[normalizeRoomId] Unrecognized roomId format rejected:', raw);
   }
-  return 'general-group';
+  return '';
+}
+
+export function canAccessRoom(roomId, userId, db) {
+  if (roomId === 'general-group') return true;
+  if (roomId.startsWith('dm:')) {
+    const parts = roomId.slice(3).split(':').filter(Boolean);
+    return parts.length === 2 && new Set(parts).size === 2 && parts.includes(userId);
+  }
+  if (roomId.startsWith('group:')) {
+    const group = (db?.groups || []).find(g => g && g.id === roomId);
+    return !!group && Array.isArray(group.memberIds) && group.memberIds.includes(userId);
+  }
+  return false;
 }
 
 export function dmRoomFor(a, b) { return 'dm:' + [a, b].sort().join(':'); }

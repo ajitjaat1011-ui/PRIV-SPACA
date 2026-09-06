@@ -16,7 +16,7 @@ Cloudflare Workers do **not** provide an immortal master process, a force-restar
 
 | Tier | Service class | Examples | Admission behavior |
 |---|---|---|---|
-| 0 | Critical / real-time / operations | auth, direct chat read/send, typing, heartbeat, WebRTC signaling, SSE stream, health/readiness/admin diagnostics | Never scheduler-queued or load-shed. Authentication retains brute-force and account lockout controls. |
+| 0 | Critical / real-time / operations | auth, direct chat read/send, typing, heartbeat, WebRTC signaling, SSE stream, health/readiness/admin diagnostics | Bypasses lower-priority queues but is bounded by finite user/IP token buckets plus global, user, IP and domain concurrency caps. Authentication also retains durable brute-force and account-lockout controls. |
 | 1 | Standard UI | feed, posts, profiles, users, stories, notifications, media uploads | Async user/IP token buckets and dynamically sized, partitioned concurrency pools. Media uses a separate domain cap. |
 | 2 | Background / speculative | batched read receipts, story-view analytics, push setup, diagnostics | Lowest queue priority; deferred/dropped with `202` above the 75%/step-1 threshold. |
 
@@ -28,11 +28,11 @@ Omni derives a load step from noncritical concurrency/queue pressure, sampled ev
 
 1. **Step 1:** throttle/drop Tier 2 when concurrency reaches 75%, event-loop delay exceeds 50 ms, memory exceeds 85%, or rolling latency is high.
 2. **Step 2:** shrink all noncritical pools further; a Tier 1 GET that fails after authentication may use a token-bound stale response. Stale personalized data is never served before auth runs.
-3. **Step 3:** reject Tier 1 mutations with `503` and `Retry-After`; Tier 0 remains admitted without a scheduler queue.
+3. **Step 3:** reject Tier 1 mutations with `503` and `Retry-After`; Tier 0 keeps reserved, queue-free admission but still rejects callers that exhaust its finite buckets/caps.
 
 ## Fault domains
 
-Every libSQL operation is wrapped by `database.turso`. GitHub database fallback, GitHub media, Cloudinary, R2 and Web Push have independent named bulkheads. A `scraping.preview` domain is reserved for a future server-side preview fetcher; the current application has no server-side scraper.
+Every libSQL operation is wrapped by `database.turso`. There is no GitHub database fallback. GitHub media, Cloudinary, R2, Web Push and the active `scraping.preview` link-preview fetcher have independent named bulkheads.
 
 Each fault domain combines:
 

@@ -98,7 +98,7 @@ export async function uploadToCloudinary(dataUrl, folder, publicId) {
   return j.secure_url || j.url || null;
 }
 
-// ---------- Upload photo (Cloudinary -> GitHub CDN -> inline fallback) ----------
+// ---------- Upload photo helpers (durable Cloudinary/GitHub paths only) ----------
 export const MEDIA_MIME_EXT = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -113,9 +113,30 @@ export const MEDIA_MAX_BYTES = 24 * 1024 * 1024;
 
 export function base64DecodedSize(base64) {
   const value = String(base64 || '').replace(/\s/g, '');
-  if (!value) return 0;
+  if (!value || !/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length % 4 === 1) return 0;
   const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
   return Math.max(0, Math.floor(value.length * 3 / 4) - padding);
+}
+
+export function mediaMagicMatches(base64, mime) {
+  try {
+    const clean = String(base64 || '').replace(/\s/g, '');
+    const bin = atob(clean.slice(0, Math.min(clean.length, 128)).padEnd(Math.ceil(Math.min(clean.length, 128) / 4) * 4, '='));
+    const b = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+    const ascii = (from, length) => String.fromCharCode(...b.slice(from, from + length));
+    switch (String(mime || '').toLowerCase()) {
+      case 'image/jpeg': return b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+      case 'image/png': return b[0] === 0x89 && ascii(1, 3) === 'PNG' && b[4] === 0x0d && b[5] === 0x0a;
+      case 'image/gif': return ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a';
+      case 'image/webp': return ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP';
+      case 'image/avif': return ascii(4, 4) === 'ftyp' && ['avif','avis'].includes(ascii(8, 4));
+      case 'video/mp4': return ascii(4, 4) === 'ftyp';
+      case 'video/quicktime': return ascii(4, 4) === 'ftyp' && ['qt  ','M4V ','mp42','isom'].includes(ascii(8, 4));
+      case 'video/webm': return b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3;
+      case 'audio/mpeg': return ascii(0, 3) === 'ID3' || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0);
+      default: return false;
+    }
+  } catch (_) { return false; }
 }
 
 /** Yield between decode chunks so large R2 uploads do not monopolize the loop. */

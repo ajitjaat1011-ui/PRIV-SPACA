@@ -11,7 +11,7 @@
  *   lib/state.js      `state` — isolate-local caches
  *   lib/helpers.js    pure helpers (ids, time, validation, visibility rules)
  *   lib/schema.js     DB normalisation, merging, retention scheduler
- *   lib/store-turso.js / lib/store-github.js   storage backends
+ *   lib/store-turso.js                         durable storage backend
  *   lib/db.js         persistence facade used by routes
  *   lib/auth.js       JWT + crypto primitives
  *   lib/middleware.js requireAuth / requireAdmin

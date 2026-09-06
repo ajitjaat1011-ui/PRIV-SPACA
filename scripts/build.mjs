@@ -20,6 +20,7 @@
  *   1. app.js  -> const APP_VERSION = 'priv-spaca-vNNN'
  *   2. sw.js   -> SW_VERSION, STATIC_CACHE, RUNTIME_CACHE, APP_SHELL entries
  *   3. index.html -> ?v= on style.min.css and app.min.js
+ *      app.js -> lazy auth.react.min.js ?v=
  *   4. the minified assets themselves
  */
 
@@ -79,6 +80,7 @@ console.log(`  caches : v${cacheV} -> v${nextCache}\n`);
 if (nextApp !== current || nextCss !== cssV) {
   // app.js
   appJs = replaceOnce(appJs, /const APP_VERSION = 'priv-spaca-v\d+'/, `const APP_VERSION = 'priv-spaca-v${nextApp}'`, 'APP_VERSION');
+  appJs = appJs.replace(/auth\.react\.min\.js\?v=\d+/g, `auth.react.min.js?v=${nextJs}`);
   write('app.js', appJs);
 
   // sw.js — version, caches and the two app-shell entries
@@ -114,12 +116,12 @@ const finalHtml = read('index.html');
 const okVersions = finalApp === finalSw;
 const okCss = finalHtml.includes(`style.min.css?v=${nextCss}`) && read('sw.js').includes(`style.min.css?v=${nextCss}`);
 const okJs = finalHtml.includes(`app.min.js?v=${nextJs}`) && read('sw.js').includes(`app.min.js?v=${nextJs}`);
-const okAuth = finalHtml.includes(`auth.react.min.js?v=${nextJs}`) && read('sw.js').includes(`auth.react.min.js?v=${nextJs}`);
+const okAuth = read('app.js').includes(`auth.react.min.js?v=${nextJs}`) && read('sw.js').includes(`auth.react.min.js?v=${nextJs}`);
 
 console.log('\nverification');
 console.log(`  ${okVersions ? '✅' : '❌'} APP_VERSION === SW_VERSION (v${finalApp})`);
 console.log(`  ${okCss ? '✅' : '❌'} css ?v=${nextCss} in index.html + sw.js`);
 console.log(`  ${okJs ? '✅' : '❌'} js  ?v=${nextJs} in index.html + sw.js`);
-console.log(`  ${okAuth ? '✅' : '❌'} auth.react.min.js ?v=${nextJs} in index.html + sw.js`);
+console.log(`  ${okAuth ? '✅' : '❌'} lazy auth.react.min.js ?v=${nextJs} in app.js + sw.js`);
 if (!okVersions || !okCss || !okJs || !okAuth) process.exit(1);
 console.log('\nbuild complete.\n');

@@ -4,13 +4,13 @@
  */
 
 import { app } from './app.js';
-import { applyCors, isAllowedCorsOrigin, isDefaultJwtSecret, isProductionRequest, loadConfig } from './config.js';
+import { applyCors, isAllowedCorsOrigin, isDefaultJwtSecret, isMissingFieldKey, isProductionRequest, loadConfig } from './config.js';
 import { AppError, ErrorCodes, errorBody, handleError, handleNotFound } from './errors.js';
 import { omniMiddleware } from './omni-engine.js';
 import { globalRateLimit } from './ratelimit.js';
 import { accessLog, requestId } from './resilience.js';
 import { applySecurityHeaders } from './security-headers.js';
-import { runWithTursoRequestScope } from './store-turso.js';
+import { isTursoConfigured, runWithTursoRequestScope } from './store-turso.js';
 
 app.onError(handleError);
 app.notFound(handleNotFound);
@@ -54,11 +54,20 @@ app.use('*', async (c, next) => {
       requestId: c.get('requestId'), correlationId: c.get('correlationId'),
     }), 403);
   }
-  if (isProductionRequest(c) && isDefaultJwtSecret() && isApi &&
-      !['/api/health', '/api/ready', '/api/stream/config', '/api/push/vapid-public'].includes(c.req.path)) {
-    return c.json(errorBody(ErrorCodes.INTERNAL, 'Server auth secret is not configured.', {
-      requestId: c.get('requestId'), correlationId: c.get('correlationId'),
-    }), 503);
+  const publicProbe = ['/api/health', '/api/ready', '/api/stream/config', '/api/push/vapid-public'].includes(c.req.path);
+  if (isProductionRequest(c) && isApi && !publicProbe) {
+    if (isDefaultJwtSecret()) {
+      return c.json(errorBody(ErrorCodes.INTERNAL, 'Server auth secret is not configured.', {
+        requestId: c.get('requestId'), correlationId: c.get('correlationId'),
+      }), 503);
+    }
+    // Production must never acknowledge a write that exists only in an
+    // isolate, or store protected PII without its field-encryption key.
+    if (!isTursoConfigured() || isMissingFieldKey()) {
+      return c.json(errorBody(ErrorCodes.UPSTREAM_UNAVAILABLE, 'Durable encrypted storage is not configured.', {
+        requestId: c.get('requestId'), correlationId: c.get('correlationId'),
+      }), 503);
+    }
   }
   await next();
 });
@@ -78,8 +87,9 @@ app.use('/api/*', accessLog({ successSampleRate: 0.04, slowMs: 1000 }));
 // partitioned pools, stale serving and progressive shedding.
 app.use('/api/*', omniMiddleware());
 
-// Tier 0 bypasses the ordinary global load limiter, but auth endpoints retain
-// authRateLimit/authSubjectRateLimit and account lockout in their route chain.
+// Tier 0 bypasses the lower-priority global limiter only after Omni's finite
+// per-user/IP/domain token buckets and concurrency caps admit it. Auth routes
+// also retain durable subject/IP limits and account lockout.
 app.use('/api/*', async (c, next) => {
   if (c.get('omniTier') === 'critical') return next();
   return globalRateLimit(c, next);

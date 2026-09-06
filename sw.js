@@ -5,16 +5,17 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v169';
-const STATIC_CACHE = 'priv-spaca-static-v139';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v139';
+const SW_VERSION = 'priv-spaca-v170';
+const STATIC_CACHE = 'priv-spaca-static-v170';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v170';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.min.css?v=187',
-  '/app.min.js?v=192',
-  '/auth.react.min.js?v=192',
+  '/style.min.css?v=188',
+  '/app.min.js?v=193',
+  '/auth.react.min.js?v=193',
+  '/boot-guard.min.js?v=170',
   '/vendor/local-fonts.css?v=1',
   '/vendor/lucide.min.js?v=1',
   '/vendor/motion.min.js?v=1',
@@ -74,7 +75,9 @@ self.addEventListener('fetch', (event) => {
           });
         }
         return res;
-      }).catch(() => caches.match(req))
+      }).catch(() => caches.match(req).then((cached) =>
+        cached || (req.mode === 'navigate' ? caches.match('/index.html') : undefined)
+      ))
     );
     return;
   }

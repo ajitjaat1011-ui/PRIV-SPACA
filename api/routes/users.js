@@ -12,12 +12,17 @@ import { state } from '../lib/state.js';
 import { fetchDatabase, saveDatabase } from '../lib/db.js';
 import { wrapUnexpected } from '../lib/errors.js';
 import { _pushEvent, pushNotification } from '../lib/events.js';
-import { activeNote, canRequestFollow, canViewProfileCard, canViewerAccessPrivateProfile, clearFollowRequestPair, hasPendingFollowRequest, isSafeImageUrl, isStoryRecord, isUsername, normalizeFollowRequests, nowMs, sanitizeText, sanitizeUser } from '../lib/helpers.js';
+import { activeNote, canRequestFollow, canViewProfileCard, canViewerAccessPrivateProfile, clearFollowRequestPair, hasPendingFollowRequest, isSafeImageUrl, isStoryRecord, isUsername, normalizeAuthIdentifier, normalizeFollowRequests, nowMs, sanitizeText, sanitizeUser } from '../lib/helpers.js';
 import { cleanNoteMusic } from '../lib/media.js';
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
-import { normalizeRoomId } from '../lib/rooms.js';
+import { verifyPassword } from '../lib/password.js';
+import { pickBody } from '../lib/validate.js';
+import { sharedRateLimit } from '../lib/ratelimit.js';
+import { _authUserCache, _loginUserCache, b64url, clearSessionCookie } from '../lib/auth.js';
+import { canAccessRoom, normalizeRoomId } from '../lib/rooms.js';
+import { readPresence, readTypingState, setTypingState, touchPresence } from '../lib/realtime-store.js';
 import { normalizeDb } from '../lib/schema.js';
 import { fetchTursoDmIndex, fetchTursoUnreadCounts, isTursoConfigured, tursoClient, tursoUpsertUser, tursoUpsertUserFeeds } from '../lib/store-turso.js';
 
@@ -52,8 +57,14 @@ app.post('/api/user/update', requireAuth, async (c) => {
       if (['everyone','close_friends','private'].includes(cv)) user.cardVisibility = cv;
     }
     if (typeof isPrivate === 'boolean') user.isPrivate = isPrivate;
+    if (isTursoConfigured()) {
+      try { await tursoUpsertUser(user); }
+      catch (e) {
+        if (/unique|constraint/i.test(String(e && e.message))) return c.json({ error: 'Username taken' }, 409);
+        throw e;
+      }
+    }
     await saveDatabase(db, false);
-    if (isTursoConfigured()) await tursoUpsertUser(user);
     return c.json({ user: sanitizeUser(user, true) });
   } catch (e) { console.error('[user/update]', e); throw wrapUnexpected(e, 'Update failed. Please try again.'); }
 });
@@ -156,12 +167,14 @@ app.get('/api/users', requireAuth, async (c) => {
       }
     }
   }
+  const presenceRows = isTursoConfigured() ? await readPresence(sourceUsers.map(u => u.id), now - 45_000) : [];
+  const presenceByUser = new Map(presenceRows.map(p => [p.userId, p.at]));
   const list = sourceUsers
     .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
     .map(u => ({
       ...sanitizeUser(u),
-      online: now - ((db.heartbeat && db.heartbeat[u.id]) || 0) < 45000,
-      lastSeen: (db.heartbeat && db.heartbeat[u.id]) || 0,
+      online: now - (presenceByUser.get(u.id) || ((db.heartbeat && db.heartbeat[u.id]) || 0)) < 45000,
+      lastSeen: presenceByUser.get(u.id) || ((db.heartbeat && db.heartbeat[u.id]) || 0),
       iFollow: myFollowing.has(u.id),
       followsMe: Array.isArray(u.following) && u.following.includes(myId),
       requestedByMe: myOutgoingRequests.has(u.id),
@@ -214,16 +227,166 @@ app.get('/api/user/public-key', requireAuth, async (c) => {
   return c.json({ userId: u.id, publicKey: u.publicKey || null });
 });
 
+async function makeRecoveryCodes() {
+  const codes = Array.from({ length: 8 }, () => {
+    const raw = b64url(crypto.getRandomValues(new Uint8Array(9))).toUpperCase();
+    return raw.slice(0, 6) + '-' + raw.slice(6, 12);
+  });
+  const hashes = await Promise.all(codes.map(async code => {
+    const normalized = code.replace(/[^A-Z0-9]/g, '');
+    return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized))));
+  }));
+  return { codes, hashes };
+}
+
+app.post('/api/user/recovery-codes', requireAuth, async (c) => {
+  const myId = c.get('userId');
+  const rate = await sharedRateLimit({ key: 'recovery-codes:' + myId, limit: 3, windowMs: 60 * 60_000 });
+  if (!rate.allowed) return c.json({ error: 'Too many attempts. Try again later.' }, 429);
+  const { password } = await pickBody(c, ['password']);
+  const db = await fetchDatabase({ fresh: true });
+  const me = db.users.find(u => u.id === myId);
+  if (!me || !(await verifyPassword(String(password || ''), me.passwordHash))) return c.json({ error: 'Password verification failed' }, 401);
+  const recovery = await makeRecoveryCodes();
+  me.recoveryCodeHashes = recovery.hashes;
+  me.recoveryCodesGeneratedAt = nowMs();
+  if (isTursoConfigured()) await tursoUpsertUser(me);
+  if (!(await saveDatabase(db, false))) return c.json({ error: 'Storage temporarily unavailable' }, 503);
+  return c.json({ recoveryCodes: recovery.codes });
+});
+
+// ---------- Data portability and account deletion ----------
+app.post('/api/user/export', requireAuth, async (c) => {
+  const myId = c.get('userId');
+  const db = await fetchDatabase({ fresh: true });
+  const me = db.users.find(u => u.id === myId);
+  if (!me) return c.json({ error: 'Not found' }, 404);
+  const user = { ...me };
+  for (const key of ['passwordHash','pinHash','recoveryCodeHashes','tokenVersion','passkeyPublicKey','passkeyPublicKeyJwk','pushSubs']) delete user[key];
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    format: 'priv-spaca-user-export-v1',
+    user,
+    posts: (db.posts || []).filter(p => p.userId === myId),
+    messages: (db.messages || []).filter(m => m.userId === myId),
+    scheduledMessages: (db.scheduledMessages || []).filter(m => m.userId === myId),
+    notifications: (db.notifications || []).filter(n => n.userId === myId || n.fromUserId === myId),
+  };
+  c.header('Content-Disposition', `attachment; filename="priv-spaca-export-${myId}.json"`);
+  c.header('Cache-Control', 'no-store');
+  return c.json(payload);
+});
+
+app.post('/api/user/delete', requireAuth, async (c) => {
+  const myId = c.get('userId');
+  const limit = await sharedRateLimit({ key: 'account-delete:' + myId, limit: 3, windowMs: 60 * 60_000 });
+  if (!limit.allowed) return c.json({ error: 'Too many deletion attempts. Try again later.' }, 429);
+  const body = await pickBody(c, ['password', 'pin', 'confirmation']);
+  if (body.confirmation !== 'DELETE' || typeof body.password !== 'string' || typeof body.pin !== 'string') {
+    return c.json({ error: 'Password, recovery PIN, and DELETE confirmation are required.' }, 400);
+  }
+  const db = await fetchDatabase({ fresh: true });
+  const me = db.users.find(u => u.id === myId);
+  if (!me || !(await verifyPassword(body.password, me.passwordHash)) || !(await verifyPassword(body.pin, me.pinHash))) {
+    return c.json({ error: 'Account deletion verification failed.' }, 401);
+  }
+  const usersWithReferences = new Set(db.users.filter(u => u.id !== myId && [
+    ...(u.followers || []), ...(u.following || []), ...(u.blocked || []),
+    ...(u.closeFriends || []), ...(u.followRequests || []), ...(u.sentFollowRequests || []),
+  ].includes(myId)).map(u => u.id));
+  db.users = db.users.filter(u => u.id !== myId).map(u => ({
+    ...u,
+    followers: (u.followers || []).filter(id => id !== myId),
+    following: (u.following || []).filter(id => id !== myId),
+    blocked: (u.blocked || []).filter(id => id !== myId),
+    closeFriends: (u.closeFriends || []).filter(id => id !== myId),
+    followRequests: (u.followRequests || []).filter(id => id !== myId),
+    sentFollowRequests: (u.sentFollowRequests || []).filter(id => id !== myId),
+  }));
+  const deletedPostIds = new Set((db.posts || []).filter(p => p.userId === myId).map(p => p.id));
+  const deletedMessageIds = new Set((db.messages || []).filter(m => m.userId === myId).map(m => m.id));
+  const postsWithUserReferences = new Set((db.posts || []).filter(p =>
+    p.userId !== myId && ((p.likes || []).some(like => (typeof like === 'string' ? like : like?.userId) === myId)
+      || (p.comments || []).some(comment => comment?.userId === myId))
+  ).map(p => p.id));
+  const messagesWithUserReferences = new Set((db.messages || []).filter(m =>
+    m.userId !== myId && ((m.reactions || []).some(reaction => reaction?.userId === myId)
+      || Object.prototype.hasOwnProperty.call(m.receipts || {}, myId))
+  ).map(m => m.id));
+  // Remove authored records and references embedded in other users' records.
+  // This matters because likes/comments/reactions live inside JSON as well as
+  // in structured side tables; deleting only ps_users would leave PII behind.
+  db.posts = (db.posts || []).filter(p => p.userId !== myId).map(p => ({
+    ...p,
+    likes: (p.likes || []).filter(like => (typeof like === 'string' ? like : like?.userId) !== myId),
+    comments: (p.comments || []).filter(comment => comment?.userId !== myId),
+  }));
+  db.messages = (db.messages || []).filter(m => m.userId !== myId).map(m => ({
+    ...m,
+    reactions: (m.reactions || []).filter(reaction => reaction?.userId !== myId),
+    receipts: Object.fromEntries(Object.entries(m.receipts || {}).filter(([userId]) => userId !== myId)),
+  }));
+  db.scheduledMessages = (db.scheduledMessages || []).filter(m => m.userId !== myId);
+  db.notifications = (db.notifications || []).filter(n => n.userId !== myId && n.fromUserId !== myId);
+  db.rtcSignals = (db.rtcSignals || []).filter(signal => signal?.targetId !== myId && signal?.payload?.fromId !== myId);
+  delete db.heartbeat[myId];
+  for (const room of Object.keys(db.typing || {})) delete db.typing[room][myId];
+  const saved = await saveDatabase(db, false);
+  if (!saved) return c.json({ error: 'Storage temporarily unavailable' }, 503);
+  if (isTursoConfigured()) {
+    const postIds = [...deletedPostIds];
+    const statements = [
+      { sql: 'DELETE FROM ps_users WHERE id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_posts WHERE user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_messages WHERE user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_notifications WHERE user_id = ? OR from_user_id = ?', args: [myId, myId] },
+      { sql: 'DELETE FROM ps_user_feeds WHERE user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_dm_index WHERE owner_user_id = ? OR peer_user_id = ?', args: [myId, myId] },
+      { sql: 'DELETE FROM ps_conversation_state WHERE owner_user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_read_state WHERE owner_user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_message_reactions WHERE user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_message_receipts WHERE user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_presence WHERE user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_typing_state WHERE user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_webauthn_challenges WHERE user_id = ?', args: [myId] },
+      { sql: 'DELETE FROM ps_events WHERE user_id = ? OR instr(data, ?) > 0', args: [myId, myId] },
+    ];
+    if (postIds.length) {
+      const marks = postIds.map(() => '?').join(',');
+      statements.push({ sql: `DELETE FROM ps_user_feeds WHERE post_id IN (${marks})`, args: postIds });
+    }
+    const messageIds = [...deletedMessageIds];
+    if (messageIds.length) {
+      const marks = messageIds.map(() => '?').join(',');
+      statements.push(
+        { sql: `DELETE FROM ps_message_reactions WHERE message_id IN (${marks})`, args: messageIds },
+        { sql: `DELETE FROM ps_message_receipts WHERE message_id IN (${marks})`, args: messageIds },
+      );
+    }
+    const rewriteAt = nowMs();
+    for (const post of db.posts.filter(p => postsWithUserReferences.has(p.id))) {
+      statements.push({ sql: 'UPDATE ps_posts SET data_json = ?, updated_at = ? WHERE id = ?', args: [JSON.stringify(post), rewriteAt, post.id] });
+    }
+    for (const message of db.messages.filter(m => messagesWithUserReferences.has(m.id))) {
+      statements.push({ sql: 'UPDATE ps_messages SET data_json = ?, updated_at = ? WHERE id = ?', args: [JSON.stringify(message), rewriteAt, message.id] });
+    }
+    for (let offset = 0; offset < statements.length; offset += 50) {
+      await tursoClient().batch(statements.slice(offset, offset + 50), 'write');
+    }
+    await Promise.all(db.users.filter(u => usersWithReferences.has(u.id)).map(u => tursoUpsertUser(u)));
+  }
+  _authUserCache.delete(myId);
+  _loginUserCache.delete('user:' + normalizeAuthIdentifier(me.username));
+  _loginUserCache.delete('user:' + normalizeAuthIdentifier(me.email || ''));
+  clearSessionCookie(c);
+  return c.json({ ok: true, deleted: true });
+});
+
 // ---------- Heartbeat & typing ----------
 app.post('/api/user/heartbeat', requireAuth, async (c) => {
-  const db = await fetchDatabase();
   const myId = c.get('userId');
   const at = nowMs();
-  db.heartbeat[myId] = at;
-  await saveDatabase(db, true);
-  (db.users || []).slice(0, 250).forEach(user => {
-    if (user.id !== myId) _pushEvent(user.id, 'presence', { userId: myId, online: true, lastSeen: at }, { persist: false });
-  });
+  if (isTursoConfigured()) await touchPresence(myId, at);
   return c.json({ ok: true, at });
 });
 
@@ -247,30 +410,29 @@ app.post('/api/user/note', requireAuth, async (c) => {
 app.post('/api/user/typing', requireAuth, async (c) => {
   const body = await vbody(c, S.TypingBody);
   if (!body.roomId) return c.json({ error: 'roomId required' }, 400);
-  const roomId = normalizeRoomId(body.roomId, c.get('userId'));
-  const db = await fetchDatabase();
-  if (!db.typing[roomId]) db.typing[roomId] = {};
   const myId = c.get('userId');
-  db.typing[roomId][myId] = nowMs();
-  await saveDatabase(db, true);
+  const roomId = normalizeRoomId(body.roomId, myId);
+  const db = await fetchDatabase();
+  if (!canAccessRoom(roomId, myId, db)) return c.json({ error: 'Forbidden' }, 403);
+  if (isTursoConfigured()) await setTypingState(roomId, myId, true, 5000);
   const payload = { roomId, userId: myId, user: sanitizeUser(db.users.find(u => u.id === myId)) };
   const recipients = roomId.startsWith('dm:')
     ? roomId.slice(3).split(':').filter(id => id && id !== myId)
     : (db.users || []).map(u => u.id).filter(id => id && id !== myId);
   recipients.slice(0, 250).forEach(id => _pushEvent(id, 'typing', payload, { persist: false }));
-  return c.json({ ok: true, expiresInMs: 3000 });
+  return c.json({ ok: true, expiresInMs: 5000 });
 });
 
 app.get('/api/user/typing', requireAuth, async (c) => {
-  const roomId = normalizeRoomId(c.req.query('roomId'), c.get('userId'));
+  const myId = c.get('userId');
+  const roomId = normalizeRoomId(c.req.query('roomId'), myId);
   if (!roomId) return c.json({ error: 'roomId required' }, 400);
   const db = await fetchDatabase();
-  const map = db.typing[roomId] || {};
-  const now = nowMs();
-  const myId = c.get('userId');
-  const typing = Object.keys(map).filter(uid2 => uid2 !== myId && now - map[uid2] < 3000)
-    .map(id => {
-      const u = db.users.find(x => x.id === id);
+  if (!canAccessRoom(roomId, myId, db)) return c.json({ error: 'Forbidden' }, 403);
+  const rows = isTursoConfigured() ? await readTypingState(roomId) : [];
+  const typing = rows.filter(row => row.userId !== myId)
+    .map(row => {
+      const u = db.users.find(x => x.id === row.userId);
       return u ? { id: u.id, username: u.username, displayName: u.displayName } : null;
     }).filter(Boolean);
   return c.json({ typing });

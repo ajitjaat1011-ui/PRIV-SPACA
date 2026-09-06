@@ -20,7 +20,6 @@ export const cfg = {
   TURSO_AUTH_TOKEN: '',
   GH_REPO: 'ajitjaat1011-ui/PRIV-SPACA',
   GH_BRANCH: 'data',
-  GH_FILE: 'db.json',
   VAPID_PUBLIC: 'BG5msm1YiW_5l5N2ZNAvz5CkzQDGchg99ZSpkXVhXb4mm70X8vPPZs_7lrsaDXtvPns7QloRkh40vY4J5O0pqlI',
   VAPID_PRIVATE: '',
   // must be set as encrypted env secret in production
@@ -79,7 +78,11 @@ export function applyCors(c) {
 }
 
 export function isDefaultJwtSecret() {
-  return !cfg.JWT_SECRET || cfg.JWT_SECRET === 'priv-spaca-dev-secret-change-me';
+  return !cfg.JWT_SECRET || String(cfg.JWT_SECRET).length < 32 || cfg.JWT_SECRET === 'priv-spaca-dev-secret-change-me';
+}
+
+export function isMissingFieldKey() {
+  return !cfg.FIELD_KEY || String(cfg.FIELD_KEY).length < 16;
 }
 
 export function isProductionRequest(c) {
@@ -103,7 +106,6 @@ export function loadConfig(env) {
   if (env.TURSO_AUTH_TOKEN) cfg.TURSO_AUTH_TOKEN = String(env.TURSO_AUTH_TOKEN).trim();
   if (env.GH_REPO) cfg.GH_REPO = env.GH_REPO;
   if (env.GH_BRANCH) cfg.GH_BRANCH = env.GH_BRANCH;
-  if (env.GH_FILE) cfg.GH_FILE = env.GH_FILE;
   if (env.VAPID_PUBLIC_KEY) cfg.VAPID_PUBLIC = env.VAPID_PUBLIC_KEY;
   if (env.VAPID_PRIVATE_KEY) cfg.VAPID_PRIVATE = env.VAPID_PRIVATE_KEY;
   if (env.VAPID_SUBJECT) cfg.VAPID_SUBJECT = env.VAPID_SUBJECT;

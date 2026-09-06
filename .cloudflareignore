@@ -12,5 +12,8 @@ wrangler.toml
 .gitignore
 .gitlab-ci.yml
 logo_PS_concept.png
-# Keep original files but exclude from deployment
-# app.js and style.css are replaced by .min.js/.min.css
+# Keep source/design files in Git, but never publish them as Pages assets.
+app.js
+style.css
+react-auth/
+design-previews/

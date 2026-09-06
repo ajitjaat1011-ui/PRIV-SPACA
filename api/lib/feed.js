@@ -30,9 +30,9 @@ export async function fanoutPostToFollowers(post, db) {
   // Normal user: fan-out to followers
   const author = (db.users || []).find(u => u.id === authorId);
   const followers = (author && Array.isArray(author.followers)) ? author.followers : [];
-  if (!followers.length) return;
+  const recipients = [...new Set([authorId, ...followers])];
 
-  const feedRows = followers.map(fid => ({
+  const feedRows = recipients.map(fid => ({
     userId: fid,
     postId: post.id,
     createdAt: post.createdAt || nowMs()

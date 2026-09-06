@@ -34,14 +34,16 @@ appV && swV && appV === swV
   ? ok(`APP_VERSION === SW_VERSION (v${appV})`)
   : bad(`APP_VERSION (v${appV}) !== SW_VERSION (v${swV}) — causes the reload loop`);
 
-const html = read('index.html'), sw = read('sw.js');
+const appSource = read('app.js'), html = read('index.html'), sw = read('sw.js');
 for (const asset of ['style.min.css', 'app.min.js', 'auth.react.min.js']) {
   const re = new RegExp(asset.replace('.', '\\.') + '\\?v=(\\d+)', 'g');
-  const inHtml = [...new Set([...html.matchAll(re)].map((m) => m[1]))];
+  const primary = asset === 'auth.react.min.js' ? appSource : html;
+  const primaryLabel = asset === 'auth.react.min.js' ? 'app.js' : 'index.html';
+  const inPrimary = [...new Set([...primary.matchAll(re)].map((m) => m[1]))];
   const inSw = [...new Set([...sw.matchAll(re)].map((m) => m[1]))];
-  inHtml.length === 1 && inSw.length === 1 && inHtml[0] === inSw[0]
-    ? ok(`${asset} ?v=${inHtml[0]} consistent in index.html + sw.js`)
-    : bad(`${asset} version mismatch — index.html=[${inHtml}] sw.js=[${inSw}]`);
+  inPrimary.length === 1 && inSw.length === 1 && inPrimary[0] === inSw[0]
+    ? ok(`${asset} ?v=${inPrimary[0]} consistent in ${primaryLabel} + sw.js`)
+    : bad(`${asset} version mismatch — ${primaryLabel}=[${inPrimary}] sw.js=[${inSw}]`);
 }
 
 // ---------- 3: bundle resolves ----------

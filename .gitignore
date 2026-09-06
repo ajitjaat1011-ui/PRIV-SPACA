@@ -9,13 +9,12 @@ npm-debug.log
 .wrangler/
 dist/
 test_results.json
+test-results/
+playwright-report/
 
 # SECURITY: never commit DB backups — they contain bcrypt passwordHash / pinHash
 # of real users. Previously only specific filename prefixes were ignored; the
 # daily backup commits (e.g. backups/2026-07-06.json) leaked hashes to the
 # public repo. Block the whole directory; if a future script needs to commit a
 # non-sensitive file under backups/, add an explicit !exception line.
-backups/*.json
-backups/*.jsonl
-backups/*.db
-backups/*.sqlite
+backups/

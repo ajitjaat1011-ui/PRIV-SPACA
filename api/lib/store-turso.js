@@ -9,7 +9,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createClient as createTursoClient } from '@libsql/client/http';
 import { cfg } from './config.js';
-import { decryptUserPII, emailIndex, encryptUserPII } from './crypto-fields.js';
+import { decryptDatabasePII, decryptUserPII, emailIndex, encryptDatabasePII, encryptUserPII, isFieldEncryptionEnabled } from './crypto-fields.js';
 import { state } from './state.js';
 import { nowMs, safeJson } from './helpers.js';
 import { normalizeDb } from './schema.js';
@@ -66,16 +66,10 @@ function createInstrumentedTursoClient() {
   return instrumentTursoClient(createTursoClient({ url: cfg.TURSO_DATABASE_URL, authToken: cfg.TURSO_AUTH_TOKEN }));
 }
 
-// ---------- Persistence routing (Turso primary, GitHub fallback) ----------
-// Neon Postgres has been removed from this build. Turso is the only primary
-// store. If Turso is unreachable or not configured, the app falls back to
-// reading/writing the GitHub db.json path. For local dev with neither
-// configured, an in-memory cache is used.
-//
-// (Historical note: this file once carried dead Neon stubs — isNeonPrimary,
-// neonReadDb, etc. They were deleted, but two call sites in store-github.js
-// were missed and threw ReferenceError whenever the GitHub fallback ran. Fixed
-// in v154; do not reintroduce references to them.)
+// ---------- Persistence routing (Turso-only in production) ----------
+// Production middleware fails closed if Turso or field encryption is absent.
+// The in-memory cache is available only to localhost development/tests. There
+// is deliberately no public-repository db.json fallback.
 export function isTursoPrimary() {
   return isTursoConfigured();
 }
@@ -251,8 +245,36 @@ export async function tursoEnsure() {
       PRIMARY KEY (user_id, post_id)
     );
     CREATE INDEX IF NOT EXISTS idx_ps_user_feeds_user_created ON ps_user_feeds (user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_presence (
+      user_id TEXT PRIMARY KEY,
+      last_seen_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_presence_seen ON ps_presence (last_seen_at DESC);
+    CREATE TABLE IF NOT EXISTS ps_typing_state (
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (room_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_typing_room_expiry ON ps_typing_state (room_id, expires_at);
+    CREATE TABLE IF NOT EXISTS ps_webauthn_challenges (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      challenge TEXT NOT NULL,
+      rp_id TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ps_webauthn_expiry ON ps_webauthn_challenges (expires_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_ps_users_username_lower ON ps_users (username_lower) WHERE username_lower IS NOT NULL AND username_lower <> '';
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_ps_users_email_lower ON ps_users (email_lower) WHERE email_lower IS NOT NULL AND email_lower <> '';
   `);
   await tursoMigrate();
+  await tursoMigrateSensitiveData();
   state._tursoReady = true;
   return true;
 }
@@ -291,14 +313,13 @@ async function tursoMigrate() {
     try {
       const info = await c.execute({ sql: `PRAGMA table_info(${table})` });
       const have = new Set((info.rows || []).map((r) => String(r.name)));
-      if (have.size === 0) continue; // table absent; CREATE TABLE above owns it
+      if (have.size === 0) continue;
       for (const [col, decl] of Object.entries(columns)) {
         if (have.has(col)) continue;
         try {
           await c.execute({ sql: `ALTER TABLE ${table} ADD COLUMN ${col} ${decl}` });
           console.log(JSON.stringify({ level: 'info', msg: 'schema_migrated', table, column: col }));
         } catch (e) {
-          // A concurrent isolate may have added it first — that is fine.
           if (!/duplicate column/i.test(String((e && e.message) || ''))) {
             console.warn('[tursoMigrate] failed', table, col, e && e.message);
           }
@@ -310,13 +331,51 @@ async function tursoMigrate() {
   }
 }
 
+/** One-time migration that removes plaintext PII from both structured rows and ps_kv. */
+async function tursoMigrateSensitiveData() {
+  if (!isFieldEncryptionEnabled()) return;
+  const c = tursoClient();
+  const marker = await c.execute({ sql: 'SELECT value FROM ps_meta WHERE key = ? LIMIT 1', args: ['pii_encryption_v2'] });
+  if (marker.rows?.length) return;
+  const [usersRs, kvRs] = await c.batch([
+    { sql: 'SELECT id, data_json FROM ps_users' },
+    { sql: 'SELECT value FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] },
+  ], 'read');
+  const now = nowMs();
+  const statements = [];
+  for (const row of usersRs.rows || []) {
+    const parsed = safeJson(String(row.data_json || ''), null);
+    if (!parsed || !parsed.id) continue;
+    const plain = await decryptUserPII(parsed);
+    const protectedUser = await encryptUserPII(plain);
+    statements.push({
+      sql: 'UPDATE ps_users SET username_lower = ?, email_lower = ?, data_json = ?, updated_at = ? WHERE id = ?',
+      args: [String(plain.username || '').toLowerCase(), await emailIndex(plain.email), JSON.stringify(protectedUser), now, String(row.id)],
+    });
+  }
+  const kvRow = kvRs.rows?.[0];
+  if (kvRow) {
+    const database = normalizeDb(safeJson(String(kvRow.value || '{}'), {}));
+    const protectedDb = await encryptDatabasePII(database);
+    statements.push({ sql: 'UPDATE ps_kv SET value = ?, version = version + 1, updated_at = ? WHERE key = ?', args: [JSON.stringify(protectedDb), now, 'db'] });
+  }
+  statements.push({ sql: `INSERT OR IGNORE INTO ps_user_feeds (user_id, post_id, created_at)
+                          SELECT user_id, id, created_at FROM ps_posts WHERE deleted_at IS NULL` });
+  statements.push({
+    sql: 'INSERT INTO ps_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at',
+    args: ['pii_encryption_v2', 'complete', now],
+  });
+  await c.batch(statements, 'write');
+  console.log(JSON.stringify({ level: 'info', msg: 'pii_encryption_migrated', users: usersRs.rows?.length || 0 }));
+}
+
 // ---------- Turso/libSQL full JSON primary storage ----------
 export async function tursoReadDb() {
   if (!isTursoConfigured()) return null;
   await tursoEnsure();
   const rs = await tursoClient().execute({ sql: 'SELECT value FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
   if (!rs.rows || rs.rows.length === 0) return normalizeDb({});
-  return normalizeDb(safeJson(String(rs.rows[0].value || '{}'), normalizeDb({})));
+  return normalizeDb(await decryptDatabasePII(safeJson(String(rs.rows[0].value || '{}'), normalizeDb({}))));
 }
 
 export async function tursoReadDbVersioned() {
@@ -324,19 +383,21 @@ export async function tursoReadDbVersioned() {
   await tursoEnsure();
   const rs = await tursoClient().execute({ sql: 'SELECT value, version FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
   if (!rs.rows || rs.rows.length === 0) return { db: normalizeDb({}), version: null };
-  return { db: normalizeDb(safeJson(String(rs.rows[0].value || '{}'), normalizeDb({}))), version: Number(rs.rows[0].version || 0) };
+  const db = normalizeDb(await decryptDatabasePII(safeJson(String(rs.rows[0].value || '{}'), normalizeDb({}))));
+  return { db, version: Number(rs.rows[0].version || 0) };
 }
 
 export async function tursoWriteDb(dbObj) {
   if (!isTursoConfigured()) return false;
   await tursoEnsure();
   const db = normalizeDb(dbObj);
-  db.meta = { ...(db.meta || {}), storage: 'turso-json-v1', updatedAt: Date.now() };
+  db.meta = { ...(db.meta || {}), storage: 'turso-json-v2-encrypted', updatedAt: Date.now() };
+  const protectedDb = await encryptDatabasePII(db);
   const ts = nowMs();
   await tursoClient().execute({
     sql: `INSERT INTO ps_kv (key, value, version, updated_at) VALUES (?, ?, 1, ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value, version = ps_kv.version + 1, updated_at = excluded.updated_at`,
-    args: ['db', JSON.stringify(db), ts],
+    args: ['db', JSON.stringify(protectedDb), ts],
   });
   return true;
 }
@@ -345,18 +406,19 @@ export async function tursoWriteDbCAS(dbObj, expectedVersion) {
   if (!isTursoConfigured()) return false;
   await tursoEnsure();
   const db = normalizeDb(dbObj);
-  db.meta = { ...(db.meta || {}), storage: 'turso-json-v1', updatedAt: Date.now() };
+  db.meta = { ...(db.meta || {}), storage: 'turso-json-v2-encrypted', updatedAt: Date.now() };
+  const protectedDb = await encryptDatabasePII(db);
   const ts = nowMs();
   if (expectedVersion === null || expectedVersion === undefined) {
     const rs = await tursoClient().execute({
       sql: 'INSERT INTO ps_kv (key, value, version, updated_at) VALUES (?, ?, 0, ?) ON CONFLICT(key) DO NOTHING',
-      args: ['db', JSON.stringify(db), ts],
+      args: ['db', JSON.stringify(protectedDb), ts],
     });
     return Number(rs.rowsAffected || 0) > 0;
   }
   const rs = await tursoClient().execute({
     sql: 'UPDATE ps_kv SET value = ?, version = version + 1, updated_at = ? WHERE key = ? AND version = ?',
-    args: [JSON.stringify(db), ts, 'db', Number(expectedVersion || 0)],
+    args: [JSON.stringify(protectedDb), ts, 'db', Number(expectedVersion || 0)],
   });
   return Number(rs.rowsAffected || 0) > 0;
 }
@@ -601,16 +663,14 @@ export async function tursoUpsertUser(user) {
   if (!isTursoConfigured() || !user) return false;
   await tursoEnsure();
   const ts = nowMs();
-  try {
-    await tursoClient().execute({
-      sql: 'INSERT INTO ps_users (id, username_lower, email_lower, created_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET username_lower=excluded.username_lower, email_lower=excluded.email_lower, updated_at=excluded.updated_at, data_json=excluded.data_json',
-      args: [user.id, String(user.username || '').toLowerCase(), await emailIndex(user.email), Number(user.createdAt || 0), ts, JSON.stringify(await encryptUserPII(user))],
-    });
-    return true;
-  } catch (e) {
-    console.warn('[turso] user upsert failed', e && e.message);
-    return false;
-  }
+  // Deliberately let constraint/storage errors reach the caller. Signup and
+  // username-change routes translate UNIQUE failures to 409; swallowing them
+  // here would let a racing request report success without a durable identity.
+  await tursoClient().execute({
+    sql: 'INSERT INTO ps_users (id, username_lower, email_lower, created_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET username_lower=excluded.username_lower, email_lower=excluded.email_lower, updated_at=excluded.updated_at, data_json=excluded.data_json',
+    args: [user.id, String(user.username || '').toLowerCase(), await emailIndex(user.email), Number(user.createdAt || 0), ts, JSON.stringify(await encryptUserPII(user))],
+  });
+  return true;
 }
 
 export async function tursoUpsertPosts(posts) {
@@ -723,6 +783,21 @@ export async function tursoUpsertUserFeeds(userFeeds) {
     args: [uf.userId, uf.postId, uf.createdAt]
   }));
   await tursoClient().batch(stmts, 'write').catch(e => console.warn('[turso] user_feeds upsert failed', e?.message));
+}
+
+export async function fetchTursoUserFeed(userId, limit = 20) {
+  if (!isTursoConfigured()) return null;
+  await tursoEnsure();
+  const capped = Math.max(5, Math.min(50, Number(limit) || 20));
+  const rs = await tursoClient().execute({
+    sql: `SELECT p.data_json
+          FROM ps_user_feeds f
+          JOIN ps_posts p ON p.id = f.post_id
+          WHERE f.user_id = ? AND p.deleted_at IS NULL
+          ORDER BY f.created_at DESC LIMIT ?`,
+    args: [userId, capped],
+  });
+  return (rs.rows || []).map(r => safeJson(String(r.data_json || ''), null)).filter(Boolean);
 }
 
 // ---------- Per-room read state + unread counts ----------

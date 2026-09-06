@@ -46,6 +46,10 @@ const staleResponses = new Map();
 const externalBulkheads = new Map();
 
 const BASE_LIMITS = Object.freeze({
+  critical: 32,
+  criticalUser: 8,
+  criticalIp: 20,
+  criticalDomain: 16,
   nonCritical: 24,
   standard: 22,
   background: 4,
@@ -116,7 +120,12 @@ export function classifyRequest(path, method = 'GET') {
 
 function decodeSubject(c) {
   const auth = c.req.header('authorization') || '';
-  const token = auth.replace(/^Bearer\s+/i, '');
+  const cookie = c.req.header('cookie') || '';
+  const cookieToken = cookie.split(';').map(x => x.trim()).find(x => x.startsWith('__Host-ps_session='));
+  let token = auth.replace(/^Bearer\s+/i, '');
+  if (!token && cookieToken) {
+    try { token = decodeURIComponent(cookieToken.slice(cookieToken.indexOf('=') + 1)); } catch (_) {}
+  }
   const payload = token.split('.')[1];
   if (payload) {
     try {
@@ -125,7 +134,7 @@ function decodeSubject(c) {
       if (typeof parsed.uid === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(parsed.uid)) return `u:${parsed.uid}`;
     } catch (_) {}
   }
-  return auth ? `t:${hashString(auth)}` : 'anonymous';
+  return token ? `t:${hashString(token)}` : 'anonymous';
 }
 
 function requestIp(c) {
@@ -267,6 +276,12 @@ function domainLimit(meta, load) {
 }
 
 function canRun(meta) {
+  if (meta.tier === 0) {
+    return scheduler.inFlight[0] < BASE_LIMITS.critical
+      && count(scheduler.domainRunning, meta.domain) < BASE_LIMITS.criticalDomain
+      && count(scheduler.userRunning, meta.subject) < BASE_LIMITS.criticalUser
+      && count(scheduler.ipRunning, meta.ip) < BASE_LIMITS.criticalIp;
+  }
   const load = currentLoad();
   const limits = dynamicLimits(load);
   const nonCritical = scheduler.inFlight[1] + scheduler.inFlight[2];
@@ -451,17 +466,25 @@ async function dispatch(c, next) {
   c.set('omniTier', meta.name);
   c.set('omniDomain', meta.domain);
 
-  // Tier 0 has no scheduler/token-bucket await and is never load-shed. Auth's
-  // durable brute-force/login limits still run in the route middleware.
+  // Tier 0 never waits behind lower-priority work, but it is still bounded.
+  // A finite token bucket and critical/user/IP/domain caps prevent chat/SSE/RTC
+  // floods from exhausting an isolate or the database.
   if (meta.tier === 0) {
-    scheduler.inFlight[0]++;
-    scheduler.admitted[0]++;
+    await consumeTokenBuckets(meta);
+    if (!canRun(meta)) {
+      scheduler.rejected[0]++;
+      throw new AppError(ErrorCodes.OVERLOADED, 'Critical admission capacity exhausted.', {
+        safeMessage: 'Realtime capacity is busy. Please retry shortly.', status: 503,
+        meta: { retryAfterSeconds: 1, scope: 'omni-tier0-admission' },
+      });
+    }
+    startSlot(meta);
     const started = Date.now();
     try {
       await next();
       await normalizeErrorResponse(c);
     } finally {
-      scheduler.inFlight[0] = Math.max(0, scheduler.inFlight[0] - 1);
+      releaseSlot(meta);
       scheduler.observations.push({ at: Date.now(), durationMs: Date.now() - started, failed: (c.res?.status || 500) >= 500, tier: 0 });
     }
     const load = currentLoad();
@@ -676,6 +699,7 @@ export function omniSnapshot() {
       tiers: { 0: 'critical-realtime', 1: 'standard-ui', 2: 'background-speculative' },
       tier0Queue: false,
       tier0LoadShedding: false,
+      tier0FiniteAdmission: true,
       authSecurityLimitsPreserved: true,
     },
     load: {

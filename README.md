@@ -35,10 +35,12 @@ config / state  ->  helpers  ->  schema  ->  stores  ->  db  ->  middleware  -> 
 | `lib/config.js` | `cfg` object, refreshed from `env` on every request |
 | `lib/state.js` | `state` object — isolate-local caches |
 | `lib/helpers.js` | ids, time, validation, sanitising, visibility rules |
-| `lib/schema.js` | DB normalisation, merging, retention scheduler |
-| `lib/store-turso.js` / `lib/store-github.js` | storage backends |
-| `lib/db.js` | persistence facade used by routes |
-| `lib/auth.js` | JWT + HMAC/base64url primitives |
+| `lib/schema.js` | DB normalisation, three-way CAS merging, retention scheduler |
+| `lib/store-turso.js` | durable structured and mirror storage |
+| `lib/realtime-store.js` | durable presence, typing and one-time WebAuthn challenges |
+| `lib/db.js` | Turso-only persistence facade used by routes |
+| `lib/auth.js` | scoped JWT + Secure HttpOnly session-cookie primitives |
+| `lib/webauthn.js` | bounded CBOR/COSE parsing and ES256 ceremony verification |
 | `lib/middleware.js` | `requireAuth`, `requireAdmin` |
 | `lib/ratelimit.js` | rate limiting + login lockout |
 | `lib/events.js` | in-memory pub/sub behind SSE |
@@ -58,6 +60,8 @@ Two ordering rules are enforced by `npm run check`:
 
 ## Run locally
 
+Node 22 or newer is required.
+
 ```bash
 npm install
 npm run dev            # http://localhost:8787 — API + static files
@@ -75,9 +79,13 @@ TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... JWT_SECRET=... npm run dev
 
 ```bash
 npm run check          # versions, bundle, route table, dependencies
+npm run test:omni      # admission/circuit-breaker contracts
+npm run test:v169      # performance and interaction contracts
+npm run test:v170      # auth, WebAuthn, PII, CAS, media and PWA regressions
+npm run test:browser   # Chromium keyboard, WCAG/axe and offline-PWA journey
 npm run build          # minify css/js
 npm run build -- --bump   # bump versions, then minify
-npm run deploy         # wrangler pages deploy
+npm run deploy         # manual Wrangler Pages deploy (Node 22+)
 ```
 
 ### Versioning — the rule that matters
@@ -86,7 +94,7 @@ npm run deploy         # wrangler pages deploy
 The client compares them on every load; a mismatch wipes caches, unregisters
 the service worker and reloads forever. `scripts/build.mjs --bump` keeps
 `app.js`, `sw.js` and `index.html` in sync, and `npm run check` fails the build
-if they ever drift.
+if they ever drift. See [`docs/security-operations.md`](docs/security-operations.md) for the full release, backup/restore, rotation and incident runbook.
 
 ## Environment variables
 
@@ -94,19 +102,22 @@ Set these as **encrypted Cloudflare Pages secrets**, never in `wrangler.toml`.
 
 | Variable | Purpose |
 |---|---|
-| `JWT_SECRET` | HMAC secret for JWTs. The API refuses to serve `/api/*` in production without it. |
-| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | Primary datastore. |
-| `GITHUB_PAT`, `GH_REPO`, `GH_BRANCH`, `GH_FILE` | Fallback `db.json` store. |
+| `JWT_SECRET` | HMAC secret for cookie-backed sessions. The API fails closed in production without a strong value. |
+| `FIELD_KEY` | Field-level AES-GCM encryption and blind-index key for protected PII. |
+| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | Sole durable application datastore. |
+| `GITHUB_PAT`, `GH_REPO`, `GH_BRANCH` | Optional legacy media-file fallback only; never database persistence. |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push. |
 | `CLOUDINARY_*` | Optional faster media uploads. |
 | `ADMIN_USERS`, `OWNER_EMAIL`, `OWNER_USERNAME` | Admin identification. |
 | `APP_MIN_VERSION` | Reject clients older than this version (force refresh). |
 
-Storage precedence: Turso → GitHub `db.json` → in-memory.
+Production persistence is Turso-only and fails closed when durable storage is unavailable. In-memory storage exists only for local development; the public-repository `db.json` fallback is disabled.
 
 ## Features
 
-- JWT auth, signup/login, 4-digit PIN recovery, account lockout
+- Secure HttpOnly cookie sessions, signup/login, durable WebAuthn passkeys and account lockout
+- Password recovery requiring both a 4-digit PIN and a high-entropy one-time recovery code
+- Account data export, password-confirmed recovery-code rotation and permanent deletion
 - Group chat + private DMs, replies, images, voice notes, scheduled messages
 - Disappearing messages and secret chat, soft-delete with 30-day restore
 - Social feed: posts, likes, comments, stories with view analytics

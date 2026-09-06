@@ -10,9 +10,19 @@ const OK_TTL_MS = 6 * 60 * 60 * 1000;
 const EMPTY_TTL_MS = 30 * 60 * 1000;
 
 export function blockedHostname(hostname) {
-  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
-  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
-  if (host === '::1' || host === '::' || host.includes('::ffff:') || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe8') || host.startsWith('fe9') || host.startsWith('fea') || host.startsWith('feb')) return true;
+  const raw = String(hostname || '').trim().toLowerCase();
+  // Reject absolute/trailing-dot spellings (localhost., metadata.internal.)
+  // rather than trying to canonicalize them differently across runtimes.
+  if (!raw || raw.endsWith('.')) return true;
+  const host = raw.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+  // Block legacy integer/hex/octal IPv4 notations (for example 2130706433 or
+  // 0x7f000001) that URL parsers may normalize differently across runtimes.
+  if (/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(host)) return true;
+  if (host.includes(':')) {
+    if (host === '::1' || host === '::' || host.includes('::ffff:')
+      || /^(?:fc|fd|fe8|fe9|fea|feb)/i.test(host)) return true;
+  }
   const parts = host.split('.');
   if (parts.length === 4 && parts.every(p => /^\d{1,3}$/.test(p))) {
     const n = parts.map(Number);
@@ -35,6 +45,26 @@ export function safePublicUrl(value, base) {
     url.hash = '';
     return url;
   } catch (_) { return null; }
+}
+
+async function assertPublicResolution(urlValue) {
+  const url = new URL(urlValue);
+  // Literal addresses were already checked by safePublicUrl(). Hostnames are
+  // resolved through a fixed HTTPS resolver before every outbound hop so DNS
+  // answers pointing at loopback/private/link-local space fail closed.
+  if (/^[\d.]+$/.test(url.hostname) || url.hostname.includes(':')) return;
+  const query = async (type) => {
+    const endpoint = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(url.hostname)}&type=${type}`;
+    const response = await fetch(endpoint, {
+      headers: { accept: 'application/dns-json' },
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(1800) : undefined,
+    });
+    if (!response.ok) throw new Error('DNS validation failed');
+    const data = await response.json();
+    return (data.Answer || []).filter(answer => answer && (answer.type === 1 || answer.type === 28)).map(answer => String(answer.data || ''));
+  };
+  const answers = (await Promise.all([query('A'), query('AAAA')])).flat();
+  if (!answers.length || answers.some(blockedHostname)) throw new Error('Private or unresolved destination');
 }
 
 async function hashUrl(url) {
@@ -99,8 +129,10 @@ async function readLimited(response) {
 async function fetchPreview(startUrl) {
   let current = startUrl;
   for (let redirects = 0; redirects <= 3; redirects++) {
+    await assertPublicResolution(current);
     const response = await fetch(current, {
       redirect: 'manual',
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(3500) : undefined,
       headers: {
         accept: 'text/html,application/xhtml+xml;q=0.9',
         'user-agent': 'PRIV-SPACA-LinkPreview/1.0',

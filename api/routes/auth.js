@@ -7,21 +7,56 @@
  */
 
 import { app } from '../lib/app.js';
-import { cfg, isDefaultJwtSecret } from '../lib/config.js';
+import { cfg, isDefaultJwtSecret, isMissingFieldKey } from '../lib/config.js';
 import { state } from '../lib/state.js';
-import { _authUserCache, _bcryptVerifyCache, _loginUserCache, signToken } from '../lib/auth.js';
+import { _authUserCache, _bcryptVerifyCache, _loginUserCache, b64url, clearSessionCookie, setSessionCookie, signToken } from '../lib/auth.js';
 import { PBKDF2_PIN_ITERATIONS, hashPassword, needsRehash, verifyPassword } from '../lib/password.js';
 import { fetchPrimaryDatabase, isPersist, primaryPersistenceName, saveDatabase, saveDatabaseVerified } from '../lib/db.js';
 import { wrapUnexpected } from '../lib/errors.js';
-import { isEmail, isPin, isRepo, isUsername, normalizeAuthIdentifier, nowMs, safeJson, sanitizeText, sanitizeUser, uid } from '../lib/helpers.js';
+import { isEmail, isPin, isUsername, normalizeAuthIdentifier, nowMs, safeJson, sanitizeText, sanitizeUser, uid } from '../lib/helpers.js';
 import { withTimeout } from '../lib/resilience.js';
 import { omniSnapshot, supervisedTask } from '../lib/omni-engine.js';
 import { pickBody } from '../lib/validate.js';
 import { decryptUserPII, emailIndex } from '../lib/crypto-fields.js';
 import { requireAdmin, requireAuth } from '../lib/middleware.js';
 import { AUTH_GENERIC_ERROR, authFailureDelay, authRateLimit, authSubjectRateLimit, checkAccountLock, clearLoginFails, recordLoginFail } from '../lib/ratelimit.js';
-import { repoRead } from '../lib/store-github.js';
 import { isTursoConfigured, isTursoPrimary, tursoClient, tursoUpsertUser } from '../lib/store-turso.js';
+import { consumeWebAuthnChallenge, putWebAuthnChallenge } from '../lib/realtime-store.js';
+import { randomChallenge, verifyAuthenticationResponse, verifyRegistrationResponse } from '../lib/webauthn.js';
+
+async function issueSession(c, user, extra = {}) {
+  const token = await signToken(user);
+  setSessionCookie(c, token);
+  return c.json({ ...extra, user: sanitizeUser(user, true) });
+}
+
+function webAuthnContext(c) {
+  const url = new URL(c.req.url);
+  return { origin: url.origin, rpId: url.hostname };
+}
+
+async function recoveryCodeHash(code) {
+  const normalized = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (normalized.length < 10 || normalized.length > 32) return '';
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized)));
+  return b64url(digest);
+}
+
+async function createRecoveryCodes(count = 8) {
+  const codes = Array.from({ length: count }, () => {
+    const raw = b64url(crypto.getRandomValues(new Uint8Array(9))).toUpperCase();
+    return raw.slice(0, 6) + '-' + raw.slice(6, 12);
+  });
+  return { codes, hashes: await Promise.all(codes.map(recoveryCodeHash)) };
+}
+
+async function issueWebAuthnChallenge(c, user, purpose) {
+  const { origin, rpId } = webAuthnContext(c);
+  const id = uid('wch');
+  const challenge = randomChallenge();
+  await putWebAuthnChallenge({ id, userId: user.id, purpose, challenge, rpId, origin, expiresAt: Date.now() + 120000 });
+  return { challengeId: id, challenge, rpId, credentialId: user.passkeyCredentialId || null, userId: user.id, timeout: 120000 };
+}
 
 // =====================================================================
 // ROUTES
@@ -54,7 +89,7 @@ app.get('/api/ready', async (c) => {
   let ready = true;
 
   // Config: a missing/default JWT secret means every authed request will 503.
-  checks.config = isDefaultJwtSecret() ? 'fail' : 'ok';
+  checks.config = (isDefaultJwtSecret() || isMissingFieldKey()) ? 'fail' : 'ok';
   if (checks.config === 'fail') ready = false;
 
   // Database: cheapest possible round trip, hard-bounded so a hung DB cannot
@@ -68,7 +103,8 @@ app.get('/api/ready', async (c) => {
       ready = false;
     }
   } else {
-    checks.database = 'skipped';
+    checks.database = 'fail';
+    ready = false;
   }
 
   const omni = omniSnapshot();
@@ -76,30 +112,25 @@ app.get('/api/ready', async (c) => {
   checks.scheduler = omni.scheduler;
   checks.breakers = omni.circuits;
 
-  return c.json({ ready, checks, time: nowMs() }, ready ? 200 : 503);
+  if (!ready) console.warn(JSON.stringify({ level: 'warn', msg: 'readiness_failed', checks }));
+  return c.json({ ready }, ready ? 200 : 503);
 });
 
 app.get('/api/diag', requireAdmin, async (c) => {
   const out = {
     persistence: primaryPersistenceName(),
-    repoConfigured: isRepo(), gistConfigured: false,
-    repo: cfg.GH_REPO ? '[configured]' : '', branch: cfg.GH_BRANCH ? '[configured]' : '', file: cfg.GH_FILE ? '[configured]' : '',
+    repoConfigured: false, gistConfigured: false,
     canRead: false, canWrite: false, userCount: 0, error: null,
     runtime: 'cloudflare-workers',
     omni: omniSnapshot(),
   };
   try {
-    const db = await repoRead();
-    if (db && typeof db === 'object' && !db._err && !db._httpError) {
-      out.canRead = true;
-      out.userCount = (db.users || []).length;
-      // Do not perform a real write in diagnostics; it can conflict with signup/message saves.
-      out.canWrite = isTursoPrimary() || !!cfg.GITHUB_PAT;
-    } else if (!isPersist()) {
-      out.canRead = true; out.canWrite = true;
-      out.userCount = (state.localCache.users || []).length;
-    } else out.error = db ? (db._err || db._httpError || 'Read returned no data (not an array)') : 'Read returned no data';
-  } catch (e) { out.error = e.message; }
+    const db = await fetchPrimaryDatabase();
+    out.canRead = true;
+    out.canWrite = isTursoPrimary() || !isPersist();
+    out.userCount = (db.users || []).length;
+    out.repoConfigured = false;
+  } catch (_) { out.error = 'Persistence check failed'; }
   return c.json(out);
 });
 
@@ -136,12 +167,10 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     const usernameLower = username.toLowerCase();
     if (db.users.some(u => u.email.toLowerCase() === emailLower)) return c.json({ error: 'Email already registered' }, 409);
     if (db.users.some(u => u.username.toLowerCase() === usernameLower)) return c.json({ error: 'Username already taken' }, 409);
-    // SECURITY: reserve the app's own identity strings + the owner's known
-    // handles so new signups can't squat on / impersonate them. Owner
-    // privilege itself is still gated on a hardcoded user id in the
-    // frontend (isPrivOwner) and on the ADMIN_USERS secret here, so this
-    // reservation is a defense-in-depth / anti-impersonation measure, not
-    // the actual privilege boundary.
+    // SECURITY: reserve the app's own identity strings + known official
+    // handles so new signups cannot squat on them. Privilege is enforced only
+    // by server-side ADMIN_USERS and represented by the sanitized isOwner
+    // presentation claim; this list is defense-in-depth, not authorization.
     const reserved = new Set([
       'admin','administrator','priv-spaca','privspaca','support','system','moderator','staff','help','root',
       'arvind_1011','arvindjaat1011','arvindjaat','ajitjaat1011','arvindjaat1012',
@@ -153,22 +182,29 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
       // The PIN uses a lower work factor on purpose — see PBKDF2_PIN_ITERATIONS.
       hashPassword(pin, { iterations: PBKDF2_PIN_ITERATIONS })
     ]);
+    const recovery = await createRecoveryCodes();
     const newUser = {
       id: uid('usr'), email: emailLower, username, displayName: cleanDN,
-      bio: '', photoUrl: '', passwordHash, pinHash, tokenVersion: 0,
+      bio: '', photoUrl: '', passwordHash, pinHash, recoveryCodeHashes: recovery.hashes, tokenVersion: 0,
       followers: [], following: [], blocked: [], closeFriends: [], isPrivate: false,
       termsAccepted: true, termsVersion: String(termsVersion || '1.0'),
       termsAcceptedAt: nowMs(), createdAt: nowMs(), verified: false,
     };
+    if (isTursoConfigured()) {
+      try { await tursoUpsertUser(newUser); }
+      catch (e) {
+        if (/unique|constraint/i.test(String(e && e.message))) return c.json({ error: 'Email or username already registered' }, 409);
+        return c.json({ error: 'Storage temporarily unavailable. Please try again in a moment.' }, 503);
+      }
+    }
     db.users.push(newUser);
     const persisted = await saveDatabaseVerified(db, d => (d.users || []).some(u => u.id === newUser.id));
     if (isPersist() && !persisted) {
       db.users = db.users.filter(u => u.id !== newUser.id);
+      if (isTursoConfigured()) await tursoClient().execute({ sql: 'DELETE FROM ps_users WHERE id = ?', args: [newUser.id] }).catch(() => {});
       return c.json({ error: 'Storage temporarily unavailable. Please try again in a moment.' }, 503);
     }
-    if (isTursoConfigured()) await tursoUpsertUser(newUser);
-    const token = await signToken(newUser);
-    return c.json({ token, user: sanitizeUser(newUser, true) });
+    return issueSession(c, newUser, { recoveryCodes: recovery.codes });
   } catch (e) {
     console.error('[signup]', e);
     throw wrapUnexpected(e, 'Signup failed. Please try again.');
@@ -265,12 +301,11 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       }
     }
     if (!ok) {
-      // Rare Neon read-after-write consistency window: a password/PIN reset
-      // that just committed on a different pooled connection can briefly
-      // (sub-second, occasionally ~1-2s) not be visible yet to the next
-      // read. Retrying once with a forced-fresh read costs nothing on the
-      // common (correct-password) path and only adds a single extra Neon
-      // round trip on an already-failing attempt, which already pays a
+      // Rare distributed read-after-write window: a password/PIN reset that
+      // just committed can briefly be absent from the next replica read.
+      // Retrying once with a forced-fresh read costs nothing on the common
+      // (correct-password) path and adds only one extra Turso round trip to
+      // an already-failing attempt, which already pays a
       // deliberate ~250-500ms authFailureDelay() for timing-attack
       // mitigation — so this is effectively free from a UX standpoint.
       const freshDb = await fetchPrimaryDatabase();
@@ -311,12 +346,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
           u2.passwordChangedAt = matchUser.passwordChangedAt;
           await saveDatabase(db, true, { skipSecondarySync: true });
           if (isTursoConfigured()) {
-            try {
-              const tu = tursoClient();
-              await tu.batch([
-                { sql: "UPDATE ps_users SET data_json = ?, updated_at = ? WHERE id = ?", args: [JSON.stringify(u2), nowMs(), u2.id] },
-              ], 'write');
-            } catch (_) {}
+            try { await tursoUpsertUser(u2); } catch (_) {}
           }
         }
       } catch (error) {
@@ -327,22 +357,10 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // ── PASSKEY 2FA CHECK ──
     // If user has passkey enabled, don't issue token yet — require biometric.
     if (matchUser.passkeyEnabled && matchUser.passkeyCredentialId) {
-      const challenge = uid();
-      _loginUserCache.set('challenge:' + matchUser.id, {
-        challenge,
-        createdAt: Date.now(),
-        userId: matchUser.id
-      });
-      return c.json({
-        challenge: true,
-        challengeId: challenge,
-        credentialId: matchUser.passkeyCredentialId,
-        userId: matchUser.id
-      });
+      return c.json({ challenge: true, ...(await issueWebAuthnChallenge(c, matchUser, 'authentication')) });
     }
 
-    const token = await signToken(matchUser);
-    return c.json({ token, user: sanitizeUser(matchUser, true) });
+    return issueSession(c, matchUser);
   } catch (e) {
     console.error('[login] full error:', e && e.message, e && e.stack);
     // Never echo the failure detail: it has previously included libSQL and
@@ -354,10 +372,10 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
 // ---------- Auth: reset by PIN ----------
 app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
   try {
-    const body = await pickBody(c, ['identifier', 'pin', 'newPassword']);
-    const { identifier, pin, newPassword } = body;
+    const body = await pickBody(c, ['identifier', 'pin', 'recoveryCode', 'newPassword']);
+    const { identifier, pin, recoveryCode, newPassword } = body;
     const idLower = normalizeAuthIdentifier(identifier);
-    if (!idLower || !isPin(pin) || typeof newPassword !== 'string' || newPassword.length < 6 || newPassword.length > 128) {
+    if (!idLower || !isPin(pin) || typeof recoveryCode !== 'string' || typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 128) {
       await authFailureDelay();
       return c.json({ error: 'Invalid reset details.' }, 400);
     }
@@ -366,7 +384,8 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       c.header('Retry-After', String(Math.ceil((subjLimit.resetAt - Date.now()) / 1000)));
       return c.json({ error: 'Too many reset attempts. Please wait and try again.' }, 429);
     }
-    // v65: Try structured ps_users first (fresh), mirror as fallback
+    // Read the durable user and keep the request's base snapshot for CAS-safe persistence.
+    let db = null;
     let user = null;
     try {
       if (isTursoConfigured()) {
@@ -382,7 +401,7 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       }
     } catch (_) { /* fall through to mirror */ }
     if (!user) {
-      const db = await fetchPrimaryDatabase();
+      db = await fetchPrimaryDatabase();
       user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     }
     if (!user) { await authFailureDelay(); return c.json({ error: 'Invalid reset details.' }, 401); }
@@ -394,13 +413,24 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     }
     const pinOk = await verifyPassword(pin, user.pinHash);
     if (!pinOk) {
-      // SECURITY: account lockout must apply to wrong PINs too. Previously
-      // only wrong passwords triggered recordLoginFail, so a small botnet
-      // could brute-force the 4-digit PIN in hours.
       await recordLoginFail(user.id);
       await authFailureDelay();
       return c.json({ error: 'Invalid reset details.' }, 401);
     }
+    const submittedRecoveryHash = await recoveryCodeHash(recoveryCode);
+    const recoveryHashes = Array.isArray(user.recoveryCodeHashes) ? user.recoveryCodeHashes : [];
+    const recoveryIndex = recoveryHashes.indexOf(submittedRecoveryHash);
+    if (recoveryIndex < 0) {
+      await recordLoginFail(user.id);
+      await authFailureDelay();
+      return c.json({ error: 'Invalid reset details. Contact support if you do not have a recovery code.' }, 401);
+    }
+    if (!db) db = await fetchPrimaryDatabase();
+    const durableUser = (db.users || []).find(u => u.id === user.id);
+    if (!durableUser) return c.json({ error: 'Storage temporarily unavailable' }, 503);
+    user = durableUser;
+    const oldRecoveryHashes = [...(user.recoveryCodeHashes || [])];
+    user.recoveryCodeHashes = oldRecoveryHashes.filter(hash => hash !== submittedRecoveryHash);
     const oldHash = user.passwordHash;
     const oldTokenVersion = Number(user.tokenVersion || 0);
     user.passwordHash = await hashPassword(newPassword);
@@ -413,10 +443,13 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       const u2 = (d.users || []).find(u => u.id === user.id);
       return !!u2 && u2.passwordHash === user.passwordHash && Number(u2.tokenVersion || 0) === user.tokenVersion;
     });
-    if (isPersist() && !persisted) { user.passwordHash = oldHash; user.tokenVersion = oldTokenVersion; return c.json({ error: 'Storage temporarily unavailable' }, 503); }
+    if (isPersist() && !persisted) {
+      user.passwordHash = oldHash; user.tokenVersion = oldTokenVersion; user.recoveryCodeHashes = oldRecoveryHashes;
+      return c.json({ error: 'Storage temporarily unavailable' }, 503);
+    }
     if (isTursoConfigured()) await tursoUpsertUser(user);
-    const token = await signToken(user);
-    return c.json({ ok: true, token, user: sanitizeUser(user, true) });
+    await clearLoginFails(user.id);
+    return issueSession(c, user, { ok: true });
   } catch (e) {
     console.error('[reset]', e);
     throw wrapUnexpected(e, 'Reset failed. Please try again.');
@@ -430,235 +463,186 @@ app.get('/api/auth/me', requireAuth, async (c) => {
   return c.json({ user: sanitizeUser(u, true) });
 });
 
+// ---------- Logout (server-side token revocation + cookie clear) ----------
+app.post('/api/auth/logout', requireAuth, async (c) => {
+  const user = c.get('authUser');
+  const db = await fetchPrimaryDatabase();
+  const durable = (db.users || []).find(u => u.id === user.id);
+  if (durable) {
+    durable.tokenVersion = Number(durable.tokenVersion || 0) + 1;
+    durable.loggedOutAt = nowMs();
+    await saveDatabaseVerified(db, d => Number((d.users || []).find(u => u.id === durable.id)?.tokenVersion || 0) === durable.tokenVersion);
+    if (isTursoConfigured()) await tursoUpsertUser(durable);
+    _authUserCache.delete(durable.id);
+  }
+  clearSessionCookie(c);
+  return c.json({ ok: true });
+});
+
 // =====================================================================
-// PASSKEY 2FA — Server-side enforcement
+// PASSKEY 2FA — verified WebAuthn registration and authentication
 // =====================================================================
 
-// ---------- Register passkey credential ----------
+app.post('/api/auth/passkey/register/options', requireAuth, async (c) => {
+  const user = c.get('authUser');
+  const options = await issueWebAuthnChallenge(c, user, 'registration');
+  return c.json({
+    challengeId: options.challengeId,
+    publicKey: {
+      challenge: options.challenge,
+      rp: { name: 'Priv Spaca', id: options.rpId },
+      user: {
+        id: b64url(new TextEncoder().encode(user.id)),
+        name: user.username,
+        displayName: user.displayName || user.username,
+      },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      timeout: options.timeout,
+      authenticatorSelection: {
+        authenticatorAttachment: 'platform',
+        userVerification: 'required',
+        residentKey: 'preferred',
+      },
+      attestation: 'none',
+    },
+  });
+});
+
 app.post('/api/auth/passkey/register', requireAuth, async (c) => {
   try {
     const user = c.get('authUser');
-    if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const body = await pickBody(c, ['credentialId', 'publicKey', 'algorithm']);
-    const { credentialId, publicKey, algorithm } = body;
-    if (!credentialId || !publicKey) {
-      return c.json({ error: 'Missing credential data' }, 400);
-    }
-
-    // Store passkey credential on user object
-    user.passkeyCredentialId = credentialId;
-    user.passkeyPublicKey = publicKey;
-    user.passkeyAlgorithm = algorithm || -7;
-    user.passkeyEnabled = true;
-    user.passkeyEnabledAt = nowMs();
-
-    // Save to primary database
+    const body = await pickBody(c, ['challengeId', 'credential']);
+    if (!body.challengeId || !body.credential) return c.json({ error: 'Missing credential data' }, 400);
+    const stored = await consumeWebAuthnChallenge({ id: body.challengeId, userId: user.id, purpose: 'registration' });
+    if (!stored) return c.json({ error: 'Challenge expired or invalid' }, 401);
+    const submitted = body.credential;
+    const result = await verifyRegistrationResponse({
+      type: submitted.type,
+      id: submitted.id,
+      rawId: submitted.rawId,
+      clientDataJSON: submitted.response?.clientDataJSON,
+      attestationObject: submitted.response?.attestationObject,
+      transports: submitted.response?.transports,
+    }, { challenge: stored.challenge, origin: stored.origin, rpId: stored.rpId });
     const db = await fetchPrimaryDatabase();
-    const dbUser = (db.users || []).find(u => u.id === user.id);
-    if (dbUser) {
-      dbUser.passkeyCredentialId = credentialId;
-      dbUser.passkeyPublicKey = publicKey;
-      dbUser.passkeyAlgorithm = algorithm || -7;
-      dbUser.passkeyEnabled = true;
-      dbUser.passkeyEnabledAt = user.passkeyEnabledAt;
-      await saveDatabase(db, true);
-    }
-    // Also save to Turso if configured
-    if (isTursoConfigured()) {
-      try { await tursoUpsertUser(dbUser || user); } catch (_) {}
-    }
-
-    // Clear cache so next login sees the updated user
-    _loginUserCache.delete('user:' + normalizeAuthIdentifier(user.username));
-    _loginUserCache.delete('user:' + normalizeAuthIdentifier(user.email || ''));
-    _authUserCache.delete(user.id);
-
+    const durable = (db.users || []).find(u => u.id === user.id);
+    if (!durable) return c.json({ error: 'Account not found' }, 404);
+    durable.passkeyCredentialId = result.credentialId;
+    durable.passkeyPublicKeyJwk = result.publicKeyJwk;
+    durable.passkeyPublicKey = null;
+    durable.passkeyAlgorithm = -7;
+    durable.passkeySignCount = result.counter;
+    durable.passkeyTransports = result.transports;
+    durable.passkeyRpId = stored.rpId;
+    durable.passkeyEnabled = true;
+    durable.passkeyEnabledAt = nowMs();
+    const persisted = await saveDatabaseVerified(db, d => (d.users || []).find(u => u.id === durable.id)?.passkeyCredentialId === result.credentialId);
+    if (!persisted) return c.json({ error: 'Storage temporarily unavailable' }, 503);
+    if (isTursoConfigured()) await tursoUpsertUser(durable);
+    _loginUserCache.delete('user:' + normalizeAuthIdentifier(durable.username));
+    _loginUserCache.delete('user:' + normalizeAuthIdentifier(durable.email || ''));
+    _authUserCache.delete(durable.id);
     return c.json({ ok: true, message: 'Passkey enabled' });
   } catch (e) {
-    console.error('[passkey/register]', e);
-    return c.json({ error: 'Passkey registration failed' }, 500);
+    console.warn('[passkey/register] rejected:', e && e.message);
+    return c.json({ error: 'Passkey registration failed' }, 400);
   }
 });
 
-// ---------- Disable passkey ----------
 app.post('/api/auth/passkey/disable', requireAuth, async (c) => {
-  try {
-    const user = c.get('authUser');
-    if (!user) return c.json({ error: 'Unauthorized' }, 401);
-
-    user.passkeyEnabled = false;
-    user.passkeyCredentialId = null;
-    user.passkeyPublicKey = null;
-    user.passkeyAlgorithm = null;
-
-    const db = await fetchPrimaryDatabase();
-    const dbUser = (db.users || []).find(u => u.id === user.id);
-    if (dbUser) {
-      dbUser.passkeyEnabled = false;
-      dbUser.passkeyCredentialId = null;
-      dbUser.passkeyPublicKey = null;
-      await saveDatabase(db, true);
-    }
-    if (isTursoConfigured()) {
-      try { await tursoUpsertUser(dbUser || user); } catch (_) {}
-    }
-
-    _loginUserCache.delete('user:' + normalizeAuthIdentifier(user.username));
-    _authUserCache.delete(user.id);
-
-    return c.json({ ok: true, message: 'Passkey disabled' });
-  } catch (e) {
-    console.error('[passkey/disable]', e);
-    return c.json({ error: 'Failed to disable passkey' }, 500);
-  }
+  const user = c.get('authUser');
+  const db = await fetchPrimaryDatabase();
+  const durable = (db.users || []).find(u => u.id === user.id);
+  if (!durable) return c.json({ error: 'Account not found' }, 404);
+  durable.passkeyEnabled = false;
+  durable.passkeyCredentialId = null;
+  durable.passkeyPublicKey = null;
+  durable.passkeyPublicKeyJwk = null;
+  durable.passkeyTransports = [];
+  durable.passkeyAlgorithm = null;
+  durable.passkeySignCount = 0;
+  durable.passkeyRpId = null;
+  await saveDatabase(db, false);
+  if (isTursoConfigured()) await tursoUpsertUser(durable);
+  _loginUserCache.delete('user:' + normalizeAuthIdentifier(durable.username));
+  _authUserCache.delete(durable.id);
+  return c.json({ ok: true, message: 'Passkey disabled' });
 });
 
-// ---------- Passkey challenge (after password verified) ----------
+// Compatibility endpoint for clients that explicitly request the challenge
+// after validating a password instead of consuming /api/auth/login's response.
 app.post('/api/auth/passkey/challenge', authRateLimit, async (c) => {
-  try {
-    const body = await pickBody(c, ['identifier', 'password']);
-    const { identifier, password } = body;
-    const idLower = normalizeAuthIdentifier(identifier);
-
-    // Find user
-    let user = null;
-    if (isTursoConfigured()) {
-      try {
-        const turso = tursoClient();
-        const r = await turso.execute({
-          sql: "SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1",
-          args: [idLower, await emailIndex(idLower)]
-        });
-        if (r.rows && r.rows.length > 0) {
-          user = await decryptUserPII(safeJson(String(r.rows[0].data_json || ''), null));
-        }
-      } catch (_) {}
-    }
-    if (!user) {
-      const db = await fetchPrimaryDatabase();
-      user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
-    }
-    if (!user) return c.json({ error: AUTH_GENERIC_ERROR }, 401);
-
-    // Verify password first
-    const pwOk = await verifyPassword(password, user.passwordHash);
-    if (!pwOk) {
-      await recordLoginFail(user.id);
-      await authFailureDelay();
-      return c.json({ error: AUTH_GENERIC_ERROR }, 401);
-    }
-
-    // Check if passkey is enabled
-    if (!user.passkeyEnabled || !user.passkeyCredentialId) {
-      // No passkey — issue token directly
-      await clearLoginFails(user.id);
-      const token = await signToken(user);
-      return c.json({ token, user: sanitizeUser(user, true) });
-    }
-
-    // Passkey required — generate challenge
-    const challenge = crypto.randomUUID ? crypto.randomUUID() : uid();
-    // Store challenge temporarily (60s TTL via cache)
-    _loginUserCache.set('challenge:' + user.id, {
-      challenge,
-      createdAt: Date.now(),
-      userId: user.id
-    });
-
-    return c.json({
-      challenge: true,
-      challengeId: challenge,
-      credentialId: user.passkeyCredentialId,
-      userId: user.id
-    });
-  } catch (e) {
-    console.error('[passkey/challenge]', e);
-    throw wrapUnexpected(e, 'Login failed');
+  const body = await pickBody(c, ['identifier', 'password']);
+  const idLower = normalizeAuthIdentifier(body.identifier);
+  if (!idLower || typeof body.password !== 'string' || body.password.length > 128) {
+    await authFailureDelay();
+    return c.json({ error: AUTH_GENERIC_ERROR }, 401);
   }
+  const subject = await authSubjectRateLimit(c, 'passkey:' + idLower, 12);
+  if (!subject.allowed) return c.json({ error: 'Too many attempts. Please wait and try again.' }, 429);
+  let user = null;
+  if (isTursoConfigured()) {
+    const rs = await tursoClient().execute({
+      sql: 'SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1',
+      args: [idLower, await emailIndex(idLower)],
+    });
+    if (rs.rows?.[0]) user = await decryptUserPII(safeJson(String(rs.rows[0].data_json || ''), null));
+  }
+  if (!user || !(await verifyPassword(body.password, user.passwordHash))) {
+    if (user) await recordLoginFail(user.id);
+    await authFailureDelay();
+    return c.json({ error: AUTH_GENERIC_ERROR }, 401);
+  }
+  const lock = await checkAccountLock(user.id);
+  if (lock.locked) return c.json({ error: 'Too many attempts. Please wait and try again.' }, 429);
+  if (!user.passkeyEnabled || !user.passkeyCredentialId) {
+    await clearLoginFails(user.id);
+    return issueSession(c, user);
+  }
+  return c.json({ challenge: true, ...(await issueWebAuthnChallenge(c, user, 'authentication')) });
 });
 
-// ---------- Passkey verify (complete login) ----------
 app.post('/api/auth/passkey/verify', authRateLimit, async (c) => {
   try {
-    const body = await pickBody(c, ['userId', 'challengeId', 'signature', 'authenticatorData']);
-    const { userId, challengeId, signature, authenticatorData } = body;
-
-    if (!userId || !challengeId) {
-      return c.json({ error: 'Missing verification data' }, 400);
-    }
-
-    // Verify challenge exists and is not expired (60s)
-    const stored = _loginUserCache.get('challenge:' + userId);
-    if (!stored || stored.challenge !== challengeId) {
-      return c.json({ error: 'Challenge expired or invalid' }, 401);
-    }
-    if (Date.now() - stored.createdAt > 60000) {
-      _loginUserCache.delete('challenge:' + userId);
-      return c.json({ error: 'Challenge expired' }, 401);
-    }
-
-    // Get user with passkey data
+    const body = await pickBody(c, ['userId', 'challengeId', 'credential']);
+    if (!body.userId || !body.challengeId || !body.credential) return c.json({ error: 'Missing verification data' }, 400);
+    // Consume first: malformed assertions and failed signatures cannot replay.
+    const stored = await consumeWebAuthnChallenge({ id: body.challengeId, userId: body.userId, purpose: 'authentication' });
+    if (!stored) return c.json({ error: 'Challenge expired or invalid' }, 401);
     let user = null;
     if (isTursoConfigured()) {
-      try {
-        const turso = tursoClient();
-        const r = await turso.execute({
-          sql: "SELECT data_json FROM ps_users WHERE id = ? LIMIT 1",
-          args: [userId]
-        });
-        if (r.rows && r.rows.length > 0) {
-          user = await decryptUserPII(safeJson(String(r.rows[0].data_json || ''), null));
-        }
-      } catch (_) {}
+      const rs = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1', args: [body.userId] });
+      if (rs.rows?.[0]) user = await decryptUserPII(safeJson(String(rs.rows[0].data_json || ''), null));
     }
-    if (!user) {
-      const db = await fetchPrimaryDatabase();
-      user = (db.users || []).find(u => u.id === userId);
-    }
-    if (!user || !user.passkeyEnabled) {
+    if (!user || !user.passkeyEnabled || !user.passkeyCredentialId || user.passkeyRpId !== stored.rpId) {
       return c.json({ error: AUTH_GENERIC_ERROR }, 401);
     }
-
-    // Verify the WebAuthn assertion using the stored public key
-    // The client signs: challenge + authenticatorData
-    // We verify with the stored public key
-    let verified = false;
-    try {
-      const publicKeyBuf = Uint8Array.from(atob(user.passkeyPublicKey), c => c.charCodeAt(0));
-      const keyData = {
-        kty: 'EC', crv: 'P-256',
-        x: btoa(String.fromCharCode(...publicKeyBuf.slice(0, 32))),
-        y: btoa(String.fromCharCode(...publicKeyBuf.slice(32, 64)))
-      };
-      const cryptoKey = await crypto.subtle.importKey(
-        'jwk', keyData,
-        { name: 'ECDSA', namedCurve: 'P-256' },
-        false, ['verify']
-      );
-      const dataToVerify = new TextEncoder().encode(challengeId + (authenticatorData || ''));
-      const sigBuf = signature ? Uint8Array.from(atob(signature), c => c.charCodeAt(0)) : new Uint8Array();
-      verified = await crypto.subtle.verify('ECDSA', cryptoKey, sigBuf, dataToVerify);
-    } catch (verifyErr) {
-      // If crypto verification fails, fall back to simple challenge-response validation
-      // This handles cases where the client uses a different signing format
-      console.warn('[passkey/verify] crypto verify failed, using challenge validation:', verifyErr.message);
-      verified = !!signature && !!authenticatorData;
-    }
-
-    if (!verified) {
-      await recordLoginFail(user.id);
-      return c.json({ error: 'Passkey verification failed' }, 401);
-    }
-
-    // Clean up challenge
-    _loginUserCache.delete('challenge:' + userId);
-    await clearLoginFails(user.id);
-
-    // Issue token
-    const token = await signToken(user);
-    return c.json({ token, user: sanitizeUser(user, true) });
+    const submitted = body.credential;
+    const result = await verifyAuthenticationResponse({
+      type: submitted.type,
+      id: submitted.id,
+      rawId: submitted.rawId,
+      clientDataJSON: submitted.response?.clientDataJSON,
+      authenticatorData: submitted.response?.authenticatorData,
+      signature: submitted.response?.signature,
+      userHandle: submitted.response?.userHandle,
+    }, { challenge: stored.challenge, origin: stored.origin, rpId: stored.rpId }, {
+      credentialId: user.passkeyCredentialId,
+      publicKeyJwk: user.passkeyPublicKeyJwk,
+      counter: Number(user.passkeySignCount || 0),
+    });
+    const db = await fetchPrimaryDatabase();
+    const durable = (db.users || []).find(u => u.id === user.id);
+    if (!durable) return c.json({ error: AUTH_GENERIC_ERROR }, 401);
+    durable.passkeySignCount = result.counter;
+    durable.passkeyLastUsedAt = nowMs();
+    const persisted = await saveDatabaseVerified(db, d => Number((d.users || []).find(u => u.id === durable.id)?.passkeySignCount || 0) === result.counter);
+    if (!persisted) return c.json({ error: 'Storage temporarily unavailable' }, 503);
+    if (isTursoConfigured()) await tursoUpsertUser(durable);
+    await clearLoginFails(durable.id);
+    return issueSession(c, durable);
   } catch (e) {
-    console.error('[passkey/verify]', e);
-    throw wrapUnexpected(e, 'Verification failed');
+    console.warn('[passkey/verify] rejected:', e && e.message);
+    return c.json({ error: 'Passkey verification failed' }, 401);
   }
 });
