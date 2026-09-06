@@ -11,10 +11,15 @@ function isBlockedAssetPath(pathname) {
     '/wrangler.toml',
     '/.cloudflareignore',
     '/.gitlab-ci.yml',
+    '/app.js',
+    '/style.css',
   ]);
   if (exact.has(pathname)) return true;
   return pathname.startsWith('/backups/')
     || pathname.startsWith('/scripts/')
+    || pathname.startsWith('/react-auth/')
+    || pathname.startsWith('/design-previews/')
+    || pathname.startsWith('/AUDIT_')
     || pathname.startsWith('/SECURITY_AUDIT')
     || pathname.startsWith('/.git')
     || pathname.startsWith('/.github/');

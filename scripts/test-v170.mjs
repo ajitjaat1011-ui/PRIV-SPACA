@@ -99,8 +99,12 @@ await test('APP_VERSION, SW_VERSION and immutable assets are synchronized at v17
 
 await test('source, audit and repository metadata routes are denied', async () => {
   const redirects = await readFile(new URL('../_redirects', import.meta.url), 'utf8');
+  const worker = await readFile(new URL('../_worker.js', import.meta.url), 'utf8');
   for (const path of ['/app.js', '/style.css', '/react-auth/*', '/scripts/*', '/AUDIT_*', '/.git*']) {
-    assert.ok(redirects.includes(path), `missing denial for ${path}`);
+    assert.ok(redirects.includes(path), `missing redirect denial for ${path}`);
+  }
+  for (const path of ["'/app.js'", "'/style.css'", "'/react-auth/'", "'/scripts/'", "'/AUDIT_'", "'/.git'"]) {
+    assert.ok(worker.includes(path), `missing Advanced Mode denial for ${path}`);
   }
 });
 
