@@ -474,8 +474,23 @@ async function dispatch(c, next) {
   c.set('omniTier', meta.name);
   c.set('omniDomain', meta.domain);
 
+  // A streaming response can remain open for ten minutes. It must not occupy a
+  // general critical-request slot for that lifetime or a handful of healthy
+  // SSE clients will make auth, chat and even /health return 503. Connection
+  // establishment remains token-bucket limited, while the route itself keeps
+  // one live subscriber per user.
+  if (meta.domain === 'realtime-stream') {
+    await consumeTokenBuckets(meta);
+    await next();
+    await normalizeErrorResponse(c);
+    const load = currentLoad();
+    c.set('omniLoadStep', load.step);
+    applyResponseHeaders(c, meta, load);
+    return;
+  }
+
   // Tier 0 never waits behind lower-priority work, but it is still bounded.
-  // A finite token bucket and critical/user/IP/domain caps prevent chat/SSE/RTC
+  // A finite token bucket and critical/user/IP/domain caps prevent chat/RTC
   // floods from exhausting an isolate or the database.
   if (meta.tier === 0) {
     await consumeTokenBuckets(meta);

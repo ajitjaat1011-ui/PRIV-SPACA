@@ -172,6 +172,16 @@ await test('signed-in startup uses materialized unread state without DM request 
   assert.ok(app.includes('Object.values(State.pollTimers || {}).forEach(timer => clearInterval(timer));'));
 });
 
+await test('SSE streams do not consume general critical capacity', async () => {
+  const [omni, stream] = await Promise.all([
+    readFile(new URL('../api/lib/omni-engine.js', import.meta.url), 'utf8'),
+    readFile(new URL('../api/routes/stream.js', import.meta.url), 'utf8'),
+  ]);
+  assert.ok(omni.includes("if (meta.domain === 'realtime-stream')"));
+  assert.ok(stream.includes('for (const existing of [...subscribers])'));
+  assert.ok(stream.includes('existing.close?.()'));
+});
+
 await test('distributed session revocation uses durable user state instead of isolate cache', async () => {
   const middleware = await readFile(new URL('../api/lib/middleware.js', import.meta.url), 'utf8');
   const store = await readFile(new URL('../api/lib/store-turso.js', import.meta.url), 'utf8');

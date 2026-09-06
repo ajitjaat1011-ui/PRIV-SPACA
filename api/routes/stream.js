@@ -82,10 +82,15 @@ app.get('/api/stream', async (c) => {
         const e = queue[i];
         send(`id: ${e.id}\nevent: ${e.kind}\ndata: ${JSON.stringify(e)}\n\n`);
       }
-      // Register as live subscriber
-      const sub = { closed: false, write: send };
+      // Keep one live stream per user in this isolate. Reconnects replace the
+      // previous controller instead of accumulating ten-minute SSE responses.
+      const sub = { closed: false, write: send, close: () => cleanup() };
       if (!_eventSubscribers.has(userId)) _eventSubscribers.set(userId, new Set());
-      _eventSubscribers.get(userId).add(sub);
+      const subscribers = _eventSubscribers.get(userId);
+      for (const existing of [...subscribers]) {
+        try { existing.close?.(); } catch (_) { existing.closed = true; subscribers.delete(existing); }
+      }
+      subscribers.add(sub);
       const heartbeat = setInterval(() => { try { send(': ping\n\n'); } catch (_) {} }, 10000);
       let lastSeenTs = Date.now() - 1500;
       const sentIds = new Set();
