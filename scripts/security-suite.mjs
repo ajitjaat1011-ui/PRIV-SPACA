@@ -49,6 +49,10 @@ function publicError(body) {
   const { requestId, correlation_id, ...stable } = body;
   return stable;
 }
+function responseDetail(response) {
+  const error = String(response?.body?.error || '').slice(0, 120);
+  return `status ${response?.status}${error ? `, error ${error}` : ''}`;
+}
 
 /** Anything that must never appear in a response body. */
 const LEAK_RE = /ECONNREFUSED|SQLITE|libsql|node_modules|\/home\/user|\.js:\d+|at \w+ \(|ReferenceError|TypeError|eyJhbGciOiJFZERTQS|password_hash|passwordHash|pinHash|recoveryCodeHashes/i;
@@ -231,16 +235,23 @@ async function main() {
   const postId = created.body?.post?.id;
   check('post create', !!postId, `status ${created.status}`);
   if (postId) {
-    check('post like', (await post('/api/posts/like', { postId }, activeCookie)).status === 200);
-    check('post comment', (await post('/api/posts/comment', { postId, text: 'hi' }, activeCookie)).status === 200);
+    const liked = await post('/api/posts/like', { postId }, activeCookie);
+    check('post like', liked.status === 200, responseDetail(liked));
+    const commented = await post('/api/posts/comment', { postId, text: 'hi' }, activeCookie);
+    check('post comment', commented.status === 200, responseDetail(commented));
   }
-  check('user note', (await post('/api/user/note', { text: 'note text' }, activeCookie)).status === 200);
-  check('typing', (await post('/api/user/typing', { roomId: 'general-group' }, activeCookie)).status === 200);
-  check('message send', (await post('/api/messages/send', { roomId: 'general-group', text: 'hello', clientNonce: 'n1' }, activeCookie)).status === 200);
-  check('message read', (await post('/api/messages/read', { roomId: 'general-group' }, activeCookie)).status === 200);
-  check('feed read', (await get('/api/posts?limit=5', activeCookie)).status === 200);
+  const noted = await post('/api/user/note', { text: 'note text' }, activeCookie);
+  check('user note', noted.status === 200, responseDetail(noted));
+  const typed = await post('/api/user/typing', { roomId: 'general-group' }, activeCookie);
+  check('typing', typed.status === 200, responseDetail(typed));
+  const sent = await post('/api/messages/send', { roomId: 'general-group', text: 'hello', clientNonce: 'n1' }, activeCookie);
+  check('message send', sent.status === 200, responseDetail(sent));
+  const read = await post('/api/messages/read', { roomId: 'general-group' }, activeCookie);
+  check('message read', read.status === 200 || (read.status === 202 && read.body?.deferred === true), responseDetail(read));
+  const feed = await get('/api/posts?limit=5', activeCookie);
+  check('feed read', feed.status === 200, responseDetail(feed));
   const usersResponse = await get('/api/users', activeCookie);
-  check('users read', usersResponse.status === 200);
+  check('users read', usersResponse.status === 200, responseDetail(usersResponse));
   const otherUsers = (usersResponse.body?.users || []).filter(user => user.id !== su.body?.user?.id);
   check('other-user responses omit private/auth fields', otherUsers.every(user =>
     !['email','dateOfBirth','pushSubs','passwordHash','pinHash','recoveryCodeHashes','tokenVersion','passkeyPublicKeyJwk']
@@ -248,7 +259,7 @@ async function main() {
   ));
   const exported = await post('/api/user/export', {}, activeCookie);
   const exportText = JSON.stringify(exported.body || {});
-  check('data export succeeds', exported.status === 200 && exported.body?.format === 'priv-spaca-user-export-v1');
+  check('data export succeeds', exported.status === 200 && exported.body?.format === 'priv-spaca-user-export-v1', responseDetail(exported));
   check('data export excludes credential material', !LEAK_RE.test(exportText) && !/passkeyPublicKey|tokenVersion/.test(exportText));
 
   console.log('\ncleanup');

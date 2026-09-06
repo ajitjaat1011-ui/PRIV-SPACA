@@ -164,6 +164,17 @@ await test('auth-security mutations invalidate session, login and password cache
   _bcryptVerifyCache.delete('usr_someone_else|hash|password');
 });
 
+await test('distributed session revocation uses durable user state instead of isolate cache', async () => {
+  const middleware = await readFile(new URL('../api/lib/middleware.js', import.meta.url), 'utf8');
+  const store = await readFile(new URL('../api/lib/store-turso.js', import.meta.url), 'utf8');
+  const durableBranch = middleware.indexOf('if (isTursoConfigured())');
+  const localCacheBranch = middleware.indexOf('const cached = _authUserCache.get(p.uid)');
+  assert.ok(durableBranch > 0 && localCacheBranch > durableBranch, 'durable session check must precede local cache');
+  assert.ok(middleware.includes('await fetchTursoUserById(p.uid)'), 'auth must read the durable structured user');
+  const userLookup = store.slice(store.indexOf('export async function fetchTursoUserById'), store.indexOf('export async function fetchTursoNotifications'));
+  assert.ok(!userLookup.includes("catch(() => ({ rows: [] }))"), 'auth storage failures must not collapse into not-found');
+});
+
 await test('AES-GCM PII envelopes round-trip, resist tampering and blind-index deterministically', async () => {
   cfg.FIELD_KEY = 'v170-field-key-test-material-32-bytes-minimum';
   const encrypted = await encryptField('private@example.test');

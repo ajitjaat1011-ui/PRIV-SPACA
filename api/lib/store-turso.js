@@ -552,7 +552,12 @@ export async function fetchTursoMirror(fallbackDb = null) {
 export async function fetchTursoUserById(userId) {
   if (!isTursoConfigured() || !userId) return null;
   await tursoEnsure();
-  const row = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1', args: [userId] }).catch(() => ({ rows: [] }));
+  // Authentication callers must distinguish a missing row from database
+  // unavailability. Never collapse a failed durable read into an empty result.
+  const row = await tursoClient().execute({
+    sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1',
+    args: [userId],
+  });
   if (!row.rows || row.rows.length === 0) return null;
   return await decryptUserPII(safeJson(String(row.rows[0].data_json || '{}'), null));
 }

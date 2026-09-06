@@ -7,10 +7,10 @@
  */
 
 import { cfg } from './config.js';
-import { state } from './state.js';
 import { _AUTH_CACHE_TTL_MS, _authUserCache, authFromRequest } from './auth.js';
 import { fetchPrimaryDatabase } from './db.js';
 import { isAdminUser } from './helpers.js';
+import { fetchTursoUserById, isTursoConfigured } from './store-turso.js';
 
 export async function requireAdmin(c, next) {
   const auth = await requireAuth(c, async () => {});
@@ -55,39 +55,57 @@ export async function requireAuth(c, next) {
   }
   const p = await authFromRequest(c);
   if (!p || !p.uid) return c.json({ error: 'Missing or invalid token' }, 401);
-  // Fast path: in-memory cache hit
-  const cached = _authUserCache.get(p.uid);
-  if (cached && (Date.now() - cached.fetchedAt) < _AUTH_CACHE_TTL_MS) {
-    if (Number(p.sv || 0) !== Number(cached.user.tokenVersion || 0)) {
-      return c.json({ error: 'Session expired. Please sign in again.' }, 401);
+
+  // Production revocation checks must cross the isolate boundary. A module Map
+  // cannot be authoritative: another isolate may have processed logout or a
+  // password reset, and a stale Map would either accept the revoked cookie or
+  // reject the freshly issued one for its full TTL. Read the small structured
+  // user row on every Turso-backed authenticated request and fail closed when
+  // that durable check is unavailable.
+  if (isTursoConfigured()) {
+    let durableUser;
+    try {
+      durableUser = await fetchTursoUserById(p.uid);
+    } catch (error) {
+      console.warn('[requireAuth] durable session check failed:', error && error.message);
+      return c.json({ error: 'Authentication temporarily unavailable. Please retry.' }, 503);
     }
+    if (!durableUser) return c.json({ error: 'Missing or invalid token' }, 401);
+    if (Number(p.sv || 0) !== Number(durableUser.tokenVersion || 0)) {
+      // A reset response can reach the client just before a different database
+      // replica observes its new tokenVersion. Retry within this request's
+      // libSQL session before rejecting; a genuinely revoked token still fails.
+      try { durableUser = await fetchTursoUserById(p.uid) || durableUser; }
+      catch (_) { return c.json({ error: 'Authentication temporarily unavailable. Please retry.' }, 503); }
+      if (Number(p.sv || 0) !== Number(durableUser.tokenVersion || 0)) {
+        return c.json({ error: 'Session expired. Please sign in again.' }, 401);
+      }
+    }
+    _authUserCache.set(p.uid, { user: durableUser, fetchedAt: Date.now() });
+    c.set('userId', p.uid);
+    c.set('username', durableUser.username || p.username);
+    c.set('authUser', durableUser);
+    await next();
+    return;
+  }
+
+  // Local in-memory development has only one process, so this fast path is
+  // safe after invalidateUserAuthCaches() clears it on every auth mutation.
+  const cached = _authUserCache.get(p.uid);
+  if (cached && (Date.now() - cached.fetchedAt) < _AUTH_CACHE_TTL_MS
+      && Number(p.sv || 0) === Number(cached.user.tokenVersion || 0)) {
     c.set('userId', p.uid);
     c.set('username', cached.user.username || p.username);
     c.set('authUser', cached.user);
     await next();
     return;
   }
-  // Slow path: read from Turso, then warm the cache
-  let authDb = await fetchPrimaryDatabase();
-  let u = (authDb.users || []).find(x => x.id === p.uid);
+  // Slow local path: read the in-memory primary, then warm the cache
+  const authDb = await fetchPrimaryDatabase();
+  const u = (authDb.users || []).find(x => x.id === p.uid);
   if (!u) return c.json({ error: 'Missing or invalid token' }, 401);
-  const tokenVersion = Number(p.sv || 0);
-  let userVersion = Number(u.tokenVersion || 0);
-  if (tokenVersion !== userVersion) {
-    // Same rare distributed read-after-write window as login (see the
-    // matching comment in /api/auth/login): a password/PIN reset that just
-    // bumped tokenVersion on one connection can briefly not be visible yet
-    // on the next read. Without this retry, the very token that reset-by-pin
-    // just handed back to the client could get rejected on its first use a
-    // moment later. One forced-fresh re-read fixes it without weakening the
-    // real security property (a token whose version genuinely doesn't match
-    // — e.g. because of an actual later password change — still gets
-    // rejected after the retry).
-    state.cacheTimestamp = 0;
-    authDb = await fetchPrimaryDatabase();
-    u = (authDb.users || []).find(x => x.id === p.uid) || u;
-    userVersion = Number(u.tokenVersion || 0);
-    if (tokenVersion !== userVersion) return c.json({ error: 'Session expired. Please sign in again.' }, 401);
+  if (Number(p.sv || 0) !== Number(u.tokenVersion || 0)) {
+    return c.json({ error: 'Session expired. Please sign in again.' }, 401);
   }
   _authUserCache.set(p.uid, { user: u, fetchedAt: Date.now() });
   c.set('userId', p.uid);
