@@ -203,6 +203,14 @@ await test('AES-GCM PII envelopes round-trip, resist tampering and blind-index d
   assert.ok(!idx1.includes('private'));
 });
 
+await test('verified persistence retries boundedly after replica lag', async () => {
+  const dbSource = await readFile(new URL('../api/lib/db.js', import.meta.url), 'utf8');
+  const verified = dbSource.slice(dbSource.indexOf('export async function saveDatabaseVerified'));
+  assert.ok(verified.includes('const maxAttempts = Math.max(1, Math.min(8'), 'verification retries must be bounded');
+  assert.ok(verified.includes('for (let attempt = 0; attempt < maxAttempts; attempt++)'), 'attempts parameter must drive verification');
+  assert.ok(verified.includes('await sleepMs(15 * (attempt + 1))'), 'replica retries must back off');
+});
+
 await test('three-way CAS merge preserves independent concurrent nested updates', async () => {
   const baseDb = {
     users: [{ id: 'usr_1', createdAt: 1, bio: 'old', followers: [], prefs: { theme: 'light', locale: 'en' } }],

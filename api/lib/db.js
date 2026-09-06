@@ -122,10 +122,20 @@ export async function saveDatabaseVerified(data, verifyFn, attempts = 4, opts = 
     const ok = await saveDatabase(data, false, opts);
     if (!ok) return false;
     if (!verifyFn) return true;
-    try {
-      const versioned = await tursoReadDbVersioned();
-      return !!verifyFn(versioned.db);
-    } catch (_) { return false; }
+    // The write is already CAS-protected. Verification may briefly reach a
+    // replica that has not observed that committed version, so honor the
+    // attempts parameter instead of turning one stale read into a false 503.
+    const maxAttempts = Math.max(1, Math.min(8, Number(attempts) || 1));
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const versioned = await tursoReadDbVersioned();
+        if (verifyFn(versioned.db)) return true;
+      } catch (_) {
+        // Retry boundedly; a persistent storage failure still returns false.
+      }
+      if (attempt < maxAttempts - 1) await sleepMs(15 * (attempt + 1));
+    }
+    return false;
   }
   const ok = await saveDatabase(data, false, opts);
   return !!(ok && (!verifyFn || verifyFn(state.localCache)));
