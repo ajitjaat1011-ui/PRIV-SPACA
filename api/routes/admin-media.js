@@ -10,7 +10,7 @@ import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
 import { state } from '../lib/state.js';
 import { fetchDatabase, saveDatabaseVerified } from '../lib/db.js';
-import { isTursoConfigured, tursoPutMedia, tursoGetMedia } from '../lib/store-turso.js';
+import { isTursoConfigured, tursoEnsure, tursoPutMedia, tursoGetMedia } from '../lib/store-turso.js';
 import { wrapUnexpected } from '../lib/errors.js';
 
 const MIGRATION_KEY = 'ps-mig-a4f768939666df2247eabdab';
@@ -42,6 +42,7 @@ app.post('/api/admin/migrate-media', async (c) => {
     if (!body || body.key !== MIGRATION_KEY) return c.json({ error: 'bad key' }, 401);
     if (!isTursoConfigured()) return c.json({ error: 'turso not configured' }, 503);
     if (!cfg.GITHUB_PAT) return c.json({ error: 'github pat not configured' }, 503);
+    await tursoEnsure(); // ps_media must exist before any media SQL (cold isolates)
     const action = String(body.action || 'list');
 
     // Report legacy media size on GitHub (planning).
