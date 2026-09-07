@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v173';
+const APP_VERSION = 'priv-spaca-v174';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -620,6 +620,28 @@ function _markPhotoBroken(url) {
   try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {}
 }
 
+// v174: probe a photo URL and only call onFail if it STILL fails after one
+// retry ~5s later. A freshly-uploaded file can take seconds to propagate to
+// the CDN, and mobile networks drop image requests — previously a single
+// failed load blacklisted the URL for the whole browser session, hiding a
+// brand-new avatar until the user fully closed the browser.
+const _photoRetried = new Set();
+function _probePhoto(url, onFail, onRetrySuccess) {
+  const img = new Image();
+  img.onload = () => { if (onRetrySuccess) onRetrySuccess(); };
+  img.onerror = () => {
+    if (_photoRetried.has(url)) { onFail(); return; }
+    _photoRetried.add(url);
+    setTimeout(() => {
+      const img2 = new Image();
+      img2.onload = () => { if (onRetrySuccess) onRetrySuccess(); };
+      img2.onerror = () => onFail();
+      img2.src = url;
+    }, 5000);
+  };
+  img.src = url;
+}
+
 function _applyInitials(el, user) {
   const seed = user ? (user.username || user.displayName || user.id || '?') : '?';
   const c1 = colorOf(seed);
@@ -641,12 +663,9 @@ function renderAvatar(el, user, opts = {}) {
   if (url && !_brokenPhotoUrls.has(url)) {
     // Probe load asynchronously; if it fails, swap to initials
     el.style.backgroundImage = bgImg(url);
-    const probe = new Image();
-    probe.onerror = () => {
-      _markPhotoBroken(url);
-      _applyInitials(el, user);
-    };
-    probe.src = url;
+    _probePhoto(url,
+      () => { _markPhotoBroken(url); _applyInitials(el, user); },
+      () => { el.style.backgroundImage = ''; el.style.backgroundImage = bgImg(url); });
   } else {
     _applyInitials(el, user);
   }
@@ -936,7 +955,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=198';
+    script.src = '/auth.react.min.js?v=199';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -5434,9 +5453,9 @@ function buildStoryCell(user, isMe) {
   };
   if (url && !_brokenPhotoUrls.has(url)) {
     inner.style.backgroundImage = bgImg(url);
-    const probe = new Image();
-    probe.onerror = () => { _markPhotoBroken(url); setInitials(); };
-    probe.src = url;
+    _probePhoto(url,
+      () => { _markPhotoBroken(url); setInitials(); },
+      () => { inner.style.backgroundImage = ''; inner.style.backgroundImage = bgImg(url); });
   } else {
     setInitials();
   }
