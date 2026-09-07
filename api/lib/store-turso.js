@@ -1008,17 +1008,17 @@ export async function tursoHealNotificationColumns() {
 export async function tursoPutMedia(key, data, contentType) {
   const c = tursoClient();
   const bin = data instanceof Uint8Array ? data : new Uint8Array(data);
-  await c.execute(
-    `INSERT INTO ps_media_files (key, data, content_type, size, created_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET data=excluded.data, content_type=excluded.content_type, size=excluded.size`,
-    { args: [key, bin, String(contentType || 'application/octet-stream'), bin.length, Date.now()] }
-  );
+  await c.execute({
+    sql: `INSERT INTO ps_media_files (key, data, content_type, size, created_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET data=excluded.data, content_type=excluded.content_type, size=excluded.size`,
+    args: [key, bin, String(contentType || 'application/octet-stream'), bin.length, Date.now()],
+  });
 }
 
 export async function tursoGetMedia(key) {
   const c = tursoClient();
-  const res = await c.execute(`SELECT data, content_type, size FROM ps_media_files WHERE key = ?`, { args: [key] });
+  const res = await c.execute({ sql: `SELECT data, content_type, size FROM ps_media_files WHERE key = ?`, args: [key] });
   const row = res.rows && res.rows[0];
   if (!row || !row.data) return null;
   const data = row.data instanceof Uint8Array ? row.data : new Uint8Array(row.data);
