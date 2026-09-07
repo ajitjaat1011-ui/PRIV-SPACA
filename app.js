@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v178';
+const APP_VERSION = 'priv-spaca-v179';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -987,7 +987,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=203';
+    script.src = '/auth.react.min.js?v=204';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -2159,7 +2159,7 @@ function renderMembers() {
     // the unread count + last-message stamp, otherwise a reorder or a new
     // badge would be skipped by the signature guard.
     primary.concat(requests).map(u => u.id + ':' + (u.online?1:0) + ':' + (u.photoUrl?1:0) + ':' + (u.iFollow?1:0) + ':' + (u.followsMe?1:0) + ':' + _unreadOf(u) + ':' + _convoTs(u) + ':' + ((u.lastMessage && u.lastMessage.text) || '')).join(',') +
-    '||' + typingIds + '||' + activeDM;
+    '||' + typingIds + '||' + activeDM + '||' + String(($id('#chatSearchInput') && $id('#chatSearchInput').value) || '').trim();
   if (sig === _lastMembersSig && list.children.length > 0) return;
   _lastMembersSig = sig;
 
@@ -2167,9 +2167,12 @@ function renderMembers() {
     const li = document.createElement('li');
     li.className = 'member-item';
     if (State.currentRoom.kind === 'dm' && State.currentRoom.target && State.currentRoom.target.id === u.id) li.classList.add('active');
+    const ring = document.createElement('span');
+    ring.className = 'dm-ring';
     const avatar = document.createElement('span');
     avatar.className = 'avatar sm';
     renderAvatar(avatar, u, { showStatus: true, online: !!u.online });
+    ring.appendChild(avatar);
     const meta = document.createElement('div');
     meta.className = 'meta';
     const isTyping = State.typingUsers.some(t => t.id === u.id);
@@ -2181,7 +2184,7 @@ function renderMembers() {
     } else { subCls = 'un'; subTxt = '@' + escapeHtml(u.username); }
     meta.innerHTML = '<span class="nm">' + displayNameWithOwnerBadge(u, u.displayName || u.username, 'inline') + '</span>' +
       '<span class="' + subCls + '">' + subTxt + '</span>';
-    li.appendChild(avatar); li.appendChild(meta);
+    li.appendChild(ring); li.appendChild(meta);
     // Right column: last-message time + unread badge.
     const unread = _unreadOf(u);
     if ((u.lastMessage && u.lastMessage.createdAt) || unread > 0) {
@@ -2225,9 +2228,45 @@ function renderMembers() {
     return li;
   };
 
-  // Render Primary list.
+  // Render Primary list (v179: inbox search + NEEDS REPLY / EARLIER sections).
   list.innerHTML = '';
-  primary.forEach(u => list.appendChild(buildRow(u)));
+  const chatQ = String(($id('#chatSearchInput') && $id('#chatSearchInput').value) || '').trim().toLowerCase();
+  const dmsSec = $id('#dmsPaneSection');
+  if (dmsSec) dmsSec.classList.toggle('searching', !!chatQ);
+  let shown = primary;
+  if (chatQ) shown = primary.filter(u =>
+    (u.username || '').toLowerCase().includes(chatQ) ||
+    (u.displayName || '').toLowerCase().includes(chatQ)
+  );
+  const inboxDivider = (label) => {
+    const d = document.createElement('li');
+    d.className = 'inbox-divider';
+    d.textContent = label;
+    return d;
+  };
+  if (chatQ) {
+    shown.forEach(u => list.appendChild(buildRow(u)));
+    if (shown.length === 0) {
+      const e = document.createElement('li');
+      e.className = 'inbox-empty';
+      e.textContent = 'No chats match “' + chatQ + '”';
+      list.appendChild(e);
+    }
+  } else {
+    const needsReply = shown.filter(u => _unreadOf(u) > 0 && u.lastMessage && !u.lastMessage.fromMe);
+    const earlier = shown.filter(u => !needsReply.includes(u));
+    if (needsReply.length > 0 && earlier.length > 0) {
+      list.appendChild(inboxDivider('Needs reply'));
+      needsReply.forEach(u => list.appendChild(buildRow(u)));
+      list.appendChild(inboxDivider('Earlier'));
+    }
+    earlier.forEach(u => list.appendChild(buildRow(u)));
+  }
+  const greetSub = $id('#inboxGreetSub');
+  if (greetSub) {
+    const totalUnread = others.reduce((n, u) => n + _unreadOf(u), 0);
+    greetSub.textContent = primary.length + (primary.length === 1 ? ' conversation' : ' conversations') + (totalUnread > 0 ? ' · ' + totalUnread + ' unread' : '');
+  }
   const emptyEl = $id('#membersEmpty');
   if (emptyEl) emptyEl.classList.toggle('hidden', primary.length > 0 || requests.length > 0);
 
@@ -10875,6 +10914,18 @@ function bindProfileView() {
 }
 
 // ===== Search =====
+function bindChatSearch() {
+  const inp = $id('#chatSearchInput');
+  const clear = $id('#chatSearchClearBtn');
+  if (!inp) return;
+  const sync = () => clear.classList.toggle('hidden', !inp.value.trim());
+  inp.addEventListener('input', () => { sync(); renderMembers(); });
+  if (clear) clear.addEventListener('click', () => {
+    inp.value = ''; sync(); renderMembers();
+    inp.focus();
+  });
+}
+
 function bindSearch() {
   const inp = $id('#searchInput');
   const clear = $id('#searchClearBtn');
@@ -11948,7 +11999,7 @@ function boot() {
   const bindSteps = [
     bindTabs, bindScrollMemory, bindRooms, bindInboxSegment, bindNotes, bindComposer, bindFeedComposer, bindProfile,
     bindSchedule, bindLightbox, bindCommentsSheet, bindSecretChat,
-    bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindNotifSheet, bindUserProfileSheet,
+    bindStoryViewer, bindStoryReplyUI, bindCloseFriendsAndStoryManage, bindSearch, bindChatSearch, bindNotifSheet, bindUserProfileSheet,
     bindProfileView, bindInstallPrompt, bindThemeToggle, bindSettingsSheet,
   ];
   for (const step of bindSteps) {
