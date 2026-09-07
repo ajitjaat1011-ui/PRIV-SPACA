@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v175';
+const APP_VERSION = 'priv-spaca-v176';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -955,7 +955,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=200';
+    script.src = '/auth.react.min.js?v=201';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -10357,7 +10357,7 @@ function closeProfileCard() {
   hide(sheet);
 }
 function isSafeUrlForCss(url) {
-  return typeof url === 'string' && (/^https?:\/\//i.test(url) || /^data:image\//i.test(url));
+  return typeof url === 'string' && (/^https?:\/\//i.test(url) || /^data:image\//i.test(url) || (/^\/(api\/)?media\//.test(url) && !url.includes('..')));
 }
 
 function buildProfileCardTile(profileData = null, fallbackUser = null) {

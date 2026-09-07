@@ -53,6 +53,7 @@ export function isSafeMediaUrl(url, { allowData = true } = {}) {
   if (!u || u.length > 4096) return false;
   if (/^https?:\/\//i.test(u)) return true;
   if (allowData && /^data:(image|audio|video)\/(jpeg|jpg|png|webp|avif|gif|webm|mp3|mp4|quicktime|mov);base64,[a-z0-9+/=]+$/i.test(u)) return true;
+  if (/^\/(api\/)?media\//.test(u) && !u.includes('..') && !u.includes('\n') && !u.includes('\r')) return true;
   return false;
 }
 
@@ -62,6 +63,7 @@ export function isSafeImageUrl(url, { allowData = true } = {}) {
   if (!u || u.length > 4096) return false;
   if (/^https?:\/\//i.test(u)) return true;
   if (allowData && /^data:image\/(jpeg|jpg|png|webp|avif|gif);base64,[a-z0-9+/=]+$/i.test(u)) return true;
+  if (/^\/(api\/)?media\//.test(u) && !u.includes('..') && !u.includes('\n') && !u.includes('\r')) return true;
   return false;
 }
 

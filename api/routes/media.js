@@ -96,11 +96,12 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     // v175: Turso first — stored in ps_media_files, served same-origin at /media/*,
     // so the client's network never needs to reach an external CDN.
     if (isTursoConfigured()) {
+      const key = `media/${folder}/${id}.${ext}`;
       await withFaultDomain('media.turso', async () => {
         const bin = await decodeBase64Chunked(b64);
-        await tursoPutMedia(`media/${folder}/${id}.${ext}`, bin, declaredMime);
+        await tursoPutMedia(key, bin, declaredMime);
       }, { idempotent: false, timeoutMs: 20_000 });
-      return c.json({ url: `/media/${folder}/${id}.${ext}`, persisted: true });
+      return c.json({ url: `/media/${key}`, persisted: true });
     }
     // Cloudinary: fastest path, has its own CDN, no GitHub rate-limit cost.
     if (isCloudinaryConfigured()) {
