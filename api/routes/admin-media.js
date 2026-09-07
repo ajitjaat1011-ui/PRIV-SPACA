@@ -79,6 +79,20 @@ app.post('/api/admin/migrate-media', async (c) => {
       return c.json({ folder, start, processed: slice.length, migrated, skipped, bytes, failed, done: start + slice.length >= items.length });
     }
 
+    // Fetch a single file over raw.githubusercontent (no 1MB contents-API limit).
+    if (action === 'raw') {
+      const key = String(body.key || '');
+      if (!/^media\/(posts|media|avatars)\/[A-Za-z0-9_.-]+$/.test(key)) return c.json({ error: 'bad key' }, 400);
+      if (await tursoGetMedia(key)) return c.json({ migrated: 0, skipped: 1, bytes: 0 });
+      const r = await fetch(`https://raw.githubusercontent.com/${cfg.GH_REPO}/${cfg.GH_BRANCH}/${key}`, { headers: { 'User-Agent': 'PRIV-SPACA' } });
+      if (!r.ok) return c.json({ error: 'raw fetch ' + r.status }, 502);
+      const bin = new Uint8Array(await r.arrayBuffer());
+      if (!bin.length) return c.json({ error: 'empty' }, 502);
+      if (bin.length > 64 * 1024 * 1024) return c.json({ error: 'too large' }, 413);
+      await tursoPutMedia(key, bin, contentMime(key.split('/').pop()));
+      return c.json({ migrated: 1, skipped: 0, bytes: bin.length });
+    }
+
     // Rewrite legacy media URLs in posts + users to /media/... paths.
     if (action === 'rewrite') {
       state.cacheTimestamp = 0;
