@@ -81,8 +81,8 @@ app.post('/api/admin/migrate-media', async (c) => {
 
     // Fetch a single file over raw.githubusercontent (no 1MB contents-API limit).
     if (action === 'raw') {
-      const key = String(body.key || '');
-      if (!/^media\/(posts|media|avatars)\/[A-Za-z0-9_.-]+$/.test(key)) return c.json({ error: 'bad key' }, 400);
+      const key = String(body.file || '');
+      if (!/^media\/(posts|media|avatars)\/[A-Za-z0-9_.-]+$/.test(key)) return c.json({ error: 'bad file' }, 400);
       if (await tursoGetMedia(key)) return c.json({ migrated: 0, skipped: 1, bytes: 0 });
       const r = await fetch(`https://raw.githubusercontent.com/${cfg.GH_REPO}/${cfg.GH_BRANCH}/${key}`, { headers: { 'User-Agent': 'PRIV-SPACA' } });
       if (!r.ok) return c.json({ error: 'raw fetch ' + r.status }, 502);
