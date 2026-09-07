@@ -184,6 +184,35 @@ app.post('/api/admin/migrate-media', async (c) => {
       return c.json({ usersChanged, postsChanged, blobPosts, blobUsers, persisted });
     }
 
+    // Final one-shot: remove the medtest_9x E2E account (rows + blob).
+    if (action === 'cleanup') {
+      const tu = tursoClient();
+      const ur = await tu.execute({ sql: 'SELECT id, data_json FROM ps_users', args: [] });
+      const target = (ur.rows || []).find(r => {
+        const u = safeJson(String(r.data_json || ''), null);
+        return u && u.username === 'medtest_9x';
+      });
+      if (!target) return c.json({ removed: null, reason: 'user not found' });
+      const uid = target.id;
+      const pu = await tu.execute({ sql: 'DELETE FROM ps_posts WHERE user_id = ?', args: [uid] });
+      await tu.execute({ sql: 'DELETE FROM ps_users WHERE id = ?', args: [uid] });
+      state.cacheTimestamp = 0;
+      const db = await fetchDatabase({ fresh: true });
+      let blobChanged = false;
+      if ((db.users || []).some(u => u.id === uid)) {
+        db.users = (db.users || []).filter(u => u.id !== uid);
+        for (const u of db.users) {
+          for (const f of ['followers', 'following', 'blocked', 'closeFriends', 'followRequests', 'sentFollowRequests']) {
+            if (Array.isArray(u[f]) && u[f].includes(uid)) { u[f] = u[f].filter(x => x !== uid); blobChanged = true; }
+          }
+        }
+        db.posts = (db.posts || []).filter(p => p.userId !== uid);
+        blobChanged = true;
+      }
+      const persisted = blobChanged ? !!(await saveDatabaseVerified(db, () => true, 4, { skipSecondarySync: true })) : true;
+      return c.json({ removed: uid, postsDeleted: pu.rowsAffected ?? 'n/a', blobChanged, persisted });
+    }
+
     return c.json({ error: 'unknown action' }, 400);
   } catch (e) { throw wrapUnexpected(e, 'Migration step failed'); }
 });
