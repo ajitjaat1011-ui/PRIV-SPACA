@@ -2,7 +2,7 @@
  * PRIV SPACA — Routes — admin media migration (one-shot, v175)
  *
  * Moves legacy media files from the GitHub data branch into Turso
- * (ps_media) and rewrites stored URLs (raw.githubusercontent.com and
+ * (ps_media_files) and rewrites stored URLs (raw.githubusercontent.com and
  * /api/media/...) to same-origin /media/... paths. Gated by a one-time
  * key; remove this module once the migration is complete.
  */
@@ -42,7 +42,7 @@ app.post('/api/admin/migrate-media', async (c) => {
     if (!body || body.key !== MIGRATION_KEY) return c.json({ error: 'bad key' }, 401);
     if (!isTursoConfigured()) return c.json({ error: 'turso not configured' }, 503);
     if (!cfg.GITHUB_PAT) return c.json({ error: 'github pat not configured' }, 503);
-    await tursoEnsure(); // ps_media must exist before any media SQL (cold isolates)
+    await tursoEnsure(); // ps_media_files must exist before any media SQL (cold isolates)
     const action = String(body.action || 'list');
 
     // Report legacy media size on GitHub (planning).

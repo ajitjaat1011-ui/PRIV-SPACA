@@ -278,7 +278,7 @@ export async function tursoEnsure() {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ps_webauthn_expiry ON ps_webauthn_challenges (expires_at);
-    CREATE TABLE IF NOT EXISTS ps_media (
+    CREATE TABLE IF NOT EXISTS ps_media_files (
       key TEXT PRIMARY KEY,
       data BLOB NOT NULL,
       content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
@@ -1001,7 +1001,7 @@ export async function tursoHealNotificationColumns() {
   }
 }
 
-// ---- v175: media objects in Turso (ps_media) -------------------------
+// ---- v175: media objects in Turso (ps_media_files) -------------------------
 // Media (photos/videos/avatars) is stored as BLOBs and served same-origin
 // by the worker at /media/* so client devices never need to reach an
 // external CDN (raw.githubusercontent.com) to render a post or avatar.
@@ -1009,7 +1009,7 @@ export async function tursoPutMedia(key, data, contentType) {
   const c = tursoClient();
   const bin = data instanceof Uint8Array ? data : new Uint8Array(data);
   await c.execute(
-    `INSERT INTO ps_media (key, data, content_type, size, created_at)
+    `INSERT INTO ps_media_files (key, data, content_type, size, created_at)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET data=excluded.data, content_type=excluded.content_type, size=excluded.size`,
     { args: [key, bin, String(contentType || 'application/octet-stream'), bin.length, Date.now()] }
@@ -1018,7 +1018,7 @@ export async function tursoPutMedia(key, data, contentType) {
 
 export async function tursoGetMedia(key) {
   const c = tursoClient();
-  const res = await c.execute(`SELECT data, content_type, size FROM ps_media WHERE key = ?`, { args: [key] });
+  const res = await c.execute(`SELECT data, content_type, size FROM ps_media_files WHERE key = ?`, { args: [key] });
   const row = res.rows && res.rows[0];
   if (!row || !row.data) return null;
   const data = row.data instanceof Uint8Array ? row.data : new Uint8Array(row.data);

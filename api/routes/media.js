@@ -36,7 +36,7 @@ app.post('/api/upload-media', requireAuth, async (c) => {
     const safeName = String((body && body.name) || 'media').replace(/[^a-z0-9_.-]+/gi, '-').slice(-64) || ('media.' + ext);
     const key = `media/${Date.now()}-${uid('m')}-${safeName.replace(/\.[^.]+$/, '')}.${ext}`;
 
-    // v175: Turso first — stored in ps_media, served same-origin by the worker
+    // v175: Turso first — stored in ps_media_files, served same-origin by the worker
     // at /media/*, so the client's network never needs to reach an external CDN.
     if (isTursoConfigured()) {
       await withFaultDomain('media.turso', async () => {
@@ -93,7 +93,7 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     const safeKind = (kind === 'post' || kind === 'avatar') ? kind : 'media';
     const folder = safeKind === 'avatar' ? 'avatars' : (safeKind === 'post' ? 'posts' : 'media');
     const id = safeKind === 'avatar' ? userId : uid(isVideo ? 'vid' : 'img');
-    // v175: Turso first — stored in ps_media, served same-origin at /media/*,
+    // v175: Turso first — stored in ps_media_files, served same-origin at /media/*,
     // so the client's network never needs to reach an external CDN.
     if (isTursoConfigured()) {
       await withFaultDomain('media.turso', async () => {
