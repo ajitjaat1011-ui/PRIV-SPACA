@@ -54,7 +54,6 @@ import './routes/posts.js';
 import './routes/rtc.js';
 import './routes/stream.js';
 import './routes/push.js';
-import './routes/admin-media.js';
 
 // 3. Catch-all 404 — MUST be imported last.
 import './routes/misc.js';
