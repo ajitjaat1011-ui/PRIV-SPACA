@@ -225,6 +225,7 @@ function LoginPanel({ onSwitch, identifier, setIdentifier, password, setPassword
       <ErrorBox msg={err} />
       <SubmitBtn busy={busy}>Log in</SubmitBtn>
       <p className="psa-trust"><span className="psa-shield">{I.shield}</span>Secure session · passkey protected when enabled</p>
+      <p className="psa-legal"><span>By continuing you agree to the</span> <button type="button" className="psa-link-inline" onClick={openTermsModal}>Terms &amp; Community Guidelines</button></p>
     </form>
   );
 }
@@ -260,7 +261,7 @@ function SignupPanel() {
     try {
       const data = await api('/auth/signup', { method: 'POST', body: {
         email: f.email.trim(), username: f.username.trim(), displayName: f.displayName.trim(),
-        password: f.password, pin: f.pin, termsAccepted: true, termsVersion: '1.0',
+        password: f.password, pin: f.pin, termsAccepted: true, termsVersion: '1.1',
       } });
       acceptSessionHook(data);
     } catch (ex) { setErr(ex.message || 'Signup failed. Please try again.'); setBusy(false); }

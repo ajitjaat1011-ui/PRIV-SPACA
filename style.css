@@ -9433,6 +9433,9 @@ button.story-sheet-handle{display:block;border:0;padding:0;cursor:pointer}
 .psa-split-auth .psa-cta::before{content:"";position:absolute;inset:-40px;background:radial-gradient(circle at var(--psa-x) var(--psa-y),rgba(255,255,255,.64),transparent 25%)}
 .psa-split-auth .psa-cta>*{position:relative;z-index:1}
 .psa-split-auth .psa-trust{font-size:8.5px;padding:0 0 3px;color:#858da6}
+.psa-legal{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:3px;font-size:8.5px;font-weight:650;color:#9AA3C0;padding:0 6px 4px;line-height:1.45;margin:0}
+.psa-legal .psa-link-inline{color:#7A7FB0;font-weight:800}
+.psa-legal .psa-link-inline:active{color:#5C4FE0}
 .psa-split-auth .psa-err{font-size:10.5px;margin:3px 2px 7px;padding:8px 10px}
 .psa-stepbar{display:flex;align-items:center;justify-content:flex-end;gap:5px;height:17px;margin-top:-33px;margin-bottom:16px;padding-right:3px;color:#8a91aa;font-size:8px;font-weight:900;pointer-events:none}
 .psa-stepbar i{width:5px;height:5px;border-radius:50%;background:#c6cada;transition:width .25s,background .25s}
