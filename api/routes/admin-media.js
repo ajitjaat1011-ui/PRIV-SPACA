@@ -10,8 +10,9 @@ import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
 import { state } from '../lib/state.js';
 import { fetchDatabase, saveDatabaseVerified } from '../lib/db.js';
-import { isTursoConfigured, tursoEnsure, tursoPutMedia, tursoGetMedia } from '../lib/store-turso.js';
+import { isTursoConfigured, tursoEnsure, tursoClient, tursoPutMedia, tursoGetMedia } from '../lib/store-turso.js';
 import { wrapUnexpected } from '../lib/errors.js';
+import { safeJson } from '../lib/helpers.js';
 
 const MIGRATION_KEY = 'ps-mig-a4f768939666df2247eabdab';
 const FOLDERS = ['posts', 'media', 'avatars'];
@@ -121,6 +122,66 @@ app.post('/api/admin/migrate-media', async (c) => {
         return c.json({ postsChanged, usersChanged, persisted: !!persisted });
       }
       return c.json({ postsChanged: 0, usersChanged: 0, persisted: null });
+    }
+
+    // v175 follow-up: reads hydrate users/posts from the STRUCTURED tables
+    // (ps_users / ps_posts data_json), which shadow the ps_kv blob — so the
+    // URL rewrite must also touch those rows directly.
+    if (action === 'rewrite2') {
+      const tu = tursoClient();
+      const esc = (v) => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rawRe = new RegExp(`https://raw\\.githubusercontent\\.com/${esc(cfg.GH_REPO)}/${esc(cfg.GH_BRANCH)}/(media/[^"?#\\s]+)`, 'g');
+      const apiRe = /\/api\/media\/((?:posts|media|avatars)\/[^"?#\\s]+)/g;
+      const rw = (u) => (typeof u === 'string' && u ? u.replace(rawRe, '/media/$1').replace(apiRe, '/media/media/$1') : u);
+      let usersChanged = 0;
+      const ur = await tu.execute({ sql: 'SELECT id, data_json FROM ps_users', args: [] });
+      for (const row of ur.rows || []) {
+        const u = safeJson(String(row.data_json || ''), null);
+        if (!u || typeof u !== 'object') continue;
+        if (typeof u.photoUrl === 'string') {
+          const after = rw(u.photoUrl);
+          if (after !== u.photoUrl) {
+            u.photoUrl = after;
+            await tu.execute({ sql: 'UPDATE ps_users SET data_json = ? WHERE id = ?', args: [JSON.stringify(u), row.id] });
+            usersChanged++;
+          }
+        }
+      }
+      let postsChanged = 0;
+      const pr = await tu.execute({ sql: 'SELECT id, data_json FROM ps_posts', args: [] });
+      for (const row of pr.rows || []) {
+        const p = safeJson(String(row.data_json || ''), null);
+        if (!p || typeof p !== 'object') continue;
+        const before = JSON.stringify(p);
+        if (typeof p.imageUrl === 'string') p.imageUrl = rw(p.imageUrl);
+        if (Array.isArray(p.images)) p.images = p.images.map(rw);
+        if (typeof p.videoUrl === 'string') p.videoUrl = rw(p.videoUrl);
+        if (p.music && typeof p.music.art === 'string') p.music.art = rw(p.music.art);
+        if (JSON.stringify(p) !== before) {
+          await tu.execute({ sql: 'UPDATE ps_posts SET data_json = ? WHERE id = ?', args: [JSON.stringify(p), row.id] });
+          postsChanged++;
+        }
+      }
+      // keep the ps_kv blob in sync too (idempotent re-run of the blob rewrite)
+      state.cacheTimestamp = 0;
+      const db = await fetchDatabase({ fresh: true });
+      let blobPosts = 0, blobUsers = 0;
+      for (const p of db.posts || []) {
+        const before = JSON.stringify(p);
+        if (typeof p.imageUrl === 'string') p.imageUrl = rw(p.imageUrl);
+        if (Array.isArray(p.images)) p.images = p.images.map(rw);
+        if (typeof p.videoUrl === 'string') p.videoUrl = rw(p.videoUrl);
+        if (p.music && typeof p.music.art === 'string') p.music.art = rw(p.music.art);
+        if (JSON.stringify(p) !== before) blobPosts++;
+      }
+      for (const u of db.users || []) {
+        if (typeof u.photoUrl === 'string') {
+          const after = rw(u.photoUrl);
+          if (after !== u.photoUrl) { u.photoUrl = after; blobUsers++; }
+        }
+      }
+      const persisted = (blobPosts || blobUsers) ? !!(await saveDatabaseVerified(db, () => true, 4, { skipSecondarySync: true })) : true;
+      return c.json({ usersChanged, postsChanged, blobPosts, blobUsers, persisted });
     }
 
     return c.json({ error: 'unknown action' }, 400);
