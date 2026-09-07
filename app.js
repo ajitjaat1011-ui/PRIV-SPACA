@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v176';
+const APP_VERSION = 'priv-spaca-v177';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -607,17 +607,49 @@ function displayNameWithProfileBadges(user, fallback = '', extraClass = 'inline'
   return `${escapeHtml(label)}${ownerBadgeHtml(user, extraClass)}${privateBadgeHtml(user, extraClass)}`;
 }
 
-// In-memory cache of broken photo URLs (so we don't keep retrying within the session)
+// In-memory cache of broken photo URLs (so we don't keep retrying within the session).
+// v177: the list self-heals —
+//  - it is versioned: when the app version changes, every previously-broken URL
+//    gets a fresh chance (this is what made the Turso media migration visible:
+//    URLs that 404'd during the old-CDN/deploy windows were blacklisted for the
+//    whole browser session and stayed hidden even after storage was fixed);
+//  - entries expire after 6 hours regardless.
+const _BROKEN_TTL_MS = 6 * 60 * 60 * 1000;
+const _brokenPhotoMap = new Map(); // url -> markedAt (ms)
 const _brokenPhotoUrls = new Set();
-try {
-  const saved = JSON.parse(sessionStorage.getItem('ps_brokenPhotos') || '[]');
-  saved.forEach(u => _brokenPhotoUrls.add(u));
-} catch (_) {}
+(function _loadBrokenPhotos() {
+  try {
+    const raw = sessionStorage.getItem('ps_brokenPhotos');
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    // v177 format: { v: APP_VERSION, e: { url: ts } }
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      if (saved.v !== APP_VERSION) return; // new app version → fresh chance for all URLs
+      const now = Date.now();
+      for (const [u, ts] of Object.entries(saved.e || {})) {
+        if (typeof u === 'string' && Number.isFinite(Number(ts)) && now - Number(ts) < _BROKEN_TTL_MS) {
+          _brokenPhotoMap.set(u, Number(ts));
+          _brokenPhotoUrls.add(u);
+        }
+      }
+      return;
+    }
+    // legacy array format was written by an older app version → treat as stale
+  } catch (_) {}
+})();
 
 function _markPhotoBroken(url) {
   if (!url) return;
+  _brokenPhotoMap.set(url, Date.now());
   _brokenPhotoUrls.add(url);
-  try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {}
+  try {
+    const now = Date.now();
+    const entries = [..._brokenPhotoMap.entries()].filter(([, ts]) => now - ts < _BROKEN_TTL_MS);
+    const kept = entries.slice(-100);
+    _brokenPhotoUrls.clear();
+    for (const [u] of kept) _brokenPhotoUrls.add(u);
+    sessionStorage.setItem('ps_brokenPhotos', JSON.stringify({ v: APP_VERSION, e: Object.fromEntries(kept) }));
+  } catch (_) {}
 }
 
 // v174: probe a photo URL and only call onFail if it STILL fails after one
@@ -955,7 +987,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=201';
+    script.src = '/auth.react.min.js?v=202';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
