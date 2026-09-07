@@ -29,8 +29,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // API routes are handled by the Hono backend.
-    if (url.pathname.startsWith('/api/')) {
+    // API routes and same-origin media (/media/*) are handled by the Hono
+    // backend; everything else is a Pages static asset.
+    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/media/')) {
       return app.fetch(request, env, ctx);
     }
 

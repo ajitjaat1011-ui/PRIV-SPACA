@@ -9,6 +9,7 @@
 import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
 import { isGithubMediaConfigured, uid } from '../lib/helpers.js';
+import { isTursoConfigured, tursoPutMedia, tursoGetMedia } from '../lib/store-turso.js';
 import { MEDIA_MAX_BYTES, MEDIA_MIME_EXT, _mediaKindFromMime, base64DecodedSize, decodeBase64Chunked, isCloudinaryConfigured, mediaMagicMatches, uploadToCloudinary } from '../lib/media.js';
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
@@ -35,20 +36,14 @@ app.post('/api/upload-media', requireAuth, async (c) => {
     const safeName = String((body && body.name) || 'media').replace(/[^a-z0-9_.-]+/gi, '-').slice(-64) || ('media.' + ext);
     const key = `media/${Date.now()}-${uid('m')}-${safeName.replace(/\.[^.]+$/, '')}.${ext}`;
 
-    // Preferred architectural path: Cloudflare R2. The current Pages project has
-    // no binding yet, but this goes live automatically once MEDIA_BUCKET is bound
-    // and MEDIA_PUBLIC_BASE_URL points at its public/custom domain.
-    if (c.env && c.env.MEDIA_BUCKET && typeof c.env.MEDIA_BUCKET.put === 'function') {
-      await withFaultDomain('media.r2', async () => {
+    // v175: Turso first — stored in ps_media, served same-origin by the worker
+    // at /media/*, so the client's network never needs to reach an external CDN.
+    if (isTursoConfigured()) {
+      await withFaultDomain('media.turso', async () => {
         const bin = await decodeBase64Chunked(m[2]);
-        await c.env.MEDIA_BUCKET.put(key, bin, {
-          httpMetadata: { contentType: mime, cacheControl: 'public, max-age=31536000, immutable' },
-          customMetadata: { uploader: String(me || ''), type: kind },
-        });
-      }, { idempotent: false, timeoutMs: 10_000 });
-      const base = String(c.env.MEDIA_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
-      const url = base ? `${base}/${key}` : `/media/${key}`;
-      return c.json({ url, mediaUrl: url, type: kind, mimeType: mime, bytes: decodedBytes, storage: 'cloudflare-r2' });
+        await tursoPutMedia(key, bin, mime);
+      }, { idempotent: false, timeoutMs: 20_000 });
+      return c.json({ url: `/media/${key}`, mediaUrl: `/media/${key}`, type: kind, mimeType: mime, bytes: decodedBytes, storage: 'turso' });
     }
 
     if (isGithubMediaConfigured()) {
@@ -98,6 +93,15 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     const safeKind = (kind === 'post' || kind === 'avatar') ? kind : 'media';
     const folder = safeKind === 'avatar' ? 'avatars' : (safeKind === 'post' ? 'posts' : 'media');
     const id = safeKind === 'avatar' ? userId : uid(isVideo ? 'vid' : 'img');
+    // v175: Turso first — stored in ps_media, served same-origin at /media/*,
+    // so the client's network never needs to reach an external CDN.
+    if (isTursoConfigured()) {
+      await withFaultDomain('media.turso', async () => {
+        const bin = await decodeBase64Chunked(b64);
+        await tursoPutMedia(`media/${folder}/${id}.${ext}`, bin, declaredMime);
+      }, { idempotent: false, timeoutMs: 20_000 });
+      return c.json({ url: `/media/${folder}/${id}.${ext}`, persisted: true });
+    }
     // Cloudinary: fastest path, has its own CDN, no GitHub rate-limit cost.
     if (isCloudinaryConfigured()) {
       try {
@@ -136,3 +140,23 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     throw wrapUnexpected(e, 'Upload failed. Please try again.');
   }
 });
+
+// ---- v175: same-origin media serving (Turso-backed) -------------------
+// /media/<key>           primary path (what new uploads return)
+// /api/media/<key>       legacy alias (old posts stored /api/media/... URLs)
+async function _tursoMediaResponse(key) {
+  if (!key || key.includes('..') || key.startsWith('/')) return new Response('Not found', { status: 404 });
+  let hit = null;
+  try { hit = await tursoGetMedia(key); } catch (_) { hit = null; }
+  if (!hit) return new Response('Not found', { status: 404 });
+  return new Response(hit.data, {
+    status: 200,
+    headers: {
+      'Content-Type': hit.contentType || 'application/octet-stream',
+      'Content-Length': String(hit.size || hit.data.length),
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    },
+  });
+}
+app.get('/media/*', (c) => _tursoMediaResponse(decodeURIComponent(c.req.path.slice('/media/'.length))));
+app.get('/api/media/*', (c) => _tursoMediaResponse('media/' + decodeURIComponent(c.req.path.slice('/api/media/'.length))));
