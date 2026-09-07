@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v177';
+const APP_VERSION = 'priv-spaca-v178';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -987,7 +987,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=202';
+    script.src = '/auth.react.min.js?v=203';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -10909,11 +10909,80 @@ function bindSearch() {
 // query + same members list doesn't rebuild the DOM from scratch.
 let _lastSearchSig = '';
 
+function searchRow(u) {
+  const li = document.createElement('li');
+  const avWrap = document.createElement('span');
+  avWrap.className = 'sr-av';
+  const av = document.createElement('span');
+  av.className = 'avatar md';
+  renderAvatar(av, u);
+  avWrap.appendChild(av);
+  if (u.online) {
+    const d = document.createElement('span');
+    d.className = 'online-dot';
+    d.title = 'Online';
+    avWrap.appendChild(d);
+  }
+  li.appendChild(avWrap);
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const handle = '@' + escapeHtml(u.username || '');
+  const subParts = [];
+  if (u.displayName && u.displayName !== u.username) subParts.push(escapeHtml(u.displayName));
+  if (u.bio) subParts.push(escapeHtml(u.bio));
+  meta.innerHTML = `
+    <div class="nm">${displayNameWithOwnerBadge(u, u.username || u.displayName)}</div>
+    <div class="un">${handle}${subParts.length ? ' · ' + subParts.join(' · ') : ''}</div>
+  `;
+  li.appendChild(meta);
+  const pill = document.createElement('button');
+  pill.type = 'button';
+  pill.className = 'sr-pill ' + (u.iFollow ? 'message' : 'follow');
+  pill.textContent = u.iFollow ? 'Message' : 'Follow';
+  if (u.iFollow) {
+    pill.addEventListener('click', (e) => { e.stopPropagation(); openDM(u); switchTab('chat'); });
+  } else {
+    pill.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (pill.disabled) return;
+      optimistic({
+        snapshot: () => ({
+          following: Array.isArray(State.user.following) ? State.user.following.slice() : [],
+          memberFollowed: !!(State.members || []).find(x => x.id === u.id && x.iFollow),
+        }),
+        apply: () => {
+          if (!State.user.following) State.user.following = [];
+          if (!State.user.following.includes(u.id)) State.user.following.push(u.id);
+          const member = (State.members || []).find(x => x.id === u.id);
+          if (member) member.iFollow = true;
+          const inp = $id('#searchInput');
+          renderSearch(inp ? inp.value.trim() : '');
+        },
+        request: () => api('/user/follow', { method: 'POST', body: { targetId: u.id } }),
+        commit: (result) => {
+          if (result && Array.isArray(result.followingIds)) State.user.following = result.followingIds;
+          updateOwnProfileStatCounts(State.user);
+          toast(result && result.requested ? 'Follow request sent' : 'Followed ' + (u.displayName || u.username));
+        },
+        restore: (snap) => {
+          State.user.following = snap.following;
+          const member = (State.members || []).find(x => x.id === u.id);
+          if (member) member.iFollow = snap.memberFollowed;
+          updateOwnProfileStatCounts(State.user);
+          const inp = $id('#searchInput');
+          renderSearch(inp ? inp.value.trim() : '');
+        },
+      });
+    });
+  }
+  li.appendChild(pill);
+  li.addEventListener('click', () => openUserProfile(u.id));
+  return li;
+}
+
 function renderSearch(query) {
   const list = $id('#searchResults');
   if (!list) return;
-  // Signature: query + members snapshot (id, online, iFollow). If nothing
-  // changed since the last render and the list is already populated, bail.
   const meId = State.user && State.user.id;
   const membersSig = (State.members || [])
     .filter(u => u.id !== meId)
@@ -10923,32 +10992,70 @@ function renderSearch(query) {
   if (sig === _lastSearchSig && list.children.length > 0) return;
   _lastSearchSig = sig;
   list.innerHTML = '';
+  const onlineHead = $id('#searchOnlineHead');
+  const onlineBox = $id('#searchOnlineNow');
   const all = (State.members || []).filter(u => u.id !== meId);
   const q = String(query || '').toLowerCase().trim();
-  let shown = all;
+  let shown;
   if (q) {
+    // Typing: pure results, no sections
+    if (onlineHead) onlineHead.classList.add('hidden');
+    if (onlineBox) { onlineBox.classList.add('hidden'); onlineBox.innerHTML = ''; }
     shown = all.filter(u =>
       (u.username || '').toLowerCase().includes(q) ||
       (u.displayName || '').toLowerCase().includes(q) ||
       (u.bio || '').toLowerCase().includes(q)
     );
-  } else {
-    // Show "Suggested" header when empty
-    const h = document.createElement('div');
-    h.className = 'search-section-title';
-    h.textContent = 'Suggested';
-    list.appendChild(h);
-    // Sort: online first
-    shown = shown.slice().sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+    if (shown.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'search-empty';
+      empty.textContent = `No members match "${escapeHtml(q)}"`;
+      list.appendChild(empty);
+      refreshIcons();
+      return;
+    }
+    shown.forEach(u => list.appendChild(searchRow(u)));
+    refreshIcons();
+    return;
   }
+  // Empty query: Online now strip + Suggested list
+  const online = all.filter(u => u.online);
+  if (online.length > 0 && onlineHead && onlineBox) {
+    onlineHead.classList.remove('hidden');
+    const cnt = $id('#searchOnlineCount');
+    if (cnt) cnt.textContent = online.length + ' active';
+    onlineBox.classList.remove('hidden');
+    onlineBox.innerHTML = '';
+    online.slice(0, 10).forEach(u => {
+      const item = document.createElement('div');
+      item.className = 'on-item';
+      const ring = document.createElement('span');
+      ring.className = 'on-ring';
+      const a = document.createElement('span');
+      a.className = 'avatar md';
+      renderAvatar(a, u);
+      ring.appendChild(a);
+      const lbl = document.createElement('span');
+      lbl.className = 'on-lbl';
+      lbl.textContent = u.username || u.displayName || 'member';
+      item.appendChild(ring);
+      item.appendChild(lbl);
+      item.addEventListener('click', () => openUserProfile(u.id));
+      onlineBox.appendChild(item);
+    });
+  } else if (onlineHead) {
+    onlineHead.classList.add('hidden');
+    if (onlineBox) { onlineBox.classList.add('hidden'); onlineBox.innerHTML = ''; }
+  }
+  const div = document.createElement('div');
+  div.className = 'search-divider';
+  div.textContent = 'Suggested';
+  list.appendChild(div);
+  shown = all.slice().sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
   if (shown.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'search-empty';
-    if (q) {
-      empty.textContent = `No members match "${escapeHtml(q)}"`;
-      list.appendChild(empty);
-      return;
-    }
+    empty.textContent = 'No members yet';
     // Empty state with a 'Refresh app' button so the user can self-heal
     // from a stale SW / broken cache without having to clear site data
     // manually. Common after deploys.
@@ -10977,38 +11084,13 @@ function renderSearch(query) {
     wrap.appendChild(empty);
     wrap.appendChild(refreshBtn);
     list.appendChild(wrap);
+    refreshIcons();
     return;
   }
-  shown.forEach(u => {
-    const li = document.createElement('li');
-    const av = document.createElement('span');
-    av.className = 'avatar md';
-    renderAvatar(av, u);
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.innerHTML = `
-      <div class="nm">${escapeHtml(u.username || u.displayName)}</div>
-      <div class="un">${escapeHtml(u.displayName || '')}${u.bio ? ' · ' + escapeHtml(u.bio) : ''}</div>
-    `;
-    li.appendChild(av);
-    li.appendChild(meta);
-    if (u.online) {
-      const d = document.createElement('span');
-      d.className = 'online-dot';
-      d.title = 'Online';
-      li.appendChild(d);
-    }
-    const send = document.createElement('button');
-    send.className = 'ghost-btn';
-    send.innerHTML = '<i data-lucide="send"></i>';
-    send.title = 'Message';
-    send.addEventListener('click', (e) => { e.stopPropagation(); openDM(u); switchTab('chat'); });
-    li.appendChild(send);
-    li.addEventListener('click', () => openUserProfile(u.id));
-    list.appendChild(li);
-  });
+  shown.forEach(u => list.appendChild(searchRow(u)));
   refreshIcons();
 }
+
 
 function bindLightbox() {
   $id('#lightboxClose').addEventListener('click', closeLightbox);
