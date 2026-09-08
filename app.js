@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v179';
+const APP_VERSION = 'priv-spaca-v180';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -987,7 +987,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=204';
+    script.src = '/auth.react.min.js?v=205';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -2255,10 +2255,12 @@ function renderMembers() {
   } else {
     const needsReply = shown.filter(u => _unreadOf(u) > 0 && u.lastMessage && !u.lastMessage.fromMe);
     const earlier = shown.filter(u => !needsReply.includes(u));
-    if (needsReply.length > 0 && earlier.length > 0) {
-      list.appendChild(inboxDivider('Needs reply'));
+    // Always render both groups. Dividers only when the list actually splits,
+    // so a single-section inbox (e.g. every chat needs a reply) still shows rows.
+    if (needsReply.length > 0) {
+      if (earlier.length > 0) list.appendChild(inboxDivider('Needs reply'));
       needsReply.forEach(u => list.appendChild(buildRow(u)));
-      list.appendChild(inboxDivider('Earlier'));
+      if (earlier.length > 0) list.appendChild(inboxDivider('Earlier'));
     }
     earlier.forEach(u => list.appendChild(buildRow(u)));
   }
