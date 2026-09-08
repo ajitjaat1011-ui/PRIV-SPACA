@@ -59,22 +59,28 @@ jobs:
             const tables = ['ps_users','ps_posts','ps_messages','ps_notifications','ps_dm_index','ps_user_feeds','ps_events','ps_kv','ps_message_reactions','ps_message_receipts','ps_meta','ps_link_previews'];
             function b64(bytes) {
               let bin = '';
-              for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+              const CH = 0x8000;
+              for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
               return btoa(bin);
             }
-            function cleanRow(r) {
+            async function cleanValue(v) {
+              // The Turso client returns BLOBs as Uint8Array, ArrayBuffer or Blob
+              // depending on driver/environment — normalise all to base64.
+              if (v instanceof Uint8Array) return 'base64:' + b64(v);
+              if (v instanceof ArrayBuffer) return 'base64:' + b64(new Uint8Array(v));
+              if (typeof Blob !== 'undefined' && v instanceof Blob) return 'base64:' + b64(new Uint8Array(await v.arrayBuffer()));
+              return v;
+            }
+            async function cleanRow(r) {
               const o = {};
-              for (const [k, v] of Object.entries(r)) {
-                if (v instanceof Uint8Array) o[k] = 'base64:' + b64(v);
-                else o[k] = v;
-              }
+              for (const [k, v] of Object.entries(r)) o[k] = await cleanValue(v);
               return o;
             }
             const dump = {};
             for (const t of tables) {
               try {
                 const rs = await c.execute('SELECT * FROM ' + t);
-                dump[t] = rs.rows.map(cleanRow);
+                dump[t] = await Promise.all(rs.rows.map(cleanRow));
               } catch (e) {
                 dump[t] = { _error: String(e.message || e) };
               }
@@ -83,11 +89,12 @@ jobs:
             let mediaCount = 0, mediaBytes = 0;
             try {
               const rs = await c.execute('SELECT * FROM ps_media_files');
-              dump.ps_media_files = rs.rows.map((r) => {
+              dump.ps_media_files = await Promise.all(rs.rows.map(async (r) => {
                 mediaCount++;
-                if (r.data instanceof Uint8Array) mediaBytes += r.data.length;
+                const sz = r.data && (r.data.byteLength !== undefined ? r.data.byteLength : r.data.size);
+                mediaBytes += Number(sz) || 0;
                 return cleanRow(r);
-              });
+              }));
             } catch (e) {
               dump.ps_media_files = { _error: String(e.message || e) };
             }
