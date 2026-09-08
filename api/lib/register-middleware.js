@@ -6,6 +6,7 @@
 import { app } from './app.js';
 import { applyCors, isAllowedCorsOrigin, isDefaultJwtSecret, isMissingFieldKey, isProductionRequest, loadConfig } from './config.js';
 import { AppError, ErrorCodes, errorBody, handleError, handleNotFound } from './errors.js';
+import { isSupabaseConfigured } from './store-turso.js';
 import { omniMiddleware } from './omni-engine.js';
 import { globalRateLimit } from './ratelimit.js';
 import { accessLog, requestId } from './resilience.js';
@@ -56,7 +57,9 @@ app.use('*', async (c, next) => {
   }
   const publicProbe = ['/api/health', '/api/ready', '/api/stream/config', '/api/push/vapid-public'].includes(c.req.path);
   if (isProductionRequest(c) && isApi && !publicProbe) {
-    if (isDefaultJwtSecret()) {
+    // v181 (Supabase): there is no app JWT secret in Supabase mode —
+    // sessions are GoTrue JWTs — so the legacy secret gate does not apply.
+    if (isDefaultJwtSecret() && !isSupabaseConfigured()) {
       return c.json(errorBody(ErrorCodes.INTERNAL, 'Server auth secret is not configured.', {
         requestId: c.get('requestId'), correlationId: c.get('correlationId'),
       }), 503);

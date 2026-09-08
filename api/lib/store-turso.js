@@ -14,6 +14,10 @@ import { state } from './state.js';
 import { nowMs, safeJson } from './helpers.js';
 import { normalizeDb } from './schema.js';
 import { withFaultDomain } from './omni-engine.js';
+import { createSupabaseLibsqlClient, isSupabaseConfigured } from './store-supabase.js';
+// Re-export so routes can check Supabase mode without importing store-supabase
+// directly (media.js pattern).
+export { isSupabaseConfigured } from './store-supabase.js';
 
 function sqlText(statement) {
   if (typeof statement === 'string') return statement;
@@ -29,7 +33,11 @@ function isReadOnlyStatement(statement) {
  * context is retained by Omni's AsyncLocalStorage even though the libSQL SDK
  * does not expose a portable custom-header hook.
  */
-function instrumentTursoClient(client) {
+function instrumentTursoClient(client, budgets) {
+  // Direct-Postgres (Supabase) mode runs over a VPC connection whose cold
+  // connect costs ~2s, so it gets a wider fault budget than the low-latency
+  // Turso edge database (2.5s reads would trip the breaker on cold starts).
+  const b = budgets || { read: 2500, write: 7000, readBatch: 3000, writeBatch: 8000, multi: 10_000 };
   return new Proxy(client, {
     get(target, property, receiver) {
       if (property === '__omniInstrumented') return true;
@@ -38,7 +46,7 @@ function instrumentTursoClient(client) {
           const readOnly = isReadOnlyStatement(statement);
           return withFaultDomain('database.turso', () => target.execute(statement), {
             idempotent: readOnly,
-            timeoutMs: readOnly ? 2500 : 7000,
+            timeoutMs: readOnly ? b.read : b.write,
           });
         };
       }
@@ -47,14 +55,14 @@ function instrumentTursoClient(client) {
           const readOnly = Array.isArray(statements) && statements.every(isReadOnlyStatement);
           return withFaultDomain('database.turso', () => target.batch(statements, mode), {
             idempotent: readOnly,
-            timeoutMs: readOnly ? 3000 : 8000,
+            timeoutMs: readOnly ? b.readBatch : b.writeBatch,
           });
         };
       }
       if (property === 'executeMultiple') {
         return (sql) => withFaultDomain('database.turso',
           () => target.executeMultiple(sql),
-          { idempotent: false, timeoutMs: 10_000 });
+          { idempotent: false, timeoutMs: b.multi });
       }
       const value = Reflect.get(target, property, receiver);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -77,18 +85,31 @@ export function isTursoPrimary() {
 export const _tursoAls = new AsyncLocalStorage();
 
 export function isTursoConfigured() {
-  return !!(cfg.TURSO_DATABASE_URL && cfg.TURSO_AUTH_TOKEN);
+  return !!(cfg.TURSO_DATABASE_URL && cfg.TURSO_AUTH_TOKEN) || isSupabaseConfigured();
+}
+
+function createRequestClient() {
+  if (isSupabaseConfigured()) {
+    // v181 (Supabase): direct Postgres transport (pool lives per-isolate
+    // inside store-supabase); keep the fault-domain instrumentation.
+    // Wider budgets: a cold VPC connect costs ~2s, which would otherwise
+    // trip the rolling breaker on the first reads of a fresh isolate.
+    return instrumentTursoClient(createSupabaseLibsqlClient(), {
+      read: 9000, write: 15000, readBatch: 9000, writeBatch: 15000, multi: 20000,
+    });
+  }
+  return createInstrumentedTursoClient();
 }
 
 export function tursoClient() {
   const store = _tursoAls.getStore();
   if (store) {
-    if (!store.client) store.client = createInstrumentedTursoClient();
+    if (!store.client) store.client = createRequestClient();
     return store.client;
   }
   // Background work gets a fresh instrumented client; never a module-global
   // socket/client whose lifecycle outlives a Worker request.
-  return createInstrumentedTursoClient();
+  return createRequestClient();
 }
 
 // Runs `fn` inside a fresh per-request Turso-client scope. Wired into the
@@ -278,13 +299,6 @@ export async function tursoEnsure() {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ps_webauthn_expiry ON ps_webauthn_challenges (expires_at);
-    CREATE TABLE IF NOT EXISTS ps_media_files (
-      key TEXT PRIMARY KEY,
-      data BLOB NOT NULL,
-      content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
-      size INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL
-    );
     CREATE UNIQUE INDEX IF NOT EXISTS ux_ps_users_username_lower ON ps_users (username_lower) WHERE username_lower IS NOT NULL AND username_lower <> '';
     CREATE UNIQUE INDEX IF NOT EXISTS ux_ps_users_email_lower ON ps_users (email_lower) WHERE email_lower IS NOT NULL AND email_lower <> '';
   `);
@@ -999,28 +1013,4 @@ export async function tursoHealNotificationColumns() {
     console.warn('[turso] notification column heal failed:', e && e.message);
     return false;
   }
-}
-
-// ---- v175: media objects in Turso (ps_media_files) -------------------------
-// Media (photos/videos/avatars) is stored as BLOBs and served same-origin
-// by the worker at /media/* so client devices never need to reach an
-// external CDN (raw.githubusercontent.com) to render a post or avatar.
-export async function tursoPutMedia(key, data, contentType) {
-  const c = tursoClient();
-  const bin = data instanceof Uint8Array ? data : new Uint8Array(data);
-  await c.execute({
-    sql: `INSERT INTO ps_media_files (key, data, content_type, size, created_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET data=excluded.data, content_type=excluded.content_type, size=excluded.size`,
-    args: [key, bin, String(contentType || 'application/octet-stream'), bin.length, Date.now()],
-  });
-}
-
-export async function tursoGetMedia(key) {
-  const c = tursoClient();
-  const res = await c.execute({ sql: `SELECT data, content_type, size FROM ps_media_files WHERE key = ?`, args: [key] });
-  const row = res.rows && res.rows[0];
-  if (!row || !row.data) return null;
-  const data = row.data instanceof Uint8Array ? row.data : new Uint8Array(row.data);
-  return { data, contentType: row.content_type || 'application/octet-stream', size: Number(row.size) || data.length };
 }

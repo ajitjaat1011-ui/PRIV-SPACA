@@ -3,6 +3,8 @@
  */
 
 import { cfg, JWT_EXPIRES_DAYS } from './config.js';
+import { isSupabaseConfigured } from './store-turso.js';
+import { gotrueVerifyCached } from './auth-supabase.js';
 
 const enc = new TextEncoder();
 export const SESSION_COOKIE = '__Host-ps_session';
@@ -114,6 +116,15 @@ export function clearSessionCookie(c) {
 export async function authFromRequest(c) {
   const token = tokenFromRequest(c);
   if (!token) return null;
+  if (isSupabaseConfigured()) {
+    // v181 (Supabase): the session cookie carries the GoTrue access JWT
+    // (verified against GoTrue, cached 60s). There is no app JWT secret.
+    try {
+      const gu = await gotrueVerifyCached(token);
+      if (gu && gu.id) return { uid: gu.id, email: gu.email, gotrue: true };
+    } catch (_) { /* invalid/expired GoTrue token */ }
+    return null;
+  }
   try { return await verifyToken(token); } catch (_) { return null; }
 }
 

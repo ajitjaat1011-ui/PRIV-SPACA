@@ -56,18 +56,45 @@ jobs:
           const fs = require('fs');
           (async () => {
             const c = createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN });
-            const tables = ['ps_users','ps_posts','ps_messages','ps_notifications','ps_dm_index','ps_user_feeds','ps_events','ps_kv'];
+            const tables = ['ps_users','ps_posts','ps_messages','ps_notifications','ps_dm_index','ps_user_feeds','ps_events','ps_kv','ps_message_reactions','ps_message_receipts','ps_meta','ps_link_previews'];
+            function b64(bytes) {
+              let bin = '';
+              for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+              return btoa(bin);
+            }
+            function cleanRow(r) {
+              const o = {};
+              for (const [k, v] of Object.entries(r)) {
+                if (v instanceof Uint8Array) o[k] = 'base64:' + b64(v);
+                else o[k] = v;
+              }
+              return o;
+            }
             const dump = {};
             for (const t of tables) {
               try {
                 const rs = await c.execute('SELECT * FROM ' + t);
-                dump[t] = rs.rows.map(r => Object.fromEntries(Object.entries(r)));
+                dump[t] = rs.rows.map(cleanRow);
               } catch (e) {
                 dump[t] = { _error: String(e.message || e) };
               }
             }
+            // v185: media BLOBs go to their own file (can grow large)
+            let mediaCount = 0, mediaBytes = 0;
+            try {
+              const rs = await c.execute('SELECT * FROM ps_media_files');
+              dump.ps_media_files = rs.rows.map((r) => {
+                mediaCount++;
+                if (r.data instanceof Uint8Array) mediaBytes += r.data.length;
+                return cleanRow(r);
+              });
+            } catch (e) {
+              dump.ps_media_files = { _error: String(e.message || e) };
+            }
             fs.writeFileSync('/tmp/backup-out/${today}.json', JSON.stringify(dump));
+            fs.writeFileSync('/tmp/backup-out/${today}-media.json', JSON.stringify(dump.ps_media_files));
             console.log('Wrote backup, tables:', Object.keys(dump).join(', '));
+            console.log('Media: ' + mediaCount + ' files, ' + (mediaBytes / 1048576).toFixed(1) + ' MB');
           })().catch(e => { console.error(e); process.exit(1); });
           "
 
@@ -80,6 +107,7 @@ jobs:
           git clone --depth 1 "https://${BACKUP_PUSH_TOKEN}@github.com/ajitjaat1011-ui/priv-spaca-backups.git" /tmp/backups-repo
           mkdir -p /tmp/backups-repo/backups
           cp "/tmp/backup-out/${today}.json" "/tmp/backups-repo/backups/${today}.json"
+          cp "/tmp/backup-out/${today}-media.json" "/tmp/backups-repo/backups/${today}-media.json"
           cd /tmp/backups-repo
           find backups -name '*.json' -type f -mtime +30 -print -delete || true
           git config user.name  "priv-spaca-bot"

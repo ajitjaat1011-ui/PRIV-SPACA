@@ -9,13 +9,39 @@
 import { app } from '../lib/app.js';
 import { cfg } from '../lib/config.js';
 import { isGithubMediaConfigured, uid } from '../lib/helpers.js';
-import { isTursoConfigured, tursoPutMedia, tursoGetMedia } from '../lib/store-turso.js';
 import { MEDIA_MAX_BYTES, MEDIA_MIME_EXT, _mediaKindFromMime, base64DecodedSize, decodeBase64Chunked, isCloudinaryConfigured, mediaMagicMatches, uploadToCloudinary } from '../lib/media.js';
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { wrapUnexpected } from '../lib/errors.js';
 import { omniFetch, withFaultDomain } from '../lib/omni-engine.js';
+import { isSupabaseConfigured, tursoClient } from '../lib/store-turso.js';
+
+// ---------- Supabase media (v181) ----------
+// In Supabase mode, media lives in the ps_media bytea table and is served
+// same-origin by GET /api/media/* below. The edge request body
+// limit (~6 MB) caps uploads at 3 MB decoded (base64 overhead).
+const SUPABASE_MEDIA_MAX = 3 * 1024 * 1024;
+
+function supabaseMediaUrl(c, objectId) {
+  // The public URL must be built from the known public base (PS_PUBLIC_BASE,
+  // set by the function entry) — the internal request URL has the wrong
+  // scheme/path on the Supabase edge.
+  const origin = (String(cfg.PS_PUBLIC_BASE || '').replace(/\/+$/, '')
+    || (String(cfg.SUPABASE_URL || '').replace(/\/+$/, '') + '/functions/v1/app'));
+  return origin + '/api/media/' + objectId;
+}
+
+async function supabaseStoreMedia(c, { objectId, userId, mime, size, b64, kind }) {
+  const turso = tursoClient();
+  await turso.execute({
+    sql: `INSERT INTO ps_media (object_id, user_id, mime, size, data, kind, created_at)
+          VALUES (?, ?, ?, ?, decode(?, 'base64'), ?, ?)
+          ON CONFLICT (object_id) DO UPDATE SET data = excluded.data, mime = excluded.mime, size = excluded.size, kind = excluded.kind`,
+    args: [objectId, String(userId || ''), mime, size, b64, kind, Date.now()],
+  });
+  return supabaseMediaUrl(c, objectId);
+}
 
 app.post('/api/upload-media', requireAuth, async (c) => {
   try {
@@ -35,15 +61,27 @@ app.post('/api/upload-media', requireAuth, async (c) => {
     if (!mediaMagicMatches(m[2], mime)) return c.json({ error: 'Media content does not match its declared type' }, 415);
     const safeName = String((body && body.name) || 'media').replace(/[^a-z0-9_.-]+/gi, '-').slice(-64) || ('media.' + ext);
     const key = `media/${Date.now()}-${uid('m')}-${safeName.replace(/\.[^.]+$/, '')}.${ext}`;
+    // v181 (Supabase): bytea table first.
+    if (isSupabaseConfigured()) {
+      if (decodedBytes > SUPABASE_MEDIA_MAX) return c.json({ error: 'Media too large (3 MB max here)' }, 413);
+      const url = await supabaseStoreMedia(c, { objectId: key, userId: me, mime, size: decodedBytes, b64: m[2], kind });
+      return c.json({ url, mediaUrl: url, type: kind, mimeType: mime, bytes: decodedBytes, storage: 'supabase-media' });
+    }
 
-    // v175: Turso first — stored in ps_media_files, served same-origin by the worker
-    // at /media/*, so the client's network never needs to reach an external CDN.
-    if (isTursoConfigured()) {
-      await withFaultDomain('media.turso', async () => {
+    // Preferred architectural path: Cloudflare R2. The current Pages project has
+    // no binding yet, but this goes live automatically once MEDIA_BUCKET is bound
+    // and MEDIA_PUBLIC_BASE_URL points at its public/custom domain.
+    if (c.env && c.env.MEDIA_BUCKET && typeof c.env.MEDIA_BUCKET.put === 'function') {
+      await withFaultDomain('media.r2', async () => {
         const bin = await decodeBase64Chunked(m[2]);
-        await tursoPutMedia(key, bin, mime);
-      }, { idempotent: false, timeoutMs: 20_000 });
-      return c.json({ url: `/media/${key}`, mediaUrl: `/media/${key}`, type: kind, mimeType: mime, bytes: decodedBytes, storage: 'turso' });
+        await c.env.MEDIA_BUCKET.put(key, bin, {
+          httpMetadata: { contentType: mime, cacheControl: 'public, max-age=31536000, immutable' },
+          customMetadata: { uploader: String(me || ''), type: kind },
+        });
+      }, { idempotent: false, timeoutMs: 10_000 });
+      const base = String(c.env.MEDIA_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+      const url = base ? `${base}/${key}` : `/media/${key}`;
+      return c.json({ url, mediaUrl: url, type: kind, mimeType: mime, bytes: decodedBytes, storage: 'cloudflare-r2' });
     }
 
     if (isGithubMediaConfigured()) {
@@ -93,15 +131,25 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
     const safeKind = (kind === 'post' || kind === 'avatar') ? kind : 'media';
     const folder = safeKind === 'avatar' ? 'avatars' : (safeKind === 'post' ? 'posts' : 'media');
     const id = safeKind === 'avatar' ? userId : uid(isVideo ? 'vid' : 'img');
-    // v175: Turso first — stored in ps_media_files, served same-origin at /media/*,
-    // so the client's network never needs to reach an external CDN.
-    if (isTursoConfigured()) {
-      const key = `media/${folder}/${id}.${ext}`;
-      await withFaultDomain('media.turso', async () => {
+    // v181 (Supabase): bytea table first.
+    if (isSupabaseConfigured()) {
+      const photoMax = isVideo ? SUPABASE_MEDIA_MAX : Math.min(5 * 1024 * 1024, SUPABASE_MEDIA_MAX);
+      if (size > photoMax) return c.json({ error: 'Media too large (3 MB max here)' }, 413);
+      const objectId = `media/${folder}/${id}.${ext}`;
+      const url = await supabaseStoreMedia(c, { objectId, userId, mime: declaredMime, size, b64, kind: safeKind });
+      return c.json({ url, persisted: true });
+    }
+    // v175: R2 first — served same-origin by the worker (/media/*), so no
+    // external CDN reachability is required on the client's network.
+    if (c.env && c.env.MEDIA_BUCKET && typeof c.env.MEDIA_BUCKET.put === 'function') {
+      await withFaultDomain('media.r2', async () => {
         const bin = await decodeBase64Chunked(b64);
-        await tursoPutMedia(key, bin, declaredMime);
-      }, { idempotent: false, timeoutMs: 20_000 });
-      return c.json({ url: `/media/${key}`, persisted: true });
+        await c.env.MEDIA_BUCKET.put(`media/${folder}/${id}.${ext}`, bin, {
+          httpMetadata: { contentType: declaredMime, cacheControl: 'public, max-age=31536000, immutable' },
+          customMetadata: { uploader: String(userId || ''), kind: safeKind },
+        });
+      }, { idempotent: false, timeoutMs: 10_000 });
+      return c.json({ url: `/media/${folder}/${id}.${ext}`, persisted: true });
     }
     // Cloudinary: fastest path, has its own CDN, no GitHub rate-limit cost.
     if (isCloudinaryConfigured()) {
@@ -142,22 +190,49 @@ app.post('/api/upload-photo', requireAuth, async (c) => {
   }
 });
 
-// ---- v175: same-origin media serving (Turso-backed) -------------------
-// /media/<key>           primary path (what new uploads return)
-// /api/media/<key>       legacy alias (old posts stored /api/media/... URLs)
-async function _tursoMediaResponse(key) {
-  if (!key || key.includes('..') || key.startsWith('/')) return new Response('Not found', { status: 404 });
-  let hit = null;
-  try { hit = await tursoGetMedia(key); } catch (_) { hit = null; }
-  if (!hit) return new Response('Not found', { status: 404 });
-  return new Response(hit.data, {
-    status: 200,
-    headers: {
-      'Content-Type': hit.contentType || 'application/octet-stream',
-      'Content-Length': String(hit.size || hit.data.length),
-      'Cache-Control': 'public, max-age=31536000, immutable',
-    },
-  });
+// v181 (Supabase): public media serving from ps_media. Object ids contain
+// slashes (media/avatars/...), so this is a wildcard route, not :objectId.
+// v185 (pages+render): /media/* alias for legacy v175-era URLs.
+async function _supabaseMediaResponse(c, objectId) {
+  if (!objectId || objectId.includes('..') || objectId.startsWith('/')) {
+    return c.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+  }
+  if (!/^media\/[A-Za-z0-9_.\-]+(\/[A-Za-z0-9_.\-]+)*\.[A-Za-z0-9]{2,5}$/.test(objectId)) {
+    return c.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+  }
+  try {
+    const rs = await tursoClient().execute({ sql: 'SELECT data, mime, size FROM ps_media WHERE object_id = ? LIMIT 1', args: [objectId] });
+    const row = rs.rows && rs.rows[0];
+    if (!row || !row.data) return c.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+    const bytes = row.data;
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    return new Response(u8, {
+      status: 200,
+      headers: {
+        'Content-Type': String(row.mime || 'application/octet-stream'),
+        'Content-Length': String(Number(row.size) || u8.length),
+        'Cache-Control': 'public, max-age=31536000, immutable',
+      },
+    });
+  } catch (e) {
+    console.error('[media:get]', e && e.message);
+    return c.json({ error: 'Media temporarily unavailable' }, 503);
+  }
 }
-app.get('/media/*', (c) => _tursoMediaResponse(decodeURIComponent(c.req.path.slice('/media/'.length))));
-app.get('/api/media/*', (c) => _tursoMediaResponse('media/' + decodeURIComponent(c.req.path.slice('/api/media/'.length))));
+
+app.get('/api/media/*', async (c) => {
+  if (!isSupabaseConfigured()) return c.json({ error: 'Not found' }, 404);
+  const p = c.req.path;
+  const marker = '/api/media/';
+  const idx = p.indexOf(marker);
+  if (idx === -1) return c.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+  return _supabaseMediaResponse(c, decodeURIComponent(p.slice(idx + marker.length)));
+});
+
+app.get('/media/*', async (c) => {
+  if (!isSupabaseConfigured()) return c.json({ error: 'Not found' }, 404);
+  const p = c.req.path;
+  const idx = p.indexOf('/media/');
+  if (idx === -1) return c.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+  return _supabaseMediaResponse(c, decodeURIComponent(p.slice(idx + '/media/'.length)));
+});

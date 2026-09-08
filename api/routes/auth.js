@@ -9,7 +9,7 @@
 import { app } from '../lib/app.js';
 import { cfg, isDefaultJwtSecret, isMissingFieldKey } from '../lib/config.js';
 import { state } from '../lib/state.js';
-import { _bcryptVerifyCache, _loginUserCache, b64url, clearSessionCookie, invalidateUserAuthCaches, setSessionCookie, signToken } from '../lib/auth.js';
+import { _bcryptVerifyCache, _loginUserCache, b64url, clearSessionCookie, invalidateUserAuthCaches, setSessionCookie, signToken, tokenFromRequest } from '../lib/auth.js';
 import { PBKDF2_PIN_ITERATIONS, hashPassword, needsRehash, verifyPassword } from '../lib/password.js';
 import { fetchPrimaryDatabase, isPersist, primaryPersistenceName, saveDatabase, saveDatabaseVerified } from '../lib/db.js';
 import { wrapUnexpected } from '../lib/errors.js';
@@ -20,11 +20,22 @@ import { pickBody } from '../lib/validate.js';
 import { decryptUserPII, emailIndex } from '../lib/crypto-fields.js';
 import { requireAdmin, requireAuth } from '../lib/middleware.js';
 import { AUTH_GENERIC_ERROR, authFailureDelay, authRateLimit, authSubjectRateLimit, checkAccountLock, clearLoginFails, recordLoginFail } from '../lib/ratelimit.js';
-import { isTursoConfigured, isTursoPrimary, tursoClient, tursoUpsertUser } from '../lib/store-turso.js';
+import { fetchTursoUserById, isTursoConfigured, isTursoPrimary, tursoClient, tursoEnsure, tursoUpsertUser } from '../lib/store-turso.js';
+import { isSupabaseConfigured } from '../lib/store-turso.js';
+import { gotrueAdminSetPassword, gotrueDeleteUser, gotrueLogin, gotrueLogout, gotrueRefresh, gotrueSetUserMetadata, gotrueSignup } from '../lib/auth-supabase.js';
 import { consumeWebAuthnChallenge, putWebAuthnChallenge } from '../lib/realtime-store.js';
 import { randomChallenge, verifyAuthenticationResponse, verifyRegistrationResponse } from '../lib/webauthn.js';
 
 async function issueSession(c, user, extra = {}) {
+  // v181 (Supabase): the session cookie carries the GoTrue access token;
+  // the refresh token travels in the body so the client can auto-renew.
+  if (isSupabaseConfigured() && extra._gotrueSession) {
+    const s2 = extra._gotrueSession;
+    delete extra._gotrueSession;
+    if (!s2 || !s2.access_token) throw new Error('goTrue session missing');
+    setSessionCookie(c, s2.access_token);
+    return c.json({ ...extra, user: sanitizeUser(user, true), refreshToken: s2.refresh_token || null });
+  }
   const token = await signToken(user);
   setSessionCookie(c, token);
   return c.json({ ...extra, user: sanitizeUser(user, true) });
@@ -134,6 +145,47 @@ app.get('/api/diag', requireAdmin, async (c) => {
   return c.json(out);
 });
 
+// v181 (Supabase): when email confirmation is on, signup answers 202 and the
+// app record is NOT created. After the user confirms their email, the first
+// successful login provisions the app record here. Credentials are already
+// verified against GoTrue at this point, and the username/displayName come
+// from the user metadata stored at signup time.
+async function provisionAppUserFromGoTrue(gu, password, idLower) {
+  const now = Date.now();
+  const meta = gu && gu.user_metadata && typeof gu.user_metadata === 'object' ? gu.user_metadata : {};
+  const email = String((gu && gu.email) || idLower || '').toLowerCase();
+  const db = await fetchPrimaryDatabase();
+  let username = String(meta.username || '').trim().toLowerCase();
+  if (!username) {
+    username = String(email.split('@')[0] || 'user').replace(/[^a-z0-9_]/g, '').slice(0, 20) || 'user';
+  }
+  const taken = new Set((db.users || []).map(u => String(u.username || '').toLowerCase()));
+  let candidate = username;
+  let suffix = 2;
+  while (taken.has(candidate)) candidate = username + (suffix++);
+  const displayName = String(meta.displayName || '').trim() || candidate;
+  const passwordHash = await hashPassword(password);
+  const newUser = {
+    id: String(gu.id), email, username: candidate, displayName,
+    bio: '', photoUrl: '', passwordHash, pinHash: '',
+    recoveryCodeHashes: [], tokenVersion: 0,
+    followers: [], following: [], blocked: [], closeFriends: [], isPrivate: false,
+    termsAccepted: true, termsVersion: '1.0',
+    termsAcceptedAt: now, createdAt: now, verified: false,
+  };
+  if (isTursoConfigured()) {
+    try { await tursoUpsertUser(newUser); }
+    catch (e) {
+      if (/unique|constraint/i.test(String(e && e.message))) throw new Error('provision-collision');
+      throw e;
+    }
+  }
+  db.users.push(newUser);
+  const persisted = await saveDatabaseVerified(db, d => (d.users || []).some(u => u.id === newUser.id));
+  if (isPersist() && !persisted) throw new Error('provision-persist-failed');
+  return newUser;
+}
+
 // ---------- Auth: signup ----------
 app.post('/api/auth/signup', authRateLimit, async (c) => {
   try {
@@ -177,6 +229,36 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     ]);
     if (reserved.has(usernameLower)) return c.json({ error: 'That username is reserved' }, 403);
 
+    // v181 (Supabase): identity is owned by GoTrue. Create the auth user
+    // first; the app record below is keyed by the GoTrue uuid.
+    let gotrueSession = null;
+    let gotrueUserId = null;
+    if (isSupabaseConfigured()) {
+      try {
+        const gs = await gotrueSignup({ email: emailLower, password });
+        gotrueUserId = gs.id;
+        gotrueSession = gs.session || null;
+        // Keep the chosen username/displayName on the GoTrue user so the
+        // first login can provision the app record when signup was answered
+        // with a 202 (email confirmation still pending). Best-effort: a
+        // metadata failure must never block signup.
+        try {
+          await gotrueSetUserMetadata(gotrueUserId, { username, displayName: cleanDN || username });
+        } catch (_) {}
+        if (!gotrueSession) {
+          // Email confirmation is still on in the project settings.
+          return c.json({ error: 'A confirmation email was sent. Check your inbox, then sign in.' }, 202);
+        }
+      } catch (e) {
+        const detail = String(e && e.message) + ' ' + JSON.stringify((e && e.raw) || {});
+        if (/already|registered|exists|duplicate/i.test(detail)) {
+          return c.json({ error: 'Email already registered' }, 409);
+        }
+        console.error('[signup] gotrue error:', detail);
+        return c.json({ error: 'Signup temporarily unavailable. Please try again in a moment.' }, 503);
+      }
+    }
+
     const [passwordHash, pinHash] = await Promise.all([
       hashPassword(password),
       // The PIN uses a lower work factor on purpose — see PBKDF2_PIN_ITERATIONS.
@@ -184,7 +266,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     ]);
     const recovery = await createRecoveryCodes();
     const newUser = {
-      id: uid('usr'), email: emailLower, username, displayName: cleanDN,
+      id: gotrueUserId || uid('usr'), email: emailLower, username, displayName: cleanDN,
       bio: '', photoUrl: '', passwordHash, pinHash, recoveryCodeHashes: recovery.hashes, tokenVersion: 0,
       followers: [], following: [], blocked: [], closeFriends: [], isPrivate: false,
       termsAccepted: true, termsVersion: String(termsVersion || '1.0'),
@@ -202,9 +284,12 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     if (isPersist() && !persisted) {
       db.users = db.users.filter(u => u.id !== newUser.id);
       if (isTursoConfigured()) await tursoClient().execute({ sql: 'DELETE FROM ps_users WHERE id = ?', args: [newUser.id] }).catch(() => {});
+      if (gotrueUserId) await gotrueDeleteUser(gotrueUserId);
       return c.json({ error: 'Storage temporarily unavailable. Please try again in a moment.' }, 503);
     }
-    return issueSession(c, newUser, { recoveryCodes: recovery.codes });
+    const sessionExtra = { recoveryCodes: recovery.codes };
+    if (gotrueSession) sessionExtra._gotrueSession = gotrueSession;
+    return issueSession(c, newUser, sessionExtra);
   } catch (e) {
     console.error('[signup]', e);
     throw wrapUnexpected(e, 'Signup failed. Please try again.');
@@ -237,6 +322,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // structured table is visible within a minute. Caching the user
     // object directly saves a Turso round trip on every login.
     const userCacheKey = 'user:' + idLower;
+    let _gotruePreSession = null;
     let user = _loginUserCache.get(userCacheKey);
     if (user && (Date.now() - user._cachedAt) < 60_000) {
       user = user._user;  // return a clean copy
@@ -267,6 +353,23 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       const db = await fetchPrimaryDatabase();
       user = db.users.find(u => u.email.toLowerCase() === idLower || u.username.toLowerCase() === idLower);
     }
+    if (!user && isSupabaseConfigured()) {
+      // Confirmation-gated signup: the GoTrue user exists but the app record
+      // does not yet. Verify the password with GoTrue first; only a confirmed
+      // user with correct credentials can trigger provisioning.
+      let preSession = null;
+      try {
+        preSession = await gotrueLogin({ email: idLower, password });
+      } catch (_) { /* not a valid confirmed user → normal 401 below */ }
+      if (preSession && preSession.user && preSession.user.id) {
+        try {
+          user = await provisionAppUserFromGoTrue(preSession.user, password, idLower);
+          _gotruePreSession = preSession;
+          } catch (_pe) {
+          console.error('[login] provisioning failed:', _pe && _pe.message);
+        }
+      }
+    }
     if (!user) {
       // SECURITY: use the same 401 status (and the same generic message) as
       // the wrong-password path below. Previously this returned 404, which
@@ -287,6 +390,19 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // back-button, etc.). Caching the result skips the ~20ms bcrypt
     // round and avoids a Turso read on the cached path. 5 min TTL
     // is short enough that password changes take effect quickly.
+    // v181 (Supabase): password checking is GoTrue's job, not bcrypt's.
+    // (Provisioning above may have already verified via GoTrue — reuse it.)
+    let gotrueSession = _gotruePreSession || null;
+    if (isSupabaseConfigured()) {
+      try {
+        if (!gotrueSession) gotrueSession = await gotrueLogin({ email: matchUser.email.toLowerCase(), password });
+      } catch (_) {
+        await recordLoginFail(user.id);
+        await authFailureDelay();
+        return c.json({ error: AUTH_GENERIC_ERROR }, 401);
+      }
+      await clearLoginFails(user.id);
+    } else {
     const bcryptCacheKey = matchUser.id + '|' + (matchUser.passwordHash || '').slice(0, 30) + '|' + password;
     let ok = false;
     const cached = _bcryptVerifyCache.get(bcryptCacheKey);
@@ -321,7 +437,9 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       return c.json({ error: AUTH_GENERIC_ERROR }, 401);
     }
     await clearLoginFails(user.id);
+    }
     // v154: transparent hash upgrade, now across SCHEMES as well as costs.
+    // (bcrypt-only path — GoTrue manages the credential in Supabase mode)
     // Legacy bcrypt hashes verify fine above, and are re-hashed here with
     // PBKDF2-SHA256 using the plaintext we already hold. Nobody is logged out;
     // accounts migrate silently on their next successful login.
@@ -360,7 +478,17 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       return c.json({ challenge: true, ...(await issueWebAuthnChallenge(c, matchUser, 'authentication')) });
     }
 
-    return issueSession(c, matchUser);
+    // v183 (Supabase): GoTrue sessions carry no token version (p.sv), so
+    // requireAuth compares 0 against the durable tokenVersion. Logout and
+    // resets bump it; a fresh login must restore 0 or the just-issued
+    // session is immediately rejected as "expired".
+    if (isSupabaseConfigured() && Number(matchUser.tokenVersion || 0) !== 0) {
+      matchUser.tokenVersion = 0;
+      if (isTursoConfigured()) {
+        try { await tursoUpsertUser(matchUser); } catch (_) {}
+      }
+    }
+    return issueSession(c, matchUser, gotrueSession ? { _gotrueSession: gotrueSession } : {});
   } catch (e) {
     console.error('[login] full error:', e && e.message, e && e.stack);
     // Never echo the failure detail: it has previously included libSQL and
@@ -447,9 +575,24 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       user.passwordHash = oldHash; user.tokenVersion = oldTokenVersion; user.recoveryCodeHashes = oldRecoveryHashes;
       return c.json({ error: 'Storage temporarily unavailable' }, 503);
     }
+    // v181 (Supabase): the password is now managed by GoTrue — sync it
+    // there. If this fails the new password would not work at login, so
+    // roll the app record back.
+    if (isSupabaseConfigured()) {
+      const synced = await gotrueAdminSetPassword(user.id, newPassword);
+      if (!synced) {
+        user.passwordHash = oldHash; user.tokenVersion = oldTokenVersion; user.recoveryCodeHashes = oldRecoveryHashes;
+        if (isTursoConfigured()) await tursoUpsertUser(user).catch(() => {});
+        return c.json({ error: 'Could not update the password. Please try again.' }, 503);
+      }
+    }
     if (isTursoConfigured()) await tursoUpsertUser(user);
     await clearLoginFails(user.id);
-    return issueSession(c, user, { ok: true });
+    let resetGotrue = null;
+    if (isSupabaseConfigured()) {
+      try { resetGotrue = await gotrueLogin({ email: user.email.toLowerCase(), password: newPassword }); } catch (_) {}
+    }
+    return issueSession(c, user, resetGotrue ? { ok: true, _gotrueSession: resetGotrue } : { ok: true });
   } catch (e) {
     console.error('[reset]', e);
     throw wrapUnexpected(e, 'Reset failed. Please try again.');
@@ -465,6 +608,11 @@ app.get('/api/auth/me', requireAuth, async (c) => {
 
 // ---------- Logout (server-side token revocation + cookie clear) ----------
 app.post('/api/auth/logout', requireAuth, async (c) => {
+  // v181 (Supabase): also revoke the GoTrue session (best-effort).
+  if (isSupabaseConfigured()) {
+    const _tok = tokenFromRequest(c);
+    if (_tok) await gotrueLogout(_tok);
+  }
   const user = c.get('authUser');
   const db = await fetchPrimaryDatabase();
   const durable = (db.users || []).find(u => u.id === user.id);
@@ -477,6 +625,24 @@ app.post('/api/auth/logout', requireAuth, async (c) => {
   }
   clearSessionCookie(c);
   return c.json({ ok: true });
+});
+
+// ---------- Auth: refresh (Supabase mode) ----------
+// The client stores the refresh token from the login/signup/reset response
+// and calls this when the access-token cookie has aged out.
+app.post('/api/auth/refresh', async (c) => {
+  if (!isSupabaseConfigured()) return c.json({ error: 'Not available' }, 404);
+  try {
+    const body = await pickBody(c, ['refreshToken']);
+    const rt = String(body.refreshToken || '').trim();
+    if (!rt || rt.length > 512) return c.json({ error: 'Missing or invalid token' }, 401);
+    const d = await gotrueRefresh(rt);
+    if (!d || !d.access_token) return c.json({ error: 'Session expired. Please sign in again.' }, 401);
+    setSessionCookie(c, d.access_token);
+    return c.json({ ok: true, refreshToken: d.refresh_token || null });
+  } catch (_) {
+    return c.json({ error: 'Session expired. Please sign in again.' }, 401);
+  }
 });
 
 // =====================================================================

@@ -33,9 +33,12 @@ export async function sharedRateLimit({ key, limit, windowMs }) {
       await tc.execute({
         sql: `INSERT INTO ps_rate_limits (key, count, reset_at, updated_at) VALUES (?, 1, ?, ?)
               ON CONFLICT(key) DO UPDATE SET
-                count = CASE WHEN reset_at <= ? THEN 1 ELSE count + 1 END,
-                reset_at = CASE WHEN reset_at <= ? THEN ? ELSE reset_at END,
+                count = CASE WHEN ps_rate_limits.reset_at <= ? THEN 1 ELSE ps_rate_limits.count + 1 END,
+                reset_at = CASE WHEN ps_rate_limits.reset_at <= ? THEN ? ELSE ps_rate_limits.reset_at END,
                 updated_at = ?`,
+        // v183 (Supabase): bare column references on the DO UPDATE right-hand
+        // side are ambiguous in Postgres (table column vs. the excluded row);
+        // table qualification is valid in both SQLite and Postgres.
         args: [key, nextResetAt, now, now, now, nextResetAt, now],
       });
       if (Math.random() < 0.01) {
@@ -154,12 +157,12 @@ export async function recordLoginFail(userId) {
         sql: `INSERT INTO ps_rate_limits (key, count, first_at, reset_at, locked_until, updated_at) 
               VALUES (?, 1, ?, ?, 0, ?)
               ON CONFLICT(key) DO UPDATE SET
-                count = CASE WHEN first_at < ? THEN 1 ELSE count + 1 END,
-                first_at = CASE WHEN first_at < ? THEN ? ELSE first_at END,
+                count = CASE WHEN ps_rate_limits.first_at < ? THEN 1 ELSE ps_rate_limits.count + 1 END,
+                first_at = CASE WHEN ps_rate_limits.first_at < ? THEN ? ELSE ps_rate_limits.first_at END,
                 locked_until = CASE 
-                  WHEN first_at < ? THEN 0
-                  WHEN count + 1 >= 5 THEN ?
-                  ELSE locked_until 
+                  WHEN ps_rate_limits.first_at < ? THEN 0
+                  WHEN ps_rate_limits.count + 1 >= 5 THEN ?
+                  ELSE ps_rate_limits.locked_until 
                 END,
                 updated_at = ?`,
         args: [

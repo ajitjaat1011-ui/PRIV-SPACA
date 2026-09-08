@@ -18,3 +18,7 @@ playwright-report/
 # public repo. Block the whole directory; if a future script needs to commit a
 # non-sensitive file under backups/, add an explicit !exception line.
 backups/
+
+# render build output
+render/dist/
+.tmp-api-node/

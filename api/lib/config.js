@@ -10,6 +10,14 @@
 
 export const cfg = {
   FIELD_KEY: '',
+  // v181 (Supabase): the project database is reached directly (no API keys);
+  // the service key below is used ONLY for the GoTrue management endpoints.
+  SUPABASE_URL: '',
+  SUPABASE_SERVICE_KEY: '',
+  SUPABASE_DB_URL: '',
+  // hosting helpers (set by the function entry)
+  PS_BASE_PATH: '',
+  PS_PUBLIC_BASE: '',
   // ---------- Config (refreshed on every request from c.env) ----------
   // SECURITY: never default to a known public secret. isDefaultJwtSecret() +
   // the global middleware (below) refuses to serve /api/* when this is empty
@@ -101,6 +109,11 @@ export function loadConfig(env) {
   // Field-level PII encryption key. Absent = encryption disabled (plaintext),
   // which is the pre-v155 behaviour and must keep working.
   if (env.FIELD_KEY) cfg.FIELD_KEY = String(env.FIELD_KEY);
+  if (env.SUPABASE_URL) cfg.SUPABASE_URL = String(env.SUPABASE_URL).trim();
+  if (env.SUPABASE_SERVICE_KEY) cfg.SUPABASE_SERVICE_KEY = String(env.SUPABASE_SERVICE_KEY).trim();
+  if (env.SUPABASE_DB_URL) cfg.SUPABASE_DB_URL = String(env.SUPABASE_DB_URL).trim();
+  if (env.PS_BASE_PATH) cfg.PS_BASE_PATH = String(env.PS_BASE_PATH);
+  if (env.PS_PUBLIC_BASE) cfg.PS_PUBLIC_BASE = String(env.PS_PUBLIC_BASE);
   if (env.GITHUB_PAT) cfg.GITHUB_PAT = env.GITHUB_PAT;
   if (env.TURSO_DATABASE_URL) cfg.TURSO_DATABASE_URL = String(env.TURSO_DATABASE_URL).trim();
   if (env.TURSO_AUTH_TOKEN) cfg.TURSO_AUTH_TOKEN = String(env.TURSO_AUTH_TOKEN).trim();

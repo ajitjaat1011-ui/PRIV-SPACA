@@ -17,6 +17,8 @@ import { cleanNoteMusic } from '../lib/media.js';
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
+import { isSupabaseConfigured } from '../lib/store-turso.js';
+import { gotrueDeleteUser } from '../lib/auth-supabase.js';
 import { verifyPassword } from '../lib/password.js';
 import { pickBody } from '../lib/validate.js';
 import { sharedRateLimit } from '../lib/ratelimit.js';
@@ -377,6 +379,12 @@ app.post('/api/user/delete', requireAuth, async (c) => {
       await tursoClient().batch(statements.slice(offset, offset + 50), 'write');
     }
     await Promise.all(db.users.filter(u => usersWithReferences.has(u.id)).map(u => tursoUpsertUser(u)));
+  }
+  // v181 (Supabase): also delete the GoTrue auth user (best-effort — the
+  // app-side PII is already gone; a leftover GoTrue row is unrecoverable
+  // through app routes because the app record no longer exists).
+  if (isSupabaseConfigured()) {
+    await gotrueDeleteUser(myId);
   }
   invalidateUserAuthCaches(me);
   clearSessionCookie(c);
