@@ -6,8 +6,8 @@
  *  - /api/*           -> NEVER cached (live data only)
  */
 const SW_VERSION = 'priv-spaca-v181';
-const STATIC_CACHE = 'priv-spaca-static-v181';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v181';
+const STATIC_CACHE = 'priv-spaca-static-v10';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v10';
 
 // v181: base directory this worker is served from. '' at a domain root
 // (Cloudflare Pages), '/functions/v1/app' on Supabase. Derived from the

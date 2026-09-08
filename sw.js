@@ -5,28 +5,38 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v180';
-const STATIC_CACHE = 'priv-spaca-static-v180';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v180';
+const SW_VERSION = 'priv-spaca-v181';
+const STATIC_CACHE = 'priv-spaca-static-v10';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v10';
+
+// v181: base directory this worker is served from. '' at a domain root
+// (Cloudflare Pages), '/functions/v1/app' on Supabase. Derived from the
+// worker's own URL so the same file works on both hosts.
+const SW_BASE = (() => {
+  try {
+    const p = new URL('.', self.location.href).pathname;
+    return p === '/' ? '' : p.replace(/\/+$/, '');
+  } catch (_) { return ''; }
+})();
 
 const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/style.min.css?v=198',
-  '/app.min.js?v=205',
-  '/auth.react.min.js?v=205',
-  '/boot-guard.min.js?v=170',
-  '/vendor/local-fonts.css?v=1',
-  '/vendor/lucide.min.js?v=1',
-  '/vendor/motion.min.js?v=1',
-  '/manifest.json',
-  '/favicon.ico',
-  '/favicon-16x16.png',
-  '/favicon-32x32.png',
-  '/apple-touch-icon.png',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/icon-maskable-512.png',
+  SW_BASE + '/',
+  SW_BASE + '/index.html',
+  SW_BASE + '/style.min.css?v=199',
+  SW_BASE + '/app.min.js?v=206',
+  SW_BASE + '/auth.react.min.js?v=206',
+  SW_BASE + '/boot-guard.min.js?v=170',
+  SW_BASE + '/vendor/local-fonts.css?v=1',
+  SW_BASE + '/vendor/lucide.min.js?v=1',
+  SW_BASE + '/vendor/motion.min.js?v=1',
+  SW_BASE + '/manifest.json',
+  SW_BASE + '/favicon.ico',
+  SW_BASE + '/favicon-16x16.png',
+  SW_BASE + '/favicon-32x32.png',
+  SW_BASE + '/apple-touch-icon.png',
+  SW_BASE + '/icon-192.png',
+  SW_BASE + '/icon-512.png',
+  SW_BASE + '/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -52,7 +62,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
 
   // Never cache API calls — always live
-  if (url.pathname.startsWith('/api/')) {
+  if (url.pathname.startsWith(SW_BASE + '/api/')) {
     return;
   }
   // Only GET caching
@@ -61,7 +71,7 @@ self.addEventListener('fetch', (event) => {
   // HTML / JS / CSS: always network-first (no cache) so deploys ship fast
   // and users always see the latest code. Only fall back to cache when
   // the network fails (e.g. offline).
-  if (url.pathname === '/' || url.pathname === '/index.html' ||
+  if (url.pathname === SW_BASE + '/' || url.pathname === SW_BASE + '/index.html' ||
       /\/(app|auth\.react|style)(?:\.min)?\.js(\?|$)/i.test(url.pathname) ||
       /\/style(?:\.min)?\.css(\?|$)/i.test(url.pathname) ||
       /\/sw\.js(\?|$)/i.test(url.pathname)) {
@@ -76,7 +86,7 @@ self.addEventListener('fetch', (event) => {
         }
         return res;
       }).catch(() => caches.match(req).then((cached) =>
-        cached || (req.mode === 'navigate' ? caches.match('/index.html') : undefined)
+        cached || (req.mode === 'navigate' ? caches.match(SW_BASE + '/index.html') : undefined)
       ))
     );
     return;
@@ -123,7 +133,7 @@ self.addEventListener('fetch', (event) => {
           });
         }
         return res;
-      }).catch(() => caches.match(req).then((c) => c || caches.match('/index.html')))
+      }).catch(() => caches.match(req).then((c) => c || caches.match(SW_BASE + '/index.html')))
     );
     return;
   }
@@ -143,7 +153,7 @@ self.addEventListener('push', (event) => {
     image: typeof data.image === 'string' && /^https:\/\//i.test(data.image) ? data.image : undefined,
     badge: ICON_DATA_URI,
     tag: data.tag || 'priv-spaca',
-    data: { url: data.url || '/', roomId: data.roomId || null, kind: data.kind, notifId: data.notifId },
+    data: { url: data.url || (SW_BASE + '/'), roomId: data.roomId || null, kind: data.kind, notifId: data.notifId },
     vibrate: [120, 60, 120],
     requireInteraction: false,
   };
@@ -152,13 +162,13 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || '/';
+  const url = (event.notification.data && event.notification.data.url) || (SW_BASE + '/');
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const c of clients) {
         if (c.url.indexOf(self.location.origin) === 0) {
           c.focus();
-          if (c.navigate && url !== '/') c.navigate(url);
+          if (c.navigate && url !== SW_BASE + '/') c.navigate(url);
           return;
         }
       }
