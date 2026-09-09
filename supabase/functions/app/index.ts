@@ -74,6 +74,8 @@ function envForRequest(req: Request): Record<string, string> {
     SUPABASE_SERVICE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '',
     SUPABASE_DB_URL: Deno.env.get('SUPABASE_DB_URL') || '',
     FIELD_KEY: Deno.env.get('FIELD_KEY') || '',
+    JWT_SECRET: Deno.env.get('JWT_SECRET') || '',
+    APP_MIN_VERSION: Deno.env.get('APP_MIN_VERSION') || '',
     PS_BASE_PATH: '/functions/v1/app',
     PS_PUBLIC_BASE: publicBase,
     // legacy GitHub fields left empty (optional media fallback only).
