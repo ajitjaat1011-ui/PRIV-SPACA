@@ -18,9 +18,8 @@
 /.git*                     /404  404
 /.github/*                 /404  404
 
-# v185: keep backend/standby scaffolding out of public asset space
+# keep backend/standby scaffolding out of public asset space
 /supabase/*                 /404  404
-/api-legacy/*               /404  404
 /render/*                   /404  404
 /tmp*                       /404  404
 

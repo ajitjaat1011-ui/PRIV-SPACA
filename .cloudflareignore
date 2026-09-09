@@ -11,9 +11,11 @@ package-lock.json
 wrangler.toml
 .gitignore
 .gitlab-ci.yml
-logo_PS_concept.png
+# Backend + edge-standby scaffolding lives in Git (Render/Supabase deploy from
+# the repo) but must never be published as Pages assets.
+render/
+supabase/
 # Keep source/design files in Git, but never publish them as Pages assets.
 app.js
 style.css
 react-auth/
-design-previews/

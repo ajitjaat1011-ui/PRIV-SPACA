@@ -31,7 +31,6 @@ function isBlockedAssetPath(pathname) {
   return pathname.startsWith('/backups/')
     || pathname.startsWith('/scripts/')
     || pathname.startsWith('/react-auth/')
-    || pathname.startsWith('/design-previews/')
     || pathname.startsWith('/render/')
     || pathname.startsWith('/supabase/')
     || pathname.startsWith('/api/')

@@ -56,7 +56,7 @@ const MIME = {
 
 // Files that must never be served, mirroring _worker.js / _redirects.
 const BLOCKED = [/^\/\.git/, /^\/\.github\//, /^\/scripts\//, /^\/backups\//, /^\/api\//,
-  /^\/react-auth\//, /^\/design-previews\//, /^\/AUDIT_/, /^\/SECURITY_AUDIT/, /^\/(app\.js|style\.css)$/,
+  /^\/react-auth\//, /^\/AUDIT_/, /^\/SECURITY_AUDIT/, /^\/(app\.js|style\.css)$/,
   /^\/(package(-lock)?\.json|wrangler\.toml|README\.md|\.cloudflareignore|\.gitlab-ci\.yml)$/];
 
 async function serveStatic(pathname) {
