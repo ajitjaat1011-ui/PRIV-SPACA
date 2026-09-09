@@ -181,11 +181,21 @@ function translateInsertOrIgnore(sql) {
   return trimSemi ? core + ';' : core;
 }
 
+// SQLite instr(haystack, needle) -> Postgres strpos(haystack, needle). Both
+// return the 1-based position of needle in haystack (0 when absent) and take
+// arguments in the same order, so a plain rename is semantically exact.
+function translateInstr(sql) {
+  if (!/\binstr\s*\(/i.test(sql)) return null;
+  return sql.replace(/\binstr\s*\(/gi, 'strpos(');
+}
+
 export function translateSql(sql) {
   const pragma = translatePragma(sql);
   if (pragma) return pragma;
   const orIgnore = translateInsertOrIgnore(sql);
-  if (orIgnore) return orIgnore;
+  if (orIgnore) return bindPlaceholders(orIgnore).sql;
+  const instr = translateInstr(sql);
+  if (instr) return bindPlaceholders(instr).sql;
   return bindPlaceholders(sql).sql;
 }
 

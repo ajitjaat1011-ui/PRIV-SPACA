@@ -172,14 +172,23 @@ export async function gotrueSetUserMetadata(gotrueUserId, metadata) {
 /** Revoke the refresh token (logout). Best-effort. */
 export async function gotrueLogout(accessToken) {
   try {
-    const r = await fetch(base() + '/auth/v1/logout', {
+    // scope=global revokes EVERY session of this user in GoTrue (verified
+    // against the live project: other sessions' tokens 403 immediately after
+    // this call). The app's logout semantics revoke all sessions, matching
+    // its tokenVersion-based logout for app-issued tokens.
+    const r = await fetch(base() + '/auth/v1/logout?scope=global', {
       method: 'POST',
-      headers: svc(),
+      headers: {
+        apikey: cfg.SUPABASE_SERVICE_KEY,
+        Authorization: 'Bearer ' + (accessToken || cfg.SUPABASE_SERVICE_KEY),
+        'Content-Type': 'application/json',
+      },
     });
-    void r;
-    // invalidate any cached verify for this token
-    _verifyCache.delete(accessToken);
-    return true;
+    // invalidate cached verifies — scope=global just revoked EVERY session of
+    // this user, so the per-token cache (60s TTL) must not resurrect any of
+    // them on the next request.
+    _verifyCache.clear();
+    return r.ok || r.status === 204;
   } catch (_) {
     return false;
   }

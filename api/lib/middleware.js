@@ -71,7 +71,15 @@ export async function requireAuth(c, next) {
       return c.json({ error: 'Authentication temporarily unavailable. Please retry.' }, 503);
     }
     if (!durableUser) return c.json({ error: 'Missing or invalid token' }, 401);
-    if (Number(p.sv || 0) !== Number(durableUser.tokenVersion || 0)) {
+    // v1.0 (Supabase): the session cookie carries the GoTrue access JWT, which
+    // has no app `sv` claim (authFromRequest stamps { uid, email, gotrue }).
+    // Comparing sv=0 against a bumped tokenVersion would reject EVERY session
+    // of a user after the first logout/password-change/reset — including
+    // freshly issued ones — because GoTrue tokens can never carry the new
+    // version. In Supabase mode revocation authority is GoTrue itself
+    // (server-side logout and admin password changes revoke all sessions), so
+    // the durable sv comparison applies only to app-issued tokens (p.sv).
+    if (!p.gotrue && Number(p.sv || 0) !== Number(durableUser.tokenVersion || 0)) {
       // A reset response can reach the client just before a different database
       // replica observes its new tokenVersion. Retry within this request's
       // libSQL session before rejecting; a genuinely revoked token still fails.
