@@ -189,14 +189,53 @@ function translateInstr(sql) {
   return sql.replace(/\binstr\s*\(/gi, 'strpos(');
 }
 
+// SQLite's scalar MAX(a, b) (row-wise greatest) has no Postgres equivalent:
+// pg's MAX is aggregate-only ("function max(bigint, bigint) does not exist").
+// GREATEST(a, b) is the exact row-wise match. Only the two-argument form is
+// rewritten; aggregate MAX(expr) is untouched. Arguments here never contain
+// nested parentheses or ? placeholders (they are table.columns).
+function translateScalarMax(sql) {
+  if (!/\bMAX\s*\(\s*[^()]+\s*,\s*[^()]+\s*\)/i.test(sql)) return null;
+  return sql.replace(/\bMAX\s*\(\s*([^()]+?)\s*,\s*([^()]+?)\s*\)/gi, 'GREATEST($1, $2)');
+}
+
+// SQLite accepts the truthy integer 1 in a WHERE clause; Postgres requires an
+// actual boolean ("argument of WHERE must be type boolean, not type integer").
+function translateWhereOne(sql) {
+  if (!/\bWHERE\s+1\b/i.test(sql)) return null;
+  return sql.replace(/\bWHERE\s+1\b/gi, 'WHERE true');
+}
+
+// SQLite lets a GROUP BY query select a bare column of a joined table when
+// the join makes it single-valued (LEFT JOIN ... r.owner_user_id = ? is a
+// constant, and (owner_user_id, room_id) is r's primary key). Postgres
+// demands the column be aggregated or grouped ("column ... must appear in
+// the GROUP BY clause or be used in an aggregate function"). The one query
+// with this shape reads COALESCE(r.last_read_at, ?) per m.room_id, where
+// MAX(r.last_read_at) is the exact single-value aggregate; only that shape
+// is rewritten.
+function translateGroupedCoalesce(sql) {
+  if (!/\bGROUP\s+BY\b/i.test(sql)) return null;
+  const probe = /COALESCE\(\s*[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*,\s*\?\s*\)/i;
+  if (!probe.test(sql)) return null;
+  return sql.replace(/COALESCE\(\s*([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s*,\s*\?\s*\)/gi,
+    'COALESCE(MAX($1), ?)');
+}
+
 export function translateSql(sql) {
   const pragma = translatePragma(sql);
   if (pragma) return pragma;
   const orIgnore = translateInsertOrIgnore(sql);
   if (orIgnore) return bindPlaceholders(orIgnore).sql;
-  const instr = translateInstr(sql);
-  if (instr) return bindPlaceholders(instr).sql;
-  return bindPlaceholders(sql).sql;
+  let out = translateInstr(sql);
+  out = out !== null ? out : sql;
+  const scalarMax = translateScalarMax(out);
+  out = scalarMax !== null ? scalarMax : out;
+  const whereOne = translateWhereOne(out);
+  out = whereOne !== null ? whereOne : out;
+  const grouped = translateGroupedCoalesce(out);
+  out = grouped !== null ? grouped : out;
+  return bindPlaceholders(out).sql;
 }
 
 // ---------- libsql-shaped client ----------
