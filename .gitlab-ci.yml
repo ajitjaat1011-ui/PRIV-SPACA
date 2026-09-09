@@ -3,8 +3,8 @@
 # This mirror repo is an independent debug/test signal alongside the
 # GitHub -> Cloudflare Pages production deploy. It runs against the real
 # Hono API (api/cf-worker.js) booted locally by scripts/dev-server.mjs, with
-# no secrets: without TURSO_* the API falls back to in-memory storage, which
-# is exactly what we want for a smoke test.
+# no secrets: without SUPABASE_* the API falls back to in-memory storage,
+# which is exactly what we want for a smoke test.
 #
 # NOTE: the previous pipeline invoked python suites (rtc_parity_test.py,
 # deep_practical_test.py, pw_inbox_test.py, pw_notes_test.py) and

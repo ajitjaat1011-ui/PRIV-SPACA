@@ -20,8 +20,8 @@ import { pickBody } from '../lib/validate.js';
 import { decryptUserPII, emailIndex } from '../lib/crypto-fields.js';
 import { requireAdmin, requireAuth } from '../lib/middleware.js';
 import { AUTH_GENERIC_ERROR, authFailureDelay, authRateLimit, authSubjectRateLimit, checkAccountLock, clearLoginFails, recordLoginFail } from '../lib/ratelimit.js';
-import { fetchTursoUserById, isTursoConfigured, isTursoPrimary, tursoClient, tursoEnsure, tursoUpsertUser } from '../lib/store-turso.js';
-import { isSupabaseConfigured } from '../lib/store-turso.js';
+import { fetchUserById, isDbConfigured, isDbPrimary, dbClient, dbEnsure, upsertUser } from '../lib/store.js';
+import { isSupabaseConfigured } from '../lib/store.js';
 import { gotrueAdminSetPassword, gotrueAdminSignup, gotrueDeleteUser, gotrueLogin, gotrueLogout, gotrueRefresh } from '../lib/auth-supabase.js';
 import { consumeWebAuthnChallenge, putWebAuthnChallenge } from '../lib/realtime-store.js';
 import { randomChallenge, verifyAuthenticationResponse, verifyRegistrationResponse } from '../lib/webauthn.js';
@@ -77,7 +77,7 @@ async function issueWebAuthnChallenge(c, user, purpose) {
 app.get('/api/health', (c) => c.json({
   ok: true, name: 'PRIV SPACA',
   persistence: primaryPersistenceName(),
-  secondaryPersistence: isTursoConfigured() ? 'turso-structured-social' : null,
+  secondaryPersistence: isDbConfigured() ? 'structured-social' : null,
   runtime: 'cloudflare-workers',
   // apiVersion tracks BACKEND deploys independently of APP_VERSION/SW_VERSION.
   // Those two are the frontend cache-busting pair and bumping them forces every
@@ -85,7 +85,7 @@ app.get('/api/health', (c) => c.json({
   // This field is how we confirm which worker build is actually live.
   apiVersion: 'omni-engine-v1',
   controlPlane: 'omni-engine',
-  time: nowMs(), version: 'phase2-turso-json-primary',
+  time: nowMs(), version: 'phase2-structured-json-primary',
   ...(cfg.APP_MIN_VERSION ? { minVersion: cfg.APP_MIN_VERSION } : {}),
 }));
 
@@ -105,9 +105,9 @@ app.get('/api/ready', async (c) => {
 
   // Database: cheapest possible round trip, hard-bounded so a hung DB cannot
   // hang the probe itself — a readiness check that never answers is useless.
-  if (isTursoConfigured()) {
+  if (isDbConfigured()) {
     try {
-      await withTimeout(tursoClient().execute('SELECT 1'), 2000, 'database check');
+      await withTimeout(dbClient().execute('SELECT 1'), 2000, 'database check');
       checks.database = 'ok';
     } catch (_) {
       checks.database = 'fail';
@@ -138,7 +138,7 @@ app.get('/api/diag', requireAdmin, async (c) => {
   try {
     const db = await fetchPrimaryDatabase();
     out.canRead = true;
-    out.canWrite = isTursoPrimary() || !isPersist();
+    out.canWrite = isDbPrimary() || !isPersist();
     out.userCount = (db.users || []).length;
     out.repoConfigured = false;
   } catch (_) { out.error = 'Persistence check failed'; }
@@ -173,8 +173,8 @@ async function provisionAppUserFromGoTrue(gu, password, idLower) {
     termsAccepted: true, termsVersion: '1.0',
     termsAcceptedAt: now, createdAt: now, verified: false,
   };
-  if (isTursoConfigured()) {
-    try { await tursoUpsertUser(newUser); }
+  if (isDbConfigured()) {
+    try { await upsertUser(newUser); }
     catch (e) {
       if (/unique|constraint/i.test(String(e && e.message))) throw new Error('provision-collision');
       throw e;
@@ -269,8 +269,8 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
       termsAccepted: true, termsVersion: String(termsVersion || '1.0'),
       termsAcceptedAt: nowMs(), createdAt: nowMs(), verified: false,
     };
-    if (isTursoConfigured()) {
-      try { await tursoUpsertUser(newUser); }
+    if (isDbConfigured()) {
+      try { await upsertUser(newUser); }
       catch (e) {
         if (/unique|constraint/i.test(String(e && e.message))) return c.json({ error: 'Email or username already registered' }, 409);
         return c.json({ error: 'Storage temporarily unavailable. Please try again in a moment.' }, 503);
@@ -280,7 +280,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     const persisted = await saveDatabaseVerified(db, d => (d.users || []).some(u => u.id === newUser.id));
     if (isPersist() && !persisted) {
       db.users = db.users.filter(u => u.id !== newUser.id);
-      if (isTursoConfigured()) await tursoClient().execute({ sql: 'DELETE FROM ps_users WHERE id = ?', args: [newUser.id] }).catch(() => {});
+      if (isDbConfigured()) await dbClient().execute({ sql: 'DELETE FROM ps_users WHERE id = ?', args: [newUser.id] }).catch(() => {});
       if (gotrueUserId) await gotrueDeleteUser(gotrueUserId);
       return c.json({ error: 'Storage temporarily unavailable. Please try again in a moment.' }, 503);
     }
@@ -317,7 +317,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // v66: cache the structured-table user lookup too, keyed by the
     // search identifier. 60s TTL means a password reset via the
     // structured table is visible within a minute. Caching the user
-    // object directly saves a Turso round trip on every login.
+    // object directly saves a store round trip on every login.
     const userCacheKey = 'user:' + idLower;
     let _gotruePreSession = null;
     let user = _loginUserCache.get(userCacheKey);
@@ -326,9 +326,9 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     } else {
       user = null;
       try {
-        if (isTursoConfigured()) {
-          const turso = tursoClient();
-          const r = await turso.execute({
+        if (isDbConfigured()) {
+          const tclient = dbClient();
+          const r = await tclient.execute({
             // email_lower holds a blind index once FIELD_KEY is set, so the
             // email arm of this lookup must be hashed the same way. The
             // username arm stays plain. emailIndex() returns the lowercased
@@ -385,7 +385,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // v66: cache the verify result keyed by (uid, passwordHash, password).
     // The same client usually re-logs in within seconds (page refresh,
     // back-button, etc.). Caching the result skips the ~20ms bcrypt
-    // round and avoids a Turso read on the cached path. 5 min TTL
+    // round and avoids a store read on the cached path. 5 min TTL
     // is short enough that password changes take effect quickly.
     // v181 (Supabase): password checking is GoTrue's job, not bcrypt's.
     // (Provisioning above may have already verified via GoTrue — reuse it.)
@@ -417,7 +417,7 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
       // Rare distributed read-after-write window: a password/PIN reset that
       // just committed can briefly be absent from the next replica read.
       // Retrying once with a forced-fresh read costs nothing on the common
-      // (correct-password) path and adds only one extra Turso round trip to
+      // (correct-password) path and adds only one extra store round trip to
       // an already-failing attempt, which already pays a
       // deliberate ~250-500ms authFailureDelay() for timing-attack
       // mitigation — so this is effectively free from a UX standpoint.
@@ -460,8 +460,8 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
           u2.passwordHash = newHash;
           u2.passwordChangedAt = matchUser.passwordChangedAt;
           await saveDatabase(db, true, { skipSecondarySync: true });
-          if (isTursoConfigured()) {
-            try { await tursoUpsertUser(u2); } catch (_) {}
+          if (isDbConfigured()) {
+            try { await upsertUser(u2); } catch (_) {}
           }
         }
       } catch (error) {
@@ -481,14 +481,14 @@ app.post('/api/auth/login', authRateLimit, async (c) => {
     // session is immediately rejected as "expired".
     if (isSupabaseConfigured() && Number(matchUser.tokenVersion || 0) !== 0) {
       matchUser.tokenVersion = 0;
-      if (isTursoConfigured()) {
-        try { await tursoUpsertUser(matchUser); } catch (_) {}
+      if (isDbConfigured()) {
+        try { await upsertUser(matchUser); } catch (_) {}
       }
     }
     return issueSession(c, matchUser, gotrueSession ? { _gotrueSession: gotrueSession } : {});
   } catch (e) {
     console.error('[login] full error:', e && e.message, e && e.stack);
-    // Never echo the failure detail: it has previously included libSQL and
+    // Never echo the failure detail: it has previously included SQL and
     // internal hostname strings. The interceptor logs the real cause.
     throw wrapUnexpected(e, 'Login failed. Please try again.');
   }
@@ -513,9 +513,9 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
     let db = null;
     let user = null;
     try {
-      if (isTursoConfigured()) {
-        const turso = tursoClient();
-        const r = await turso.execute({
+      if (isDbConfigured()) {
+        const tclient2 = dbClient();
+        const r = await tclient2.execute({
           sql: "SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1",
           args: [idLower, await emailIndex(idLower)]
         });
@@ -579,11 +579,11 @@ app.post('/api/auth/reset-by-pin', authRateLimit, async (c) => {
       const synced = await gotrueAdminSetPassword(user.id, newPassword);
       if (!synced) {
         user.passwordHash = oldHash; user.tokenVersion = oldTokenVersion; user.recoveryCodeHashes = oldRecoveryHashes;
-        if (isTursoConfigured()) await tursoUpsertUser(user).catch(() => {});
+        if (isDbConfigured()) await upsertUser(user).catch(() => {});
         return c.json({ error: 'Could not update the password. Please try again.' }, 503);
       }
     }
-    if (isTursoConfigured()) await tursoUpsertUser(user);
+    if (isDbConfigured()) await upsertUser(user);
     await clearLoginFails(user.id);
     let resetGotrue = null;
     if (isSupabaseConfigured()) {
@@ -617,7 +617,7 @@ app.post('/api/auth/logout', requireAuth, async (c) => {
     durable.tokenVersion = Number(durable.tokenVersion || 0) + 1;
     durable.loggedOutAt = nowMs();
     await saveDatabaseVerified(db, d => Number((d.users || []).find(u => u.id === durable.id)?.tokenVersion || 0) === durable.tokenVersion);
-    if (isTursoConfigured()) await tursoUpsertUser(durable);
+    if (isDbConfigured()) await upsertUser(durable);
     invalidateUserAuthCaches(durable);
   }
   clearSessionCookie(c);
@@ -701,7 +701,7 @@ app.post('/api/auth/passkey/register', requireAuth, async (c) => {
     durable.passkeyEnabledAt = nowMs();
     const persisted = await saveDatabaseVerified(db, d => (d.users || []).find(u => u.id === durable.id)?.passkeyCredentialId === result.credentialId);
     if (!persisted) return c.json({ error: 'Storage temporarily unavailable' }, 503);
-    if (isTursoConfigured()) await tursoUpsertUser(durable);
+    if (isDbConfigured()) await upsertUser(durable);
     invalidateUserAuthCaches(durable);
     return c.json({ ok: true, message: 'Passkey enabled' });
   } catch (e) {
@@ -724,7 +724,7 @@ app.post('/api/auth/passkey/disable', requireAuth, async (c) => {
   durable.passkeySignCount = 0;
   durable.passkeyRpId = null;
   await saveDatabase(db, false);
-  if (isTursoConfigured()) await tursoUpsertUser(durable);
+  if (isDbConfigured()) await upsertUser(durable);
   invalidateUserAuthCaches(durable);
   return c.json({ ok: true, message: 'Passkey disabled' });
 });
@@ -741,8 +741,8 @@ app.post('/api/auth/passkey/challenge', authRateLimit, async (c) => {
   const subject = await authSubjectRateLimit(c, 'passkey:' + idLower, 12);
   if (!subject.allowed) return c.json({ error: 'Too many attempts. Please wait and try again.' }, 429);
   let user = null;
-  if (isTursoConfigured()) {
-    const rs = await tursoClient().execute({
+  if (isDbConfigured()) {
+    const rs = await dbClient().execute({
       sql: 'SELECT data_json FROM ps_users WHERE username_lower = ? OR email_lower = ? LIMIT 1',
       args: [idLower, await emailIndex(idLower)],
     });
@@ -770,8 +770,8 @@ app.post('/api/auth/passkey/verify', authRateLimit, async (c) => {
     const stored = await consumeWebAuthnChallenge({ id: body.challengeId, userId: body.userId, purpose: 'authentication' });
     if (!stored) return c.json({ error: 'Challenge expired or invalid' }, 401);
     let user = null;
-    if (isTursoConfigured()) {
-      const rs = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1', args: [body.userId] });
+    if (isDbConfigured()) {
+      const rs = await dbClient().execute({ sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1', args: [body.userId] });
       if (rs.rows?.[0]) user = await decryptUserPII(safeJson(String(rs.rows[0].data_json || ''), null));
     }
     if (!user || !user.passkeyEnabled || !user.passkeyCredentialId || user.passkeyRpId !== stored.rpId) {
@@ -798,7 +798,7 @@ app.post('/api/auth/passkey/verify', authRateLimit, async (c) => {
     durable.passkeyLastUsedAt = nowMs();
     const persisted = await saveDatabaseVerified(db, d => Number((d.users || []).find(u => u.id === durable.id)?.passkeySignCount || 0) === result.counter);
     if (!persisted) return c.json({ error: 'Storage temporarily unavailable' }, 503);
-    if (isTursoConfigured()) await tursoUpsertUser(durable);
+    if (isDbConfigured()) await upsertUser(durable);
     await clearLoginFails(durable.id);
     return issueSession(c, durable);
   } catch (e) {

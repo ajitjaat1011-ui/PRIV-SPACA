@@ -610,7 +610,7 @@ function displayNameWithProfileBadges(user, fallback = '', extraClass = 'inline'
 // In-memory cache of broken photo URLs (so we don't keep retrying within the session).
 // v177: the list self-heals —
 //  - it is versioned: when the app version changes, every previously-broken URL
-//    gets a fresh chance (this is what made the Turso media migration visible:
+//    gets a fresh chance (this is what made the media migration visible:
 //    URLs that 404'd during the old-CDN/deploy windows were blacklisted for the
 //    whole browser session and stayed hidden even after storage was fixed);
 //  - entries expire after 6 hours regardless.
@@ -931,7 +931,7 @@ function resolveAuthor(rawAuthor, fallbackUserId, authorSnapshot) {
     if (m) return m;
   }
   // Embedded snapshot from server (posts/messages/comments all carry
-  // authorSnapshot as their durable author record — /api/feed's raw Turso
+  // authorSnapshot as their durable author record — /api/feed's raw store
   // rows in particular only set authorSnapshot, not author, so this must be
   // checked before falling back to a synthetic "member_xxx" label).
   if (authorSnapshot && (authorSnapshot.username || authorSnapshot.displayName)) return authorSnapshot;
@@ -4653,7 +4653,7 @@ function startPolls() {
   State.pollTimers = {};
   disconnectSSE();
   // Let the active tab's primary content and member index settle first. These
-  // independent realtime/status calls used to all hit Turso in the same tick,
+  // independent realtime/status calls used to all hit the store in the same tick,
   // making the first feed request lose a dependency slot and retry.
   State.pollTimers.startup = setTimeout(() => {
     sendHeartbeat();
@@ -4796,7 +4796,7 @@ function disconnectSSE() {
 
 function handleRealtimeEvent(type, evt) {
   try { localStorage.setItem('ps_lastRealtimeActivity', String(Number(evt && evt.ts) || Date.now())); } catch (_) {}
-  // Defense-in-depth: SSE events from the Turso primaryPoller may arrive in a
+  // Defense-in-depth: SSE events from the primaryPoller may arrive in a
   // "raw" format { id, createdAt, fromId, author, signal } instead of the
   // _pushEvent wrapper { id, ts, kind, data: { ... } }.  Detect and unwrap so
   // that evt.data always contains the actual payload regardless of source.
@@ -4973,7 +4973,7 @@ async function pollNotifications() {
   // 2) Unread state is already materialized server-side and returned by the
   // single /users request. The old implementation fetched general-group plus
   // up to 20 separate DM rooms on every notification poll; one signed-in page
-  // therefore exhausted its own admission and Turso limits before rendering.
+  // therefore exhausted its own admission and store limits before rendering.
   const indexedUnread = Object.values(_unreadByRoom || {})
     .reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
   chatUnread = Math.max(chatUnread, indexedUnread);
@@ -5413,8 +5413,8 @@ async function loadPosts(force = false) {
   return _loadPostsPromise;
 }
 
-// Optimized feed loader — uses the hybrid Turso fan-out endpoint for the
-// main feed view.  Falls back gracefully to /api/posts when Turso is down.
+// Optimized feed loader — uses the hybrid fan-out feed endpoint for the
+// main feed view.  Falls back gracefully to /api/posts when the store is down.
 // State.feedPosts holds the ranked feed; State.posts still holds ALL posts
 // (used by stories rail, profile grid, notifications).
 let _lastFeedLoadedAt = 0;

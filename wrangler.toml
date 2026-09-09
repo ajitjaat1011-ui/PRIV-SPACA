@@ -1,4 +1,6 @@
-# Cloudflare Pages config — Node compat for our Hono API (served via _worker.js Advanced Mode)
+# Cloudflare Pages config — API requests are proxied to the Render-hosted
+# Supabase API via _worker.js Advanced Mode. nodejs_compat is retained for the
+# worker runtime surface.
 name = "priv-spaca"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -12,17 +14,14 @@ pages_build_output_dir = "."
 #   wrangler pages secret put CLOUDINARY_CLOUD_NAME --project-name priv-spaca
 #   wrangler pages secret put CLOUDINARY_API_KEY --project-name priv-spaca
 #   wrangler pages secret put CLOUDINARY_API_SECRET --project-name priv-spaca
-# Neon has been removed from this build — do not set DATABASE_URL.
 # (or via the Cloudflare dashboard: Pages project → Settings → Environment variables → Encrypt)
 [vars]
 GH_REPO = "ajitjaat1011-ui/PRIV-SPACA"
 GH_BRANCH = "data"
 # GitHub variables are used only for optional media-file fallback; database
-# persistence is Turso-only and no db.json path exists.
-# Turso/libSQL is the only primary store. Neon has been removed.
+# persistence is Supabase-only and no db.json path exists.
 # Bug #11 fix: Admin users should be set as encrypted Pages secrets, not here
 # in plaintext. Use: wrangler pages secret put ADMIN_USERS --project-name priv-spaca
 # ADMIN_USERS = "" # Set via encrypted secret
 # OWNER_EMAIL = "" # Set via encrypted secret
 # OWNER_USERNAME = "" # Set via encrypted secret
-

@@ -1,20 +1,17 @@
-// PRIV SPACA — Cloudflare Pages advanced-mode worker (v185)
+// PRIV SPACA — Cloudflare Pages advanced-mode worker (Supabase cutover)
 //
-// Primary backend: the Render-hosted Supabase API (RENDER_API_URL below).
+// Single backend: the Render-hosted Supabase API (RENDER_API_URL below).
 // Every /api/* and /media/* request is forwarded there (same-origin proxy,
-// so the __Host-ps_session cookie keeps working without CORS).
+// so the __Host-ps_session cookie keeps working without CORS). The legacy
+// The pre-migration fallback API was removed with the Supabase cutover.
 //
-// Fallback: if the Render backend is unreachable at the network level
-// (DNS failure, connection refused, timeout), the legacy v180 API
-// (api-legacy/, Turso-backed) serves the request instead, so the site
-// degrades to the pre-migration behaviour instead of going dark.
-// App-level errors (5xx responses) are NOT fallen back on — the two
-// backends hold different data and mixing writes would diverge them.
+// If the backend is unreachable (DNS failure, connection refused, timeout)
+// the worker returns a structured 503 so clients show a clean retry state
+// instead of a page error. App-level 5xx responses are passed through
+// untouched.
 
-import legacyApp from './api-legacy/cf-worker.js';
-
-// Public Render web-service URL (not a secret). Set before pushing.
-const RENDER_API_URL = ''; // e.g. 'https://priv-spaca-api.onrender.com'
+// Public Render web-service URL (not a secret).
+const RENDER_API_URL = 'https://priv-spaca.onrender.com';
 
 function isBlockedAssetPath(pathname) {
   if (!pathname || pathname === '/') return false;
@@ -37,7 +34,6 @@ function isBlockedAssetPath(pathname) {
     || pathname.startsWith('/design-previews/')
     || pathname.startsWith('/render/')
     || pathname.startsWith('/supabase/')
-    || pathname.startsWith('/api-legacy/')
     || pathname.startsWith('/api/')
     || pathname.startsWith('/AUDIT_')
     || pathname.startsWith('/SECURITY_AUDIT')
@@ -97,16 +93,19 @@ export default {
     const isApi = url.pathname.startsWith('/api/') || url.pathname.startsWith('/media/');
 
     if (isApi) {
-      if (RENDER_API_URL) {
-        try {
-          return await proxyToRender(request);
-        } catch (e) {
-          // Network-level failure only (Render down / cold / DNS).
-          console.error('[v185] Render unreachable, falling back to legacy API:', e && e.message);
-          return legacyApp.fetch(request, env, ctx);
-        }
+      try {
+        return await proxyToRender(request);
+      } catch (e) {
+        // Network-level failure only (Render down / cold / DNS).
+        console.error('[worker] Render backend unreachable:', e && e.message);
+        return new Response(JSON.stringify({
+          error: 'The service is temporarily unavailable. Please retry shortly.',
+          success: false,
+        }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
       }
-      return legacyApp.fetch(request, env, ctx);
     }
 
     if (isBlockedAssetPath(url.pathname)) {

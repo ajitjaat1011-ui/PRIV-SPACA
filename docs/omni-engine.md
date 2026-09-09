@@ -7,7 +7,7 @@ Omni-Engine is the primary request-control plane registered before all API route
 Cloudflare Workers do **not** provide an immortal master process, a force-restart API, a cluster-global in-memory queue, or generally available heap/CPU gauges. Therefore:
 
 - admission pools, queues, circuit windows, stale responses and runtime measurements are isolate-local;
-- durable authentication abuse and account lockout limits remain in Turso;
+- durable authentication abuse and account lockout limits remain in the Supabase store;
 - fatal request faults flush isolate-local Omni state, while Cloudflare remains responsible for isolate lifecycle/replacement;
 - event-loop delay is sampled, memory ratio is used only when the runtime exposes it, and in-flight/latency pressure is always available;
 - no claim is made that a JavaScript task already running in one isolate can be preempted.
@@ -32,7 +32,7 @@ Omni derives a load step from noncritical concurrency/queue pressure, sampled ev
 
 ## Fault domains
 
-Every libSQL operation is wrapped by `database.turso`. There is no GitHub database fallback. GitHub media, Cloudinary, R2, Web Push and the active `scraping.preview` link-preview fetcher have independent named bulkheads.
+Every database operation is wrapped by the `database` fault domain. There is no GitHub database fallback. GitHub media, Cloudinary, R2, Web Push and the active `scraping.preview` link-preview fetcher have independent named bulkheads.
 
 Each fault domain combines:
 

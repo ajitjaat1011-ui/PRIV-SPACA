@@ -1,7 +1,7 @@
 /** Secure, cached OpenGraph link previews. */
 import { app } from '../lib/app.js';
 import { requireAuth } from '../lib/middleware.js';
-import { isTursoConfigured, tursoClient, tursoEnsure } from '../lib/store-turso.js';
+import { isDbConfigured, dbClient, dbEnsure } from '../lib/store.js';
 import { safeJson } from '../lib/helpers.js';
 import { withFaultDomain } from '../lib/omni-engine.js';
 
@@ -159,9 +159,9 @@ app.get('/api/link-preview', requireAuth, async (c) => {
   const normalized = parsed.toString();
   const key = await hashUrl(normalized);
   const now = Date.now();
-  if (isTursoConfigured()) {
-    await tursoEnsure();
-    const cached = await tursoClient().execute({
+  if (isDbConfigured()) {
+    await dbEnsure();
+    const cached = await dbClient().execute({
       sql: 'SELECT data_json FROM ps_link_previews WHERE url_hash = ? AND expires_at > ? LIMIT 1',
       args: [key, now],
     }).catch(() => ({ rows: [] }));
@@ -178,9 +178,9 @@ app.get('/api/link-preview', requireAuth, async (c) => {
   } catch (_) {
     preview = { url: normalized, title: '', description: '', siteName: parsed.hostname.replace(/^www\./, ''), imageUrl: '' };
   }
-  if (isTursoConfigured()) {
+  if (isDbConfigured()) {
     const expiresAt = now + (preview.title || preview.description || preview.imageUrl ? OK_TTL_MS : EMPTY_TTL_MS);
-    await tursoClient().execute({
+    await dbClient().execute({
       sql: `INSERT INTO ps_link_previews (url_hash, url, title, description, image_url, site_name, expires_at, updated_at, data_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(url_hash) DO UPDATE SET title=excluded.title, description=excluded.description,

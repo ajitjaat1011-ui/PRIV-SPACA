@@ -1,20 +1,21 @@
 /**
- * PRIV SPACA — Library — store-turso
+ * PRIV SPACA — Library — store
  *
- * Turso/libSQL primary store: client scoping, schema bootstrap, KV + mirror tables.
+ * Primary store (Supabase/Postgres): client scoping, schema bootstrap, KV +
+ * mirror tables. Exposes the store client used by the routes; every database
+ * operation runs inside the Omni database fault domain.
  *
  * Part of the modular Hono API (api/). Entry point: api/cf-worker.js
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createClient as createTursoClient } from '@libsql/client/http';
 import { cfg } from './config.js';
 import { decryptDatabasePII, decryptUserPII, emailIndex, encryptDatabasePII, encryptUserPII, isFieldEncryptionEnabled } from './crypto-fields.js';
 import { state } from './state.js';
 import { nowMs, safeJson } from './helpers.js';
 import { normalizeDb } from './schema.js';
 import { withFaultDomain } from './omni-engine.js';
-import { createSupabaseLibsqlClient, isSupabaseConfigured } from './store-supabase.js';
+import { createSupabaseStoreClient, isSupabaseConfigured } from './store-supabase.js';
 // Re-export so routes can check Supabase mode without importing store-supabase
 // directly (media.js pattern).
 export { isSupabaseConfigured } from './store-supabase.js';
@@ -29,14 +30,13 @@ function isReadOnlyStatement(statement) {
 }
 
 /**
- * Wrap every libSQL network operation in the database fault domain. Correlation
- * context is retained by Omni's AsyncLocalStorage even though the libSQL SDK
- * does not expose a portable custom-header hook.
+ * Wrap every store operation in the database fault domain. Correlation
+ * context is retained by Omni's AsyncLocalStorage.
  */
-function instrumentTursoClient(client, budgets) {
-  // Direct-Postgres (Supabase) mode runs over a VPC connection whose cold
-  // connect costs ~2s, so it gets a wider fault budget than the low-latency
-  // Turso edge database (2.5s reads would trip the breaker on cold starts).
+function instrumentClient(client, budgets) {
+  // Direct-Postgres connections are slower to establish (cold connect ~2s),
+  // so the store gets a wider fault budget than a low-latency edge DB would
+  // (2.5s reads would trip the breaker on cold starts).
   const b = budgets || { read: 2500, write: 7000, readBatch: 3000, writeBatch: 8000, multi: 10_000 };
   return new Proxy(client, {
     get(target, property, receiver) {
@@ -44,7 +44,7 @@ function instrumentTursoClient(client, budgets) {
       if (property === 'execute') {
         return (statement) => {
           const readOnly = isReadOnlyStatement(statement);
-          return withFaultDomain('database.turso', () => target.execute(statement), {
+          return withFaultDomain('database', () => target.execute(statement), {
             idempotent: readOnly,
             timeoutMs: readOnly ? b.read : b.write,
           });
@@ -53,14 +53,14 @@ function instrumentTursoClient(client, budgets) {
       if (property === 'batch') {
         return (statements, mode) => {
           const readOnly = Array.isArray(statements) && statements.every(isReadOnlyStatement);
-          return withFaultDomain('database.turso', () => target.batch(statements, mode), {
+          return withFaultDomain('database', () => target.batch(statements, mode), {
             idempotent: readOnly,
             timeoutMs: readOnly ? b.readBatch : b.writeBatch,
           });
         };
       }
       if (property === 'executeMultiple') {
-        return (sql) => withFaultDomain('database.turso',
+        return (sql) => withFaultDomain('database',
           () => target.executeMultiple(sql),
           { idempotent: false, timeoutMs: b.multi });
       }
@@ -70,39 +70,34 @@ function instrumentTursoClient(client, budgets) {
   });
 }
 
-function createInstrumentedTursoClient() {
-  return instrumentTursoClient(createTursoClient({ url: cfg.TURSO_DATABASE_URL, authToken: cfg.TURSO_AUTH_TOKEN }));
+// ---------- Persistence routing (Supabase in production) ----------
+// Production middleware fails closed if the database or field encryption is
+// absent. The in-memory cache is available only to localhost
+// development/tests. There is deliberately no public-repository db.json
+// fallback.
+export function isDbPrimary() {
+  return isDbConfigured();
 }
 
-// ---------- Persistence routing (Turso-only in production) ----------
-// Production middleware fails closed if Turso or field encryption is absent.
-// The in-memory cache is available only to localhost development/tests. There
-// is deliberately no public-repository db.json fallback.
-export function isTursoPrimary() {
-  return isTursoConfigured();
-}
+export const _dbAls = new AsyncLocalStorage();
 
-export const _tursoAls = new AsyncLocalStorage();
-
-export function isTursoConfigured() {
-  return !!(cfg.TURSO_DATABASE_URL && cfg.TURSO_AUTH_TOKEN) || isSupabaseConfigured();
+export function isDbConfigured() {
+  return isSupabaseConfigured();
 }
 
 function createRequestClient() {
-  if (isSupabaseConfigured()) {
-    // v181 (Supabase): direct Postgres transport (pool lives per-isolate
-    // inside store-supabase); keep the fault-domain instrumentation.
-    // Wider budgets: a cold VPC connect costs ~2s, which would otherwise
-    // trip the rolling breaker on the first reads of a fresh isolate.
-    return instrumentTursoClient(createSupabaseLibsqlClient(), {
-      read: 9000, write: 15000, readBatch: 9000, writeBatch: 15000, multi: 20000,
-    });
-  }
-  return createInstrumentedTursoClient();
+  if (!isSupabaseConfigured()) throw new Error('store: Supabase database is not configured');
+  // Direct Postgres transport (pool lives per-isolate inside store-supabase);
+  // fault-domain instrumentation is kept. Wider budgets: a cold connect
+  // costs ~2s, which would otherwise trip the rolling breaker on the first
+  // reads of a fresh isolate.
+  return instrumentClient(createSupabaseStoreClient(), {
+    read: 9000, write: 15000, readBatch: 9000, writeBatch: 15000, multi: 20000,
+  });
 }
 
-export function tursoClient() {
-  const store = _tursoAls.getStore();
+export function dbClient() {
+  const store = _dbAls.getStore();
   if (store) {
     if (!store.client) store.client = createRequestClient();
     return store.client;
@@ -112,24 +107,24 @@ export function tursoClient() {
   return createRequestClient();
 }
 
-// Runs `fn` inside a fresh per-request Turso-client scope. Wired into the
+// Runs `fn` inside a fresh per-request store-client scope. Wired into the
 // global '*' middleware below so every request gets exactly one scope.
-export function runWithTursoRequestScope(fn) {
-  return _tursoAls.run({ client: null }, fn);
+export function runWithDbRequestScope(fn) {
+  return _dbAls.run({ client: null }, fn);
 }
 
-export async function tursoEnsure() {
-  if (!isTursoConfigured()) return false;
-  if (state._tursoReady) return true;
+export async function dbEnsure() {
+  if (!isDbConfigured()) return false;
+  if (state._dbReady) return true;
   // Mark this isolate ready before the first network await. Multiple requests
   // can enter a cold Worker concurrently; without this guard each one ran the
-  // entire DDL/migration sequence and a normal page launch saturated Turso.
+  // entire DDL/migration sequence and a normal page launch saturated the store.
   // Queries may proceed concurrently because production tables already exist;
   // on a genuinely empty database they fail transiently until this initializer
   // finishes, and a failed initializer clears the flag for a later retry.
-  state._tursoReady = true;
+  state._dbReady = true;
   try {
-    const c = tursoClient();
+    const c = dbClient();
     await c.executeMultiple(`
     CREATE TABLE IF NOT EXISTS ps_kv (
       key TEXT PRIMARY KEY,
@@ -302,11 +297,11 @@ export async function tursoEnsure() {
     CREATE UNIQUE INDEX IF NOT EXISTS ux_ps_users_username_lower ON ps_users (username_lower) WHERE username_lower IS NOT NULL AND username_lower <> '';
     CREATE UNIQUE INDEX IF NOT EXISTS ux_ps_users_email_lower ON ps_users (email_lower) WHERE email_lower IS NOT NULL AND email_lower <> '';
   `);
-    await tursoMigrate();
-    await tursoMigrateSensitiveData();
+    await migrate();
+    await migrateSensitiveData();
     return true;
   } catch (error) {
-    state._tursoReady = false;
+    state._dbReady = false;
     throw error;
   }
 }
@@ -333,14 +328,14 @@ export async function tursoEnsure() {
  * missing. Adding a column with a constant DEFAULT is a fast metadata-only
  * operation in SQLite, so this is safe to run on every cold start.
  */
-async function tursoMigrate() {
+async function migrate() {
   const wanted = {
     ps_rate_limits: {
       locked_until: 'INTEGER DEFAULT 0',
       first_at: 'INTEGER DEFAULT 0',
     },
   };
-  const c = tursoClient();
+  const c = dbClient();
   for (const [table, columns] of Object.entries(wanted)) {
     try {
       const info = await c.execute({ sql: `PRAGMA table_info(${table})` });
@@ -353,20 +348,20 @@ async function tursoMigrate() {
           console.log(JSON.stringify({ level: 'info', msg: 'schema_migrated', table, column: col }));
         } catch (e) {
           if (!/duplicate column/i.test(String((e && e.message) || ''))) {
-            console.warn('[tursoMigrate] failed', table, col, e && e.message);
+            console.warn('[migrate] failed', table, col, e && e.message);
           }
         }
       }
     } catch (e) {
-      console.warn('[tursoMigrate] table_info failed for', table, e && e.message);
+      console.warn('[migrate] table_info failed for', table, e && e.message);
     }
   }
 }
 
 /** One-time migration that removes plaintext PII from both structured rows and ps_kv. */
-async function tursoMigrateSensitiveData() {
+async function migrateSensitiveData() {
   if (!isFieldEncryptionEnabled()) return;
-  const c = tursoClient();
+  const c = dbClient();
   const marker = await c.execute({ sql: 'SELECT value FROM ps_meta WHERE key = ? LIMIT 1', args: ['pii_encryption_v2'] });
   if (marker.rows?.length) return;
   const [usersRs, kvRs] = await c.batch([
@@ -401,32 +396,32 @@ async function tursoMigrateSensitiveData() {
   console.log(JSON.stringify({ level: 'info', msg: 'pii_encryption_migrated', users: usersRs.rows?.length || 0 }));
 }
 
-// ---------- Turso/libSQL full JSON primary storage ----------
-export async function tursoReadDb() {
-  if (!isTursoConfigured()) return null;
-  await tursoEnsure();
-  const rs = await tursoClient().execute({ sql: 'SELECT value FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
+// ---------- full JSON primary storage (kv 'db' row) ----------
+export async function readDb() {
+  if (!isDbConfigured()) return null;
+  await dbEnsure();
+  const rs = await dbClient().execute({ sql: 'SELECT value FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
   if (!rs.rows || rs.rows.length === 0) return normalizeDb({});
   return normalizeDb(await decryptDatabasePII(safeJson(String(rs.rows[0].value || '{}'), normalizeDb({}))));
 }
 
-export async function tursoReadDbVersioned() {
-  if (!isTursoConfigured()) return null;
-  await tursoEnsure();
-  const rs = await tursoClient().execute({ sql: 'SELECT value, version FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
+export async function readDbVersioned() {
+  if (!isDbConfigured()) return null;
+  await dbEnsure();
+  const rs = await dbClient().execute({ sql: 'SELECT value, version FROM ps_kv WHERE key = ? LIMIT 1', args: ['db'] });
   if (!rs.rows || rs.rows.length === 0) return { db: normalizeDb({}), version: null };
   const db = normalizeDb(await decryptDatabasePII(safeJson(String(rs.rows[0].value || '{}'), normalizeDb({}))));
   return { db, version: Number(rs.rows[0].version || 0) };
 }
 
-export async function tursoWriteDb(dbObj) {
-  if (!isTursoConfigured()) return false;
-  await tursoEnsure();
+export async function writeDb(dbObj) {
+  if (!isDbConfigured()) return false;
+  await dbEnsure();
   const db = normalizeDb(dbObj);
-  db.meta = { ...(db.meta || {}), storage: 'turso-json-v2-encrypted', updatedAt: Date.now() };
+  db.meta = { ...(db.meta || {}), storage: 'json-v2-encrypted', updatedAt: Date.now() };
   const protectedDb = await encryptDatabasePII(db);
   const ts = nowMs();
-  await tursoClient().execute({
+  await dbClient().execute({
     sql: `INSERT INTO ps_kv (key, value, version, updated_at) VALUES (?, ?, 1, ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value, version = ps_kv.version + 1, updated_at = excluded.updated_at`,
     args: ['db', JSON.stringify(protectedDb), ts],
@@ -434,40 +429,40 @@ export async function tursoWriteDb(dbObj) {
   return true;
 }
 
-export async function tursoWriteDbCAS(dbObj, expectedVersion) {
-  if (!isTursoConfigured()) return false;
-  await tursoEnsure();
+export async function writeDbCAS(dbObj, expectedVersion) {
+  if (!isDbConfigured()) return false;
+  await dbEnsure();
   const db = normalizeDb(dbObj);
-  db.meta = { ...(db.meta || {}), storage: 'turso-json-v2-encrypted', updatedAt: Date.now() };
+  db.meta = { ...(db.meta || {}), storage: 'json-v2-encrypted', updatedAt: Date.now() };
   const protectedDb = await encryptDatabasePII(db);
   const ts = nowMs();
   if (expectedVersion === null || expectedVersion === undefined) {
-    const rs = await tursoClient().execute({
+    const rs = await dbClient().execute({
       sql: 'INSERT INTO ps_kv (key, value, version, updated_at) VALUES (?, ?, 0, ?) ON CONFLICT(key) DO NOTHING',
       args: ['db', JSON.stringify(protectedDb), ts],
     });
     return Number(rs.rowsAffected || 0) > 0;
   }
-  const rs = await tursoClient().execute({
+  const rs = await dbClient().execute({
     sql: 'UPDATE ps_kv SET value = ?, version = version + 1, updated_at = ? WHERE key = ? AND version = ?',
     args: [JSON.stringify(protectedDb), ts, 'db', Number(expectedVersion || 0)],
   });
   return Number(rs.rowsAffected || 0) > 0;
 }
 
-export async function tursoResetDb() {
-  if (!isTursoConfigured()) return false;
-  const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'turso-json-v1', resetAt: Date.now() } });
-  await tursoWriteDb(empty);
+export async function resetDb() {
+  if (!isDbConfigured()) return false;
+  const empty = normalizeDb({ users: [], messages: [], scheduledMessages: [], posts: [], notifications: [], typing: {}, heartbeat: {}, rtcSignals: [], meta: { storage: 'json-v1', resetAt: Date.now() } });
+  await writeDb(empty);
   state.localCache = empty;
   state.cacheTimestamp = Date.now();
   return true;
 }
 
-export async function syncTursoMirror(db) {
-  if (!isTursoConfigured()) return false;
-  await tursoEnsure();
-  const c = tursoClient();
+export async function syncMirror(db) {
+  if (!isDbConfigured()) return false;
+  await dbEnsure();
+  const c = dbClient();
   const src = normalizeDb(db);
   const ts = nowMs();
   try {
@@ -541,31 +536,31 @@ export async function syncTursoMirror(db) {
       args: ['bootstrap_v1', String(ts), ts],
     });
     await c.batch(statements, 'write');
-    state._tursoBootstrapped = true;
+    state._dbBootstrapped = true;
     return true;
   } catch (e) {
-    console.warn('[turso] sync failed', e && e.message);
+    console.warn('[store] sync failed', e && e.message);
     return false;
   }
 }
 
-export async function fetchTursoMirror(fallbackDb = null) {
-  if (!isTursoConfigured()) return fallbackDb ? normalizeDb(fallbackDb) : normalizeDb({});
+export async function fetchMirror(fallbackDb = null) {
+  if (!isDbConfigured()) return fallbackDb ? normalizeDb(fallbackDb) : normalizeDb({});
   try {
-    await tursoEnsure();
-    const c = tursoClient();
-    if (!state._tursoBootstrapped) {
+    await dbEnsure();
+    const c = dbClient();
+    if (!state._dbBootstrapped) {
       const meta = await c.execute({ sql: 'SELECT value FROM ps_meta WHERE key = ?', args: ['bootstrap_v1'] }).catch(() => ({ rows: [] }));
       if (!meta.rows || meta.rows.length === 0) {
-        if (fallbackDb) await syncTursoMirror(fallbackDb);
+        if (fallbackDb) await syncMirror(fallbackDb);
       } else {
-        state._tursoBootstrapped = true;
+        state._dbBootstrapped = true;
       }
     }
     let usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
     let postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300');
     if ((!usersRows.rows?.length && !postsRows.rows?.length) && fallbackDb) {
-      await syncTursoMirror(fallbackDb);
+      await syncMirror(fallbackDb);
       usersRows = await c.execute('SELECT data_json FROM ps_users ORDER BY created_at ASC');
       postsRows = await c.execute('SELECT data_json FROM ps_posts ORDER BY created_at DESC LIMIT 300');
     }
@@ -576,17 +571,17 @@ export async function fetchTursoMirror(fallbackDb = null) {
       posts: (postsRows.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean),
     });
   } catch (e) {
-    console.warn('[turso] mirror read failed', e && e.message);
+    console.warn('[store] mirror read failed', e && e.message);
     return fallbackDb ? normalizeDb(fallbackDb) : normalizeDb({});
   }
 }
 
-export async function fetchTursoUserById(userId) {
-  if (!isTursoConfigured() || !userId) return null;
-  await tursoEnsure();
+export async function fetchUserById(userId) {
+  if (!isDbConfigured() || !userId) return null;
+  await dbEnsure();
   // Authentication callers must distinguish a missing row from database
   // unavailability. Never collapse a failed durable read into an empty result.
-  const row = await tursoClient().execute({
+  const row = await dbClient().execute({
     sql: 'SELECT data_json FROM ps_users WHERE id = ? LIMIT 1',
     args: [userId],
   });
@@ -594,17 +589,17 @@ export async function fetchTursoUserById(userId) {
   return await decryptUserPII(safeJson(String(row.rows[0].data_json || '{}'), null));
 }
 
-export async function fetchTursoNotifications(userId) {
-  if (!isTursoConfigured() || !userId) return [];
-  await tursoEnsure();
-  const rs = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200', args: [userId] }).catch(() => ({ rows: [] }));
+export async function fetchNotifications(userId) {
+  if (!isDbConfigured() || !userId) return [];
+  await dbEnsure();
+  const rs = await dbClient().execute({ sql: 'SELECT data_json FROM ps_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200', args: [userId] }).catch(() => ({ rows: [] }));
   return (rs.rows || []).map(r => safeJson(String(r.data_json || '{}'), null)).filter(Boolean);
 }
 
-export async function fetchTursoDmIndex(ownerUserId) {
-  if (!isTursoConfigured() || !ownerUserId) return {};
-  await tursoEnsure();
-  const rs = await tursoClient().execute({ sql: 'SELECT data_json FROM ps_dm_index WHERE owner_user_id = ? ORDER BY created_at DESC', args: [ownerUserId] }).catch(() => ({ rows: [] }));
+export async function fetchDmIndex(ownerUserId) {
+  if (!isDbConfigured() || !ownerUserId) return {};
+  await dbEnsure();
+  const rs = await dbClient().execute({ sql: 'SELECT data_json FROM ps_dm_index WHERE owner_user_id = ? ORDER BY created_at DESC', args: [ownerUserId] }).catch(() => ({ rows: [] }));
   const out = {};
   for (const row of (rs.rows || [])) {
     const item = safeJson(String(row.data_json || '{}'), null);
@@ -613,10 +608,10 @@ export async function fetchTursoDmIndex(ownerUserId) {
   return out;
 }
 
-export async function fetchTursoMessages(roomId, now = nowMs(), options = {}) {
-  if (!isTursoConfigured() || !roomId) return null;
+export async function fetchMessages(roomId, now = nowMs(), options = {}) {
+  if (!isDbConfigured() || !roomId) return null;
   try {
-    await tursoEnsure();
+    await dbEnsure();
     const before = Number(options.beforeTimestamp || 0);
     const since = Number(options.sinceTimestamp || 0);
     const limit = Math.max(1, Math.min(100, Number(options.limit) || 30));
@@ -633,9 +628,9 @@ export async function fetchTursoMessages(roomId, now = nowMs(), options = {}) {
                        ${whereCursor}
                      ORDER BY created_at ${order} LIMIT ?`;
     const idPageSql = pageSql.replace('SELECT id, data_json', 'SELECT id');
-    // All three indexed reads share one libSQL round trip. Reactions/receipts
+    // All three indexed reads share one round trip. Reactions/receipts
     // are narrow side tables, so status changes never rewrite message blobs.
-    const [messageRs, reactionRs, receiptRs] = await tursoClient().batch([
+    const [messageRs, reactionRs, receiptRs] = await dbClient().batch([
       { sql: pageSql, args },
       { sql: `SELECT message_id, user_id, emoji, created_at FROM ps_message_reactions
               WHERE message_id IN (${idPageSql}) ORDER BY created_at ASC`, args },
@@ -663,25 +658,25 @@ export async function fetchTursoMessages(roomId, now = nowMs(), options = {}) {
     }
     return { messages: list, hasMore, nextCursor: list.length ? Number(list[0].createdAt || 0) : null };
   } catch (e) {
-    console.warn('[turso] messages read failed', e && e.message);
+    console.warn('[store] messages read failed', e && e.message);
     return null;
   }
 }
 
-export async function tursoSetMessageReaction(messageId, userId, emoji, active, createdAt = nowMs()) {
-  if (!isTursoConfigured()) return false;
-  await tursoEnsure();
+export async function setMessageReaction(messageId, userId, emoji, active, createdAt = nowMs()) {
+  if (!isDbConfigured()) return false;
+  await dbEnsure();
   const statement = active
     ? { sql: `INSERT INTO ps_message_reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)
               ON CONFLICT(message_id, user_id, emoji) DO UPDATE SET created_at=excluded.created_at`, args: [messageId, userId, emoji, createdAt] }
     : { sql: 'DELETE FROM ps_message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', args: [messageId, userId, emoji] };
-  await tursoClient().execute(statement);
+  await dbClient().execute(statement);
   return true;
 }
 
-export async function tursoUpsertMessageReceipts(userId, messageIds, stateName, at = nowMs()) {
-  if (!isTursoConfigured() || !userId || !Array.isArray(messageIds) || !messageIds.length) return false;
-  await tursoEnsure();
+export async function upsertMessageReceipts(userId, messageIds, stateName, at = nowMs()) {
+  if (!isDbConfigured() || !userId || !Array.isArray(messageIds) || !messageIds.length) return false;
+  await dbEnsure();
   const isRead = stateName === 'read';
   const statements = messageIds.slice(0, 100).map(messageId => ({
     sql: `INSERT INTO ps_message_receipts (message_id, user_id, delivered_at, read_at, updated_at)
@@ -692,80 +687,80 @@ export async function tursoUpsertMessageReceipts(userId, messageIds, stateName, 
             updated_at=excluded.updated_at`,
     args: [messageId, userId, at, isRead ? at : 0, at],
   }));
-  await tursoClient().batch(statements, 'write');
+  await dbClient().batch(statements, 'write');
   return true;
 }
 
-export async function tursoUpsertUser(user) {
-  if (!isTursoConfigured() || !user) return false;
-  await tursoEnsure();
+export async function upsertUser(user) {
+  if (!isDbConfigured() || !user) return false;
+  await dbEnsure();
   const ts = nowMs();
   // Deliberately let constraint/storage errors reach the caller. Signup and
   // username-change routes translate UNIQUE failures to 409; swallowing them
   // here would let a racing request report success without a durable identity.
-  await tursoClient().execute({
+  await dbClient().execute({
     sql: 'INSERT INTO ps_users (id, username_lower, email_lower, created_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET username_lower=excluded.username_lower, email_lower=excluded.email_lower, updated_at=excluded.updated_at, data_json=excluded.data_json',
     args: [user.id, String(user.username || '').toLowerCase(), await emailIndex(user.email), Number(user.createdAt || 0), ts, JSON.stringify(await encryptUserPII(user))],
   });
   return true;
 }
 
-export async function tursoUpsertPosts(posts) {
-  if (!isTursoConfigured()) return false;
+export async function upsertPosts(posts) {
+  if (!isDbConfigured()) return false;
   const list = (posts || []).filter(Boolean);
   if (!list.length) return true;
-  await tursoEnsure();
+  await dbEnsure();
   const ts = nowMs();
   const stmts = list.map(p => ({
     sql: 'INSERT INTO ps_posts (id, user_id, created_at, deleted_at, story, story_expires_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, created_at=excluded.created_at, deleted_at=excluded.deleted_at, story=excluded.story, story_expires_at=excluded.story_expires_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
     args: [p.id, p.userId, Number(p.createdAt || 0), p.deletedAt ? Number(p.deletedAt) : null, p.story ? 1 : 0, p.storyExpiresAt ? Number(p.storyExpiresAt) : null, ts, JSON.stringify(p)],
   }));
-  await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] post upsert failed', e && e.message); });
+  await dbClient().batch(stmts, 'write').catch(e => { console.warn('[store] post upsert failed', e && e.message); });
   return true;
 }
 
-export async function tursoUpsertNotifications(notifs) {
-  if (!isTursoConfigured()) return false;
+export async function upsertNotifications(notifs) {
+  if (!isDbConfigured()) return false;
   const list = (notifs || []).filter(Boolean);
   if (!list.length) return true;
-  await tursoEnsure();
+  await dbEnsure();
   const ts = nowMs();
   const stmts = list.map(n => ({
     sql: 'INSERT INTO ps_notifications (id, user_id, from_user_id, kind, created_at, seen_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, from_user_id=excluded.from_user_id, kind=excluded.kind, created_at=excluded.created_at, seen_at=excluded.seen_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
     args: [n.id, n.userId, n.fromUserId || null, n.kind || null, Number(n.createdAt || 0), n.seenAt ? Number(n.seenAt) : null, ts, JSON.stringify(n)],
   }));
-  await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] notification upsert failed', e && e.message); });
+  await dbClient().batch(stmts, 'write').catch(e => { console.warn('[store] notification upsert failed', e && e.message); });
   return true;
 }
 
-export async function tursoClearNotificationsForUser(userId) {
-  if (!isTursoConfigured() || !userId) return false;
-  await tursoEnsure();
-  await tursoClient().execute({ sql: 'DELETE FROM ps_notifications WHERE user_id = ?', args: [userId] }).catch(e => { console.warn('[turso] notification clear failed', e && e.message); });
+export async function clearNotificationsForUser(userId) {
+  if (!isDbConfigured() || !userId) return false;
+  await dbEnsure();
+  await dbClient().execute({ sql: 'DELETE FROM ps_notifications WHERE user_id = ?', args: [userId] }).catch(e => { console.warn('[store] notification clear failed', e && e.message); });
   return true;
 }
 
-export async function tursoUpsertMessages(messages) {
-  if (!isTursoConfigured()) return false;
+export async function upsertMessages(messages) {
+  if (!isDbConfigured()) return false;
   const list = (messages || []).filter(Boolean);
   if (!list.length) return true;
-  await tursoEnsure();
+  await dbEnsure();
   const ts = nowMs();
   const stmts = list.map(m => ({
     sql: 'INSERT INTO ps_messages (id, room_id, user_id, created_at, deleted_at, disappear_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET room_id=excluded.room_id, user_id=excluded.user_id, created_at=excluded.created_at, deleted_at=excluded.deleted_at, disappear_at=excluded.disappear_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
     args: [m.id, m.roomId || 'general-group', m.userId || '', Number(m.createdAt || 0), m.deletedAt ? Number(m.deletedAt) : null, m.disappearAt ? Number(m.disappearAt) : null, ts, JSON.stringify(m)],
   }));
-  await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] message upsert failed', e && e.message); });
+  await dbClient().batch(stmts, 'write').catch(e => { console.warn('[store] message upsert failed', e && e.message); });
   return true;
 }
 
 // Bug #8 fix: Use UPSERT instead of DELETE+INSERT to avoid race conditions
 // when multiple concurrent requests refresh DM index for the same owner.
-export async function tursoRefreshDmIndexForOwners(db, ownerIds) {
-  if (!isTursoConfigured()) return false;
+export async function refreshDmIndexForOwners(db, ownerIds) {
+  if (!isDbConfigured()) return false;
   const owners = Array.from(new Set((ownerIds || []).filter(Boolean)));
   if (!owners.length) return true;
-  await tursoEnsure();
+  await dbEnsure();
   const ts = nowMs();
   const stmts = [];
   for (const ownerId of owners) {
@@ -807,26 +802,26 @@ export async function tursoRefreshDmIndexForOwners(db, ownerIds) {
       });
     }
   }
-  if (stmts.length) await tursoClient().batch(stmts, 'write').catch(e => { console.warn('[turso] dm index refresh failed', e && e.message); });
+  if (stmts.length) await dbClient().batch(stmts, 'write').catch(e => { console.warn('[store] dm index refresh failed', e && e.message); });
   return true;
 }
 
  // users with <= this many followers get push fan-out
-export async function tursoUpsertUserFeeds(userFeeds) {
-  if (!isTursoConfigured() || !Array.isArray(userFeeds) || userFeeds.length === 0) return;
-  await tursoEnsure();
+export async function upsertUserFeeds(userFeeds) {
+  if (!isDbConfigured() || !Array.isArray(userFeeds) || userFeeds.length === 0) return;
+  await dbEnsure();
   const stmts = userFeeds.map(uf => ({
     sql: `INSERT INTO ps_user_feeds (user_id, post_id, created_at) VALUES (?, ?, ?) ON CONFLICT(user_id, post_id) DO UPDATE SET created_at = excluded.created_at`,
     args: [uf.userId, uf.postId, uf.createdAt]
   }));
-  await tursoClient().batch(stmts, 'write').catch(e => console.warn('[turso] user_feeds upsert failed', e?.message));
+  await dbClient().batch(stmts, 'write').catch(e => console.warn('[store] user_feeds upsert failed', e?.message));
 }
 
-export async function fetchTursoUserFeed(userId, limit = 20) {
-  if (!isTursoConfigured()) return null;
-  await tursoEnsure();
+export async function fetchUserFeed(userId, limit = 20) {
+  if (!isDbConfigured()) return null;
+  await dbEnsure();
   const capped = Math.max(5, Math.min(50, Number(limit) || 20));
-  const rs = await tursoClient().execute({
+  const rs = await dbClient().execute({
     sql: `SELECT p.data_json
           FROM ps_user_feeds f
           JOIN ps_posts p ON p.id = f.post_id
@@ -860,7 +855,7 @@ const _MY_ROOMS_SQL = "(m.room_id = 'general-group' OR (m.room_id LIKE 'dm:%' AN
  */
 async function _unreadEpoch() {
   if (state._unreadEpoch) return state._unreadEpoch;
-  const c = tursoClient();
+  const c = dbClient();
   const ts = nowMs();
   // One batch, not two awaits: this runs on the first /users of every cold
   // isolate, and sequential round trips there are exactly the kind of
@@ -880,10 +875,10 @@ async function _unreadEpoch() {
  * A message is unread when it is newer than this user's last_read_at for that
  * room (or newer than the global epoch, if they have never opened it).
  */
-export async function fetchTursoUnreadCounts(myId) {
-  if (!isTursoConfigured() || !myId) return {};
-  await tursoEnsure();
-  const c = tursoClient();
+export async function fetchUnreadCounts(myId) {
+  if (!isDbConfigured() || !myId) return {};
+  await dbEnsure();
+  const c = dbClient();
   try {
     const markerKey = `unread-materialized:${myId}`;
     const [stateRs, markerRs] = await c.batch([
@@ -940,19 +935,19 @@ export async function fetchTursoUnreadCounts(myId) {
     await c.batch(writes, 'write');
     return out;
   } catch (e) {
-    console.warn('[turso] unread counts failed', e && e.message);
+    console.warn('[store] unread counts failed', e && e.message);
     return {};
   }
 }
 
 /** Stamp a room as read up to `ts` for one user. */
-export async function tursoMarkRoomRead(myId, roomId, ts = nowMs()) {
-  return tursoMarkRoomsRead(myId, [{ roomId, at: ts }]);
+export async function markRoomRead(myId, roomId, ts = nowMs()) {
+  return markRoomsRead(myId, [{ roomId, at: ts }]);
 }
 
-export async function tursoMarkRoomsRead(myId, receipts) {
-  if (!isTursoConfigured() || !myId || !Array.isArray(receipts) || receipts.length === 0) return false;
-  await tursoEnsure();
+export async function markRoomsRead(myId, receipts) {
+  if (!isDbConfigured() || !myId || !Array.isArray(receipts) || receipts.length === 0) return false;
+  await dbEnsure();
   const updatedAt = nowMs();
   const statements = receipts.slice(0, 50).flatMap((receipt) => {
     const at = Number(receipt.at) || updatedAt;
@@ -976,10 +971,10 @@ export async function tursoMarkRoomsRead(myId, receipts) {
     ];
   });
   try {
-    await tursoClient().batch(statements, 'write');
+    await dbClient().batch(statements, 'write');
     return true;
   } catch (e) {
-    console.warn('[turso] mark read batch failed', e && e.message);
+    console.warn('[store] mark read batch failed', e && e.message);
     return false;
   }
 }
@@ -987,7 +982,7 @@ export async function tursoMarkRoomsRead(myId, receipts) {
 /**
  * Self-healing migration for ps_notifications.post_id / comment_id.
  *
- * Deliberately NOT called from tursoEnsure(): that runs on the first Turso
+ * Deliberately NOT called from dbEnsure(): that runs on the first
  * touch of every cold isolate, i.e. the hot path of every endpoint, and the
  * extra PRAGMA + ALTER round trips there pushed requests over Cloudflare's
  * per-request CPU limit (HTTP 503, "error code: 1102") on routes that had
@@ -997,20 +992,20 @@ export async function tursoMarkRoomsRead(myId, receipts) {
  * because the columns are missing - once per isolate, effectively once per
  * database.
  */
-export async function tursoHealNotificationColumns() {
-  if (!isTursoConfigured()) return false;
+export async function healNotificationColumns() {
+  if (!isDbConfigured()) return false;
   if (state._notifColsHealed) return true;
   try {
-    const c = tursoClient();
+    const c = dbClient();
     const info = await c.execute('PRAGMA table_info(ps_notifications)');
     const cols = new Set((info.rows || []).map(r => String(r.name)));
     if (!cols.has('post_id')) await c.execute('ALTER TABLE ps_notifications ADD COLUMN post_id TEXT');
     if (!cols.has('comment_id')) await c.execute('ALTER TABLE ps_notifications ADD COLUMN comment_id TEXT');
     state._notifColsHealed = true;
-    console.log('[turso] healed ps_notifications columns');
+    console.log('[store] healed ps_notifications columns');
     return true;
   } catch (e) {
-    console.warn('[turso] notification column heal failed:', e && e.message);
+    console.warn('[store] notification column heal failed:', e && e.message);
     return false;
   }
 }

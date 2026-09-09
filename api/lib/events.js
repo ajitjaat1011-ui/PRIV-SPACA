@@ -8,7 +8,7 @@
 
 import { nowMs, uid } from './helpers.js';
 import { sendWebPush } from './push.js';
-import { isTursoPrimary, tursoClient, tursoEnsure } from './store-turso.js';
+import { isDbPrimary, dbClient, dbEnsure } from './store.js';
 import { getOmniContext, supervisedTask } from './omni-engine.js';
 
 // ---------- Real-time events (in-memory; SSE per-request) ----------
@@ -53,8 +53,8 @@ export function _pushEvent(userId, kind, data, opts = {}) {
     catch (_) { sub.closed = true; }
   }
   if (opts.persist === false) return evt;
-  if (isTursoPrimary()) {
-    const insert = () => tursoEnsure().then(() => tursoClient().execute({
+  if (isDbPrimary()) {
+    const insert = () => dbEnsure().then(() => dbClient().execute({
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
       args: [evt.id, userId, kind, JSON.stringify(evt), evt.ts],
     }));
@@ -73,7 +73,7 @@ export function _broadcastEvent(kind, data, excludeUserId) {
     if (userId === excludeUserId) continue;
     _pushEvent(userId, kind, data);
   }
-  if (isTursoPrimary()) {
+  if (isDbPrimary()) {
     _pushEvent('__ALL__', kind, data);
   }
 }

@@ -6,7 +6,7 @@
  * Why: api/lib/store-supabase.js imports `npm:pg@8.11.3` STATICALLY (the
  * Supabase edge runtime requires a static import to register the package).
  * Plain Node cannot resolve the `npm:` URL scheme, which breaks any suite
- * that imports api/lib (store-turso re-exports store-supabase helpers).
+ * that imports api/lib (store.js re-exports store-supabase helpers).
  * check.mjs bundles with `--alias:npm:pg@8.11.3=pg`; render/build.mjs
  * rewrites the specifier string; this loader is the equivalent for direct
  * ESM imports under Node. It is NOT used by any production entrypoint.

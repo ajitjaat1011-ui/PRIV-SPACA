@@ -7,12 +7,12 @@
  */
 
 import { sleepMs } from './helpers.js';
-import { isTursoPrimary, tursoClient, tursoEnsure } from './store-turso.js';
+import { isDbPrimary, dbClient, dbEnsure } from './store.js';
 import { supervisedTask } from './omni-engine.js';
 
 // ---------- Rate limiting ----------
-// v77-bugfix: In-memory rate limiter is ONLY used as fallback when Turso is unreachable.
-// For cross-isolate consistency, use sharedRateLimit() which persists to Turso.
+// v77-bugfix: In-memory rate limiter is ONLY used as fallback when the store is unreachable.
+// For cross-isolate consistency, use sharedRateLimit() which persists to the store.
 export const _rateBuckets = new Map();
 
 export function rateLimit({ key, limit, windowMs }) {
@@ -26,10 +26,10 @@ export function rateLimit({ key, limit, windowMs }) {
 export async function sharedRateLimit({ key, limit, windowMs }) {
   const now = Date.now();
   const nextResetAt = now + windowMs;
-  if (isTursoPrimary()) {
+  if (isDbPrimary()) {
     try {
-      await tursoEnsure();
-      const tc = tursoClient();
+      await dbEnsure();
+      const tc = dbClient();
       await tc.execute({
         sql: `INSERT INTO ps_rate_limits (key, count, reset_at, updated_at) VALUES (?, 1, ?, ?)
               ON CONFLICT(key) DO UPDATE SET
@@ -53,11 +53,11 @@ export async function sharedRateLimit({ key, limit, windowMs }) {
       const resetAt = Number(row.reset_at || nextResetAt);
       return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetAt };
     } catch (e) {
-      console.warn('[sharedRateLimit:turso] falling back to in-memory limiter:', e && e.message);
+      console.warn('[sharedRateLimit:db] falling back to in-memory limiter:', e && e.message);
       return rateLimit({ key, limit, windowMs });
     }
   }
-  // Neon rate-limit path removed. If we reach here, Turso primary is not set,
+  // Neon rate-limit path removed. If we reach here, no store primary is set,
   // so we fall back to the in-memory limiter.
   return rateLimit({ key, limit, windowMs });
 }
@@ -81,7 +81,7 @@ export async function authRateLimit(c, next) {
 export async function globalRateLimit(c, next) {
   // Omni already applies tighter per-user and per-IP token buckets before this
   // guard. Keep this broad 400/minute abuse ceiling isolate-local so a normal
-  // Tier 1 read does not pay two remote Turso operations merely to increment a
+  // Tier 1 read does not pay two remote store operations merely to increment a
   // counter. Authentication has its own durable sharedRateLimit + account
   // lockout below and is intentionally not weakened by this fast path.
   const ip = clientIp(c);
@@ -95,18 +95,18 @@ export async function globalRateLimit(c, next) {
   await next();
 }
 
-// Brute-force lockout - v77-bugfix: Now persisted to Turso for cross-isolate consistency
-// In-memory cache is used as a fast local check + fallback when Turso is unavailable
+// Brute-force lockout - v77-bugfix: Now persisted to the store for cross-isolate consistency
+// In-memory cache is used as a fast local check + fallback when the store is unavailable
 export const _loginFails = new Map();
 
 export async function checkAccountLock(userId) {
   const now = Date.now();
   
-  // Try Turso first for cross-isolate consistency
-  if (isTursoPrimary()) {
+  // Try the store first for cross-isolate consistency
+  if (isDbPrimary()) {
     try {
-      await tursoEnsure();
-      const rs = await tursoClient().execute({
+      await dbEnsure();
+      const rs = await dbClient().execute({
         sql: 'SELECT count, first_at, locked_until FROM ps_rate_limits WHERE key = ? LIMIT 1',
         args: ['lockout:' + userId],
       });
@@ -119,7 +119,7 @@ export async function checkAccountLock(userId) {
       }
       return { locked: false };
     } catch (e) {
-      console.warn('[checkAccountLock:turso] falling back to in-memory:', e && e.message);
+      console.warn('[checkAccountLock:db] falling back to in-memory:', e && e.message);
     }
   }
   
@@ -143,17 +143,17 @@ export async function recordLoginFail(userId) {
   rec.count++;
   if (rec.count >= 5) rec.lockedUntil = now + 15 * 60_000;
   
-  // Persist to Turso for cross-isolate consistency
-  if (isTursoPrimary()) {
+  // Persist to the store for cross-isolate consistency
+  if (isDbPrimary()) {
     try {
-      await tursoEnsure();
+      await dbEnsure();
       const key = 'lockout:' + userId;
       const lockoutDuration = 15 * 60_000;
       const windowDuration = 5 * 60_000;
       
       // Atomic upsert: insert new or update existing
       // If first_at is older than 5 minutes, reset the counter
-      await tursoClient().execute({
+      await dbClient().execute({
         sql: `INSERT INTO ps_rate_limits (key, count, first_at, reset_at, locked_until, updated_at) 
               VALUES (?, 1, ?, ?, 0, ?)
               ON CONFLICT(key) DO UPDATE SET
@@ -174,7 +174,7 @@ export async function recordLoginFail(userId) {
         ],
       });
     } catch (e) {
-      console.warn('[recordLoginFail:turso] error:', e && e.message);
+      console.warn('[recordLoginFail:db] error:', e && e.message);
     }
   }
 }
@@ -182,16 +182,16 @@ export async function recordLoginFail(userId) {
 export async function clearLoginFails(userId) {
   _loginFails.delete(userId);
   
-  // Clear from Turso too
-  if (isTursoPrimary()) {
+  // Clear from the store too
+  if (isDbPrimary()) {
     try {
-      await tursoEnsure();
-      await tursoClient().execute({
+      await dbEnsure();
+      await dbClient().execute({
         sql: 'DELETE FROM ps_rate_limits WHERE key = ?',
         args: ['lockout:' + userId],
       });
     } catch (e) {
-      console.warn('[clearLoginFails:turso] error:', e && e.message);
+      console.warn('[clearLoginFails:db] error:', e && e.message);
     }
   }
 }

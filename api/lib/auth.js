@@ -3,7 +3,7 @@
  */
 
 import { cfg, JWT_EXPIRES_DAYS } from './config.js';
-import { isSupabaseConfigured } from './store-turso.js';
+import { isSupabaseConfigured } from './store.js';
 import { gotrueVerifyCached } from './auth-supabase.js';
 
 const enc = new TextEncoder();

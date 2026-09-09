@@ -14,14 +14,12 @@
  * (priv-spaca-v1.0 / v93.4) — release lines can restart, so the markers are
  * compared as opaque strings for exact equality, never numerically here.
  *
- * Two API entrypoints are exercised:
+ * One API entrypoint is exercised:
  *   - api/cf-worker.js       Supabase-mode API (Render backend / edge standby).
  *                            Imports `pg` via a Deno-style `npm:pg@8.11.3`
  *                            specifier, aliased to the root 'pg' dependency so
  *                            the Node-side bundle resolves (render/build.mjs
  *                            performs the same rewrite before bundling).
- *   - api-legacy/cf-worker.js Turso-backed API, currently served by the Pages
- *                            advanced-mode worker as the production fallback.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -125,9 +123,6 @@ const apiOut = bundleCheck('api/cf-worker.js', 'api/cf-worker.js (Supabase-mode 
   ['--alias:npm:pg@8.11.3=pg']);
 if (apiOut) analyzeRoutes(apiOut, 'api/cf-worker.js (Supabase-mode / Render)');
 
-const legacyOut = bundleCheck('api-legacy/cf-worker.js', 'api-legacy/cf-worker.js (Turso, Pages fallback)');
-if (legacyOut) analyzeRoutes(legacyOut, 'api-legacy/cf-worker.js (Turso, Pages fallback)');
-
 // ---------- 5: declared dependencies ----------
 console.log('\ndependencies');
 const pkg = JSON.parse(read('package.json'));
@@ -141,7 +136,6 @@ const scan = (d, ext = ['.js', '.mjs']) => {
   }
 };
 scan(resolve(ROOT, 'api'));
-scan(resolve(ROOT, 'api-legacy'), ['.js']);
 files.push(resolve(ROOT, 'scripts/dev-server.mjs'));
 
 // Normalise a specifier to its package name:
@@ -171,7 +165,7 @@ const missing = [...used].filter((u) => !declared.has(u));
 missing.length ? bad('imported but NOT in package.json: ' + missing.join(', '))
   : ok(`all ${used.size} imported packages are declared (${[...used].sort().join(', ')})`);
 
-const runtime = new Set(['hono', '@libsql/client', 'bcryptjs', 'js-base64', 'promise-limit', 'pg']);
+const runtime = new Set(['hono', 'bcryptjs', 'js-base64', 'promise-limit', 'pg']);
 const undeclaredRuntime = [...runtime].filter((r) => !(pkg.dependencies || {})[r]);
 undeclaredRuntime.length
   ? bad('worker bundle needs these as dependencies: ' + undeclaredRuntime.join(', '))

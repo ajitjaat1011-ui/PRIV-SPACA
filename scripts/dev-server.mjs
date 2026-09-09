@@ -10,7 +10,7 @@
  *   PORT=3000 node scripts/dev-server.mjs  # custom port
  *
  * Environment (all optional — without them the API uses in-memory storage):
- *   JWT_SECRET, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, GITHUB_PAT, ...
+ *   JWT_SECRET, SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_DB_URL, GITHUB_PAT, ...
  *
  * Requires Node >= 22 (matches Wrangler and the supported production toolchain).
  */
@@ -125,5 +125,5 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`PRIV SPACA dev server → http://${HOST}:${PORT}`);
-  console.log(`Storage: ${process.env.TURSO_DATABASE_URL ? 'Turso' : 'in-memory (set TURSO_DATABASE_URL for real data)'}`);
+  console.log(`Storage: ${process.env.SUPABASE_DB_URL ? 'Supabase Postgres' : 'in-memory (set SUPABASE_DB_URL for real data)'}`);
 });

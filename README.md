@@ -2,8 +2,9 @@
 
 **Live:** https://priv-spaca.pages.dev
 
-A private Instagram/WhatsApp-hybrid PWA: vanilla-JS frontend + a Hono API running
-on Cloudflare Pages (advanced mode `_worker.js`), with Turso/libSQL storage.
+A private Instagram/WhatsApp-hybrid PWA: vanilla-JS frontend on Cloudflare
+Pages + a Hono API on Render backed by Supabase/Postgres (a Supabase edge
+function hosts the same bundle as a standby).
 
 ## Layout
 
@@ -11,7 +12,7 @@ on Cloudflare Pages (advanced mode `_worker.js`), with Turso/libSQL storage.
 index.html  app.js  style.css      frontend sources (edit these)
 app.min.js  style.min.css          what the browser actually loads (generated)
 sw.js                              service worker / offline shell
-_worker.js                         Pages entry: /api/* -> Hono, everything else -> static
+_worker.js                         Pages entry: /api/* -> Render API proxy, static for everything else
 api/cf-worker.js                   API entry point — wires the modules together
 api/lib/**                         backend libraries (see below)
 api/routes/**                      one module per API area
@@ -36,9 +37,9 @@ config / state  ->  helpers  ->  schema  ->  stores  ->  db  ->  middleware  -> 
 | `lib/state.js` | `state` object — isolate-local caches |
 | `lib/helpers.js` | ids, time, validation, sanitising, visibility rules |
 | `lib/schema.js` | DB normalisation, three-way CAS merging, retention scheduler |
-| `lib/store-turso.js` | durable structured and mirror storage |
+| `lib/store.js` | durable structured and mirror storage |
 | `lib/realtime-store.js` | durable presence, typing and one-time WebAuthn challenges |
-| `lib/db.js` | Turso-only persistence facade used by routes |
+| `lib/db.js` | Supabase persistence facade used by routes |
 | `lib/auth.js` | scoped JWT + Secure HttpOnly session-cookie primitives |
 | `lib/webauthn.js` | bounded CBOR/COSE parsing and ES256 ceremony verification |
 | `lib/middleware.js` | `requireAuth`, `requireAdmin` |
@@ -68,11 +69,11 @@ npm run dev            # http://localhost:8787 — API + static files
 ```
 
 The dev server runs the **same** Hono app as production, so local behaviour
-matches Cloudflare. Without `TURSO_*` set it uses in-memory storage.
+matches Render/Pages. Without Supabase env vars set it uses in-memory storage.
 
 ```bash
-# against real data
-TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... JWT_SECRET=... npm run dev
+# against real data (session pooler / local Postgres)
+SUPABASE_DB_URL=postgresql://... SUPABASE_URL=... JWT_SECRET=... npm run dev
 ```
 
 ## Checks, build, deploy
@@ -114,14 +115,16 @@ Set these as **encrypted Cloudflare Pages secrets**, never in `wrangler.toml`.
 |---|---|
 | `JWT_SECRET` | HMAC secret for cookie-backed sessions. The API fails closed in production without a strong value. |
 | `FIELD_KEY` | Field-level AES-GCM encryption and blind-index key for protected PII. |
-| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | Sole durable application datastore. |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` / `SUPABASE_DB_URL` | Supabase project + GoTrue admin + Postgres connection string (session pooler). |
 | `GITHUB_PAT`, `GH_REPO`, `GH_BRANCH` | Optional legacy media-file fallback only; never database persistence. |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push. |
 | `CLOUDINARY_*` | Optional faster media uploads. |
 | `ADMIN_USERS`, `OWNER_EMAIL`, `OWNER_USERNAME` | Admin identification. |
 | `APP_MIN_VERSION` | Reject clients older than this version (force refresh). |
 
-Production persistence is Turso-only and fails closed when durable storage is unavailable. In-memory storage exists only for local development; the public-repository `db.json` fallback is disabled.
+Production persistence is Supabase-only and fails closed when durable storage
+is unavailable. In-memory storage exists only for local development; the
+public-repository `db.json` fallback is disabled.
 
 ## Features
 

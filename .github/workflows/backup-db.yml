@@ -1,19 +1,19 @@
 name: Daily DB Backup
 
-# Snapshots the live Turso database into the PRIVATE
+# Snapshots the live Supabase/Postgres database into the PRIVATE
 # ajitjaat1011-ui/priv-spaca-backups repo (NOT this public repo).
 #
 # SECURITY: this workflow used to fetch a legacy db.json file from the
 # "data" branch of THIS (public) repo and commit it under backups/ here.
 # That legacy file contained real bcrypt password/PIN hashes and its
 # presence in a public repo was a genuine data exposure, remediated by
-# purging it from history. Turso has been the sole primary datastore for
-# a long time, so that fetch permanently 404s now (expected).
+# purging it from history. The pre-migration backup jobs were replaced by
+# this pg_dump of the Supabase database at the storage cutover; the legacy
+# snapshots remain archived in the private backups repo.
 #
-# This replacement backs up Turso directly and writes ONLY into a
-# separate PRIVATE repo, never into this public one. Do not change the
-# destination repo to a public one, and do not remove the .gitignore
-# guard in that repo.
+# Writes ONLY into a separate PRIVATE repo, never into this public one. Do
+# not change the destination repo to a public one, and do not remove the
+# .gitignore guard in that repo.
 
 on:
   schedule:
@@ -27,83 +27,19 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main (for the backup script only)
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          sparse-checkout: |
-            scripts/backup-and-wipe.js
-            package.json
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install deps
-        run: npm install --no-audit --no-fund @libsql/client
-
-      - name: Snapshot Turso DB to JSON (backup-only, no wipe)
+      - name: Dump Supabase database (custom-format pg_dump)
         env:
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          # Session-pooler connection string. The node-pg "no-verify" sslmode
+          # is not a libpq value, so the query string is dropped and
+          # PGSSLMODE=require is used instead.
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
+          base="${SUPABASE_DB_URL%%\?*}"
+          export PGSSLMODE=require
           mkdir -p /tmp/backup-out
           today=$(date -u +%F)
-          node -e "
-          const { createClient } = require('@libsql/client');
-          const fs = require('fs');
-          (async () => {
-            const c = createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN });
-            const tables = ['ps_users','ps_posts','ps_messages','ps_notifications','ps_dm_index','ps_user_feeds','ps_events','ps_kv','ps_message_reactions','ps_message_receipts','ps_meta','ps_link_previews'];
-            function b64(bytes) {
-              let bin = '';
-              const CH = 0x8000;
-              for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
-              return btoa(bin);
-            }
-            async function cleanValue(v) {
-              // The Turso client returns BLOBs as Uint8Array, ArrayBuffer or Blob
-              // depending on driver/environment — normalise all to base64.
-              if (v instanceof Uint8Array) return 'base64:' + b64(v);
-              if (v instanceof ArrayBuffer) return 'base64:' + b64(new Uint8Array(v));
-              if (typeof Blob !== 'undefined' && v instanceof Blob) return 'base64:' + b64(new Uint8Array(await v.arrayBuffer()));
-              return v;
-            }
-            async function cleanRow(r) {
-              const o = {};
-              for (const [k, v] of Object.entries(r)) o[k] = await cleanValue(v);
-              return o;
-            }
-            const dump = {};
-            for (const t of tables) {
-              try {
-                const rs = await c.execute('SELECT * FROM ' + t);
-                dump[t] = await Promise.all(rs.rows.map(cleanRow));
-              } catch (e) {
-                dump[t] = { _error: String(e.message || e) };
-              }
-            }
-            // v185: media BLOBs go to their own file (can grow large)
-            let mediaCount = 0, mediaBytes = 0;
-            try {
-              const rs = await c.execute('SELECT * FROM ps_media_files');
-              dump.ps_media_files = await Promise.all(rs.rows.map(async (r) => {
-                mediaCount++;
-                const sz = r.data && (r.data.byteLength !== undefined ? r.data.byteLength : r.data.size);
-                mediaBytes += Number(sz) || 0;
-                return cleanRow(r);
-              }));
-            } catch (e) {
-              dump.ps_media_files = { _error: String(e.message || e) };
-            }
-            fs.writeFileSync('/tmp/backup-out/${today}.json', JSON.stringify(dump));
-            fs.writeFileSync('/tmp/backup-out/${today}-media.json', JSON.stringify(dump.ps_media_files));
-            console.log('Wrote backup, tables:', Object.keys(dump).join(', '));
-            console.log('Media: ' + mediaCount + ' files, ' + (mediaBytes / 1048576).toFixed(1) + ' MB');
-          })().catch(e => { console.error(e); process.exit(1); });
-          "
+          pg_dump "$base" --format=custom --file="/tmp/backup-out/${today}.dump"
+          echo "dump written"
 
       - name: Push snapshot to PRIVATE backups repo
         env:
@@ -113,10 +49,9 @@ jobs:
           rm -rf /tmp/backups-repo
           git clone --depth 1 "https://${BACKUP_PUSH_TOKEN}@github.com/ajitjaat1011-ui/priv-spaca-backups.git" /tmp/backups-repo
           mkdir -p /tmp/backups-repo/backups
-          cp "/tmp/backup-out/${today}.json" "/tmp/backups-repo/backups/${today}.json"
-          cp "/tmp/backup-out/${today}-media.json" "/tmp/backups-repo/backups/${today}-media.json"
+          cp "/tmp/backup-out/${today}.dump" "/tmp/backups-repo/backups/${today}.dump"
           cd /tmp/backups-repo
-          find backups -name '*.json' -type f -mtime +30 -print -delete || true
+          find backups -name '*.dump' -type f -mtime +30 -print -delete || true
           git config user.name  "priv-spaca-bot"
           git config user.email "bot@priv-spaca.app"
           git add backups/

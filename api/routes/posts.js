@@ -18,7 +18,7 @@ import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dmRoomFor } from '../lib/rooms.js';
 import { normalizeDb } from '../lib/schema.js';
-import { fetchTursoUserFeed, isTursoConfigured, tursoRefreshDmIndexForOwners, tursoUpsertMessages, tursoUpsertNotifications, tursoUpsertPosts } from '../lib/store-turso.js';
+import { fetchUserFeed, isDbConfigured, refreshDmIndexForOwners, upsertMessages, upsertNotifications, upsertPosts } from '../lib/store.js';
 
 // ---------- Posts ----------
 app.get('/api/posts', requireAuth, async (c) => {
@@ -129,10 +129,10 @@ app.post('/api/posts/create', requireAuth, async (c) => {
     } else {
       _broadcastEvent('new_post', { post: enriched }, myId);
     }
-    if (isTursoConfigured()) {
+    if (isDbConfigured()) {
       const [persisted] = await Promise.all([
         saveDatabaseVerified(db, d => (d.posts || []).some(p => p.id === post.id), 4, { skipSecondarySync: true }),
-        tursoUpsertPosts([post]).then(() => fanoutPostToFollowers(post, db)).catch(() => {})
+        upsertPosts([post]).then(() => fanoutPostToFollowers(post, db)).catch(() => {})
       ]);
       if (isPersist() && !persisted) return c.json({ error: 'Post storage unavailable. Please retry.' }, 503);
     } else {
@@ -168,9 +168,9 @@ app.post('/api/posts/like', requireAuth, async (c) => {
   if (!liked && idx !== -1) post.likes.splice(idx, 1);
   const notif = liked && idx === -1 ? pushNotification(db, post.userId, 'like', myId, { postId: post.id }) : null;
   await saveDatabase(db, false, { skipSecondarySync: true });
-  if (isTursoConfigured()) {
-    await tursoUpsertPosts([post]);
-    if (notif) await tursoUpsertNotifications([notif]);
+  if (isDbConfigured()) {
+    await upsertPosts([post]);
+    if (notif) await upsertNotifications([notif]);
   }
   return c.json({ liked, likeCount: post.likes.length });
   } catch (e) { throw wrapUnexpected(e); }
@@ -198,9 +198,9 @@ app.post('/api/posts/comment', requireAuth, async (c) => {
   post.comments.push(comment);
   const notif = pushNotification(db, post.userId, 'comment', myId, { postId: post.id, commentId: comment.id, text: ct.slice(0, 140) });
   await saveDatabase(db, false, { skipSecondarySync: true });
-  if (isTursoConfigured()) {
-    await tursoUpsertPosts([post]);
-    if (notif) await tursoUpsertNotifications([notif]);
+  if (isDbConfigured()) {
+    await upsertPosts([post]);
+    if (notif) await upsertNotifications([notif]);
   }
   return c.json({ comment: { ...comment, author: snap || { id: myId, displayName: 'Member', username: 'member' } } });
 });
@@ -216,7 +216,7 @@ app.post('/api/posts/delete', requireAuth, async (c) => {
   if (p.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
   p.deletedAt = nowMs();
   await saveDatabase(db, false, { skipSecondarySync: true });
-  if (isTursoConfigured()) await tursoUpsertPosts([p]);
+  if (isDbConfigured()) await upsertPosts([p]);
   return c.json({ ok: true, undoUntil: p.deletedAt + 30 * 24 * 3600 * 1000 });
   } catch (e) { throw wrapUnexpected(e); }
 });
@@ -232,7 +232,7 @@ app.post('/api/posts/restore', requireAuth, async (c) => {
   if (p.userId !== c.get('userId')) return c.json({ error: 'Forbidden' }, 403);
   delete p.deletedAt;
   await saveDatabase(db, false, { skipSecondarySync: true });
-  if (isTursoConfigured()) await tursoUpsertPosts([p]);
+  if (isDbConfigured()) await upsertPosts([p]);
   return c.json({ ok: true });
   } catch (e) { throw wrapUnexpected(e); }
 });
@@ -256,7 +256,7 @@ app.post('/api/stories/:id/view', requireAuth, async (c) => {
   if (existing) { existing.at = nowMs(); }
   else { p.views.push({ userId: myId, at: nowMs() }); }
   await saveDatabase(db, true); // ephemeral: high-frequency, low-criticality
-  if (isTursoConfigured()) await tursoUpsertPosts([p]);
+  if (isDbConfigured()) await upsertPosts([p]);
   return c.json({ ok: true, viewCount: p.views.length });
   } catch (e) { throw wrapUnexpected(e); }
 });
@@ -323,10 +323,10 @@ app.post('/api/stories/:id/reply', requireAuth, async (c) => {
   const notif = pushNotification(db, p.userId, 'story_reply', myId, { text: bodyText.slice(0, 80), postId: p.id });
   const persisted = await saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true });
   if (isPersist() && !persisted) return c.json({ error: 'Reply storage unavailable. Please retry.' }, 503);
-  if (isTursoConfigured()) {
-    await tursoUpsertMessages([msg]);
-    if (notif) await tursoUpsertNotifications([notif]);
-    await tursoRefreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean));
+  if (isDbConfigured()) {
+    await upsertMessages([msg]);
+    if (notif) await upsertNotifications([notif]);
+    await refreshDmIndexForOwners(db, roomId.slice(3).split(':').filter(Boolean));
   }
   return c.json({ ok: true, message: enriched });
 });
@@ -338,7 +338,7 @@ app.get('/api/feed', requireAuth, async (c) => {
   const limit = Math.min(50, Math.max(5, parseInt(c.req.query('limit') || '20')));
   const [db, materialized] = await Promise.all([
     fetchDatabase(),
-    isTursoConfigured() ? fetchTursoUserFeed(myId, limit) : Promise.resolve(null),
+    isDbConfigured() ? fetchUserFeed(myId, limit) : Promise.resolve(null),
   ]);
   const me = (db.users || []).find(u => u.id === myId);
   const following = (me && Array.isArray(me.following)) ? me.following : [];
@@ -354,6 +354,6 @@ app.get('/api/feed', requireAuth, async (c) => {
       const authorObj = liveUser ? sanitizeUser(liveUser) : (p.authorSnapshot || { id: p.userId, displayName: 'Member', username: (p.userId || 'm').slice(-6) });
       return { ...p, author: authorObj };
     });
-  return c.json({ posts, source: Array.isArray(materialized) ? 'turso-user-feed-index' : 'in-memory-fallback' });
+  return c.json({ posts, source: Array.isArray(materialized) ? 'user-feed-index' : 'in-memory-fallback' });
   } catch (e) { throw wrapUnexpected(e); }
 });

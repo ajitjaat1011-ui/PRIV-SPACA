@@ -76,10 +76,7 @@ function envForRequest(req: Request): Record<string, string> {
     FIELD_KEY: Deno.env.get('FIELD_KEY') || '',
     PS_BASE_PATH: '/functions/v1/app',
     PS_PUBLIC_BASE: publicBase,
-    // legacy fields left empty — the app detects Supabase mode via the
-    // SUPABASE_* pair and ignores the Turso/GitHub paths.
-    TURSO_DATABASE_URL: '',
-    TURSO_AUTH_TOKEN: '',
+    // legacy GitHub fields left empty (optional media fallback only).
     GITHUB_PAT: '',
     GH_REPO: '',
     GH_BRANCH: '',

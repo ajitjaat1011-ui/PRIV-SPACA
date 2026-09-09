@@ -205,7 +205,7 @@ export function mergeDatabaseThreeWay(remoteRaw, baseRaw, localRaw) {
     rtcSignals: mergeEntitiesThreeWay(remote.rtcSignals, base.rtcSignals, local.rtcSignals).slice(-200),
     typing: mergeValueThreeWay(remote.typing, base.typing, local.typing),
     heartbeat: mergeValueThreeWay(remote.heartbeat, base.heartbeat, local.heartbeat),
-    meta: { ...remote.meta, ...local.meta, updatedAt: nowMs(), storage: 'turso-three-way-v1' },
+    meta: { ...remote.meta, ...local.meta, updatedAt: nowMs(), storage: 'three-way-cas-v1' },
   };
 }
 

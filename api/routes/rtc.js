@@ -14,7 +14,7 @@ import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { dedupeRtcSignals, normalizeRtcSignalRow } from '../lib/rtc.js';
-import { isTursoConfigured, tursoClient } from '../lib/store-turso.js';
+import { isDbConfigured, dbClient } from '../lib/store.js';
 import { getOmniContext, supervisedTask } from '../lib/omni-engine.js';
 
 app.post('/api/rtc/signal', requireAuth, async (c) => {
@@ -41,24 +41,24 @@ app.post('/api/rtc/signal', requireAuth, async (c) => {
   // flat shape the client understands. See the note above _pushEvent().
   _pushEvent(targetId, 'rtc_signal', payload, { persist: false });
 
-  if (isTursoConfigured()) {
+  if (isDbConfigured()) {
     const rtcId = uid('rtc');
     const fullRow = { id: rtcId, createdAt: now, signalType, correlationId: getOmniContext()?.correlationId || null, ...payload };
     // A silently-dropped INSERT here is exactly the "caller rings forever,
     // callee never sees the popup" failure, so retry once and then tell the
     // caller the truth (503) instead of a fake { ok: true }.
-    let wrote = await tursoClient().execute({
+    let wrote = await dbClient().execute({
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?)',
       args: [rtcId, targetId, 'rtc_signal', JSON.stringify(fullRow), now]
     }).then(() => true).catch(e => { console.warn('[rtc] event insert failed:', e && e.message); return false; });
     if (!wrote) {
-      wrote = await tursoClient().execute({
+      wrote = await dbClient().execute({
         sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
         args: [rtcId, targetId, 'rtc_signal', JSON.stringify(fullRow), now]
       }).then(() => true).catch(e => { console.warn('[rtc] event insert retry failed:', e && e.message); return false; });
     }
     if (Math.random() < 0.1) {
-      supervisedTask(c, tursoClient().execute({
+      supervisedTask(c, dbClient().execute({
         sql: 'DELETE FROM ps_events WHERE created_at < ? AND kind = ?',
         args: [now - 60000, 'rtc_signal'],
       }), 'rtc.event-cleanup');
@@ -84,8 +84,8 @@ app.get('/api/rtc/signals', requireAuth, async (c) => {
   const myId = c.get('userId');
   const now = nowMs();
 
-  if (isTursoConfigured()) {
-    const rs = await tursoClient().execute({
+  if (isDbConfigured()) {
+    const rs = await dbClient().execute({
       sql: 'SELECT id, data, created_at FROM ps_events WHERE user_id = ? AND kind = ? AND created_at > ? AND created_at >= ? ORDER BY created_at ASC LIMIT 50',
       args: [myId, 'rtc_signal', since, now - 45000]
     }).catch(() => ({ rows: [] }));

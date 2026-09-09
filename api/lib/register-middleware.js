@@ -6,18 +6,18 @@
 import { app } from './app.js';
 import { applyCors, isAllowedCorsOrigin, isDefaultJwtSecret, isMissingFieldKey, isProductionRequest, loadConfig } from './config.js';
 import { AppError, ErrorCodes, errorBody, handleError, handleNotFound } from './errors.js';
-import { isSupabaseConfigured } from './store-turso.js';
+import { isSupabaseConfigured } from './store.js';
 import { omniMiddleware } from './omni-engine.js';
 import { globalRateLimit } from './ratelimit.js';
 import { accessLog, requestId } from './resilience.js';
 import { applySecurityHeaders } from './security-headers.js';
-import { isTursoConfigured, runWithTursoRequestScope } from './store-turso.js';
+import { isDbConfigured, runWithDbRequestScope } from './store.js';
 
 app.onError(handleError);
 app.notFound(handleNotFound);
 
-// Must be outermost: every request gets a request-scoped libSQL client.
-app.use('*', (c, next) => runWithTursoRequestScope(next));
+// Must be outermost: every request gets a request-scoped store client.
+app.use('*', (c, next) => runWithDbRequestScope(next));
 
 // Unique cryptographic trace at API entry. A valid client-generated id is
 // preserved end-to-end; otherwise the Worker creates one.
@@ -66,7 +66,7 @@ app.use('*', async (c, next) => {
     }
     // Production must never acknowledge a write that exists only in an
     // isolate, or store protected PII without its field-encryption key.
-    if (!isTursoConfigured() || isMissingFieldKey()) {
+    if (!isDbConfigured() || isMissingFieldKey()) {
       return c.json(errorBody(ErrorCodes.UPSTREAM_UNAVAILABLE, 'Durable encrypted storage is not configured.', {
         requestId: c.get('requestId'), correlationId: c.get('correlationId'),
       }), 503);

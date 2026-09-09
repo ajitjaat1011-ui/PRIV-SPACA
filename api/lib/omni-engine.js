@@ -63,7 +63,7 @@ const BASE_LIMITS = Object.freeze({
 });
 
 const DOMAIN_LIMITS = Object.freeze({
-  'database.turso': 12,
+  'database': 12,
   'database.github': 2,
   'database.fallback': 2,
   'media.cloudinary': 2,

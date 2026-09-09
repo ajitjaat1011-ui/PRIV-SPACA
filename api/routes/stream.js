@@ -13,7 +13,7 @@ import { loadConfig } from '../lib/config.js';
 import { fetchPrimaryDatabase } from '../lib/db.js';
 import { _eventQueues, _eventSubscribers } from '../lib/events.js';
 import { requireAuth } from '../lib/middleware.js';
-import { isTursoPrimary, tursoClient, tursoEnsure } from '../lib/store-turso.js';
+import { isDbPrimary, dbClient, dbEnsure } from '../lib/store.js';
 import { supervisedTask } from '../lib/omni-engine.js';
 import { ErrorCodes, errorBody } from '../lib/errors.js';
 
@@ -94,12 +94,12 @@ app.get('/api/stream', async (c) => {
       const heartbeat = setInterval(() => { try { send(': ping\n\n'); } catch (_) {} }, 10000);
       let lastSeenTs = Date.now() - 1500;
       const sentIds = new Set();
-      const primaryPoller = isTursoPrimary() ? setInterval(async () => {
+      const primaryPoller = isDbPrimary() ? setInterval(async () => {
         if (sub.closed) return;
         try {
           let rows = [];
-          await tursoEnsure();
-          const rs = await tursoClient().execute({
+          await dbEnsure();
+          const rs = await dbClient().execute({
             sql: `SELECT id, kind, data, created_at FROM ps_events
                   WHERE (user_id = ? OR user_id = ?) AND created_at > ?
                   ORDER BY created_at ASC LIMIT 30`,
@@ -128,7 +128,7 @@ app.get('/api/stream', async (c) => {
           }
           if (Math.random() < 0.03) {
             const oldTs = Date.now() - 300_000;
-            supervisedTask(c, tursoClient().execute({
+            supervisedTask(c, dbClient().execute({
               sql: 'DELETE FROM ps_events WHERE created_at < ?', args: [oldTs],
             }), 'stream.event-cleanup');
           }

@@ -11,21 +11,21 @@ import { fetchDatabase, saveDatabase } from '../lib/db.js';
 import { wrapUnexpected } from '../lib/errors.js';
 import { nowMs, sanitizeUser } from '../lib/helpers.js';
 import { requireAuth } from '../lib/middleware.js';
-import { fetchTursoNotifications, isTursoConfigured, tursoClearNotificationsForUser, tursoUpsertNotifications } from '../lib/store-turso.js';
+import { fetchNotifications, isDbConfigured, clearNotificationsForUser, upsertNotifications } from '../lib/store.js';
 
 // ---------- Notifications ----------
 app.get('/api/notifications', requireAuth, async (c) => {
   const myId = c.get('userId');
   // perf: same independent-round-trips pattern as /api/messages — run the
-  // db fetch and the Turso notifications fetch concurrently instead of
+  // db fetch and the store notifications fetch concurrently instead of
   // sequentially since neither depends on the other's result.
-  const [db, tursoNotifs] = await Promise.all([
+  const [db, storeNotifs] = await Promise.all([
     fetchDatabase(),
-    isTursoConfigured() ? fetchTursoNotifications(myId) : Promise.resolve(null),
+    isDbConfigured() ? fetchNotifications(myId) : Promise.resolve(null),
   ]);
   const sourceUsers = db.users || [];
-  const mine = isTursoConfigured()
-    ? tursoNotifs
+  const mine = isDbConfigured()
+    ? storeNotifs
     : (db.notifications || []).filter(n => n.userId === myId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
   const enriched = mine.map(n => {
     const author = sourceUsers.find(u => u.id === n.fromUserId);
@@ -47,7 +47,7 @@ app.post('/api/notifications/seen', requireAuth, async (c) => {
   });
   if (n) {
     await saveDatabase(db, true);
-    if (isTursoConfigured()) await tursoUpsertNotifications(touched);
+    if (isDbConfigured()) await upsertNotifications(touched);
   }
   return c.json({ ok: true, updated: n });
   } catch (e) { throw wrapUnexpected(e); }
@@ -60,7 +60,7 @@ app.post('/api/notifications/clear', requireAuth, async (c) => {
   db.notifications = (db.notifications || []).filter(n => n.userId !== c.get('userId'));
   if (before !== db.notifications.length) {
     await saveDatabase(db, false, { skipSecondarySync: true });
-    if (isTursoConfigured()) await tursoClearNotificationsForUser(c.get('userId'));
+    if (isDbConfigured()) await clearNotificationsForUser(c.get('userId'));
   }
   return c.json({ ok: true, removed: before - db.notifications.length });
   } catch (e) { throw wrapUnexpected(e); }

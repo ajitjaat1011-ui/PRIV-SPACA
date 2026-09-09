@@ -1,11 +1,11 @@
 /**
  * PRIV SPACA — Library — store-supabase
  *
- * v182 — Supabase/Postgres as the primary store, exposed through the exact
- * same libsql-shaped interface the rest of the API already uses
- * ({ execute, batch, executeMultiple }):
+ * Supabase/Postgres as the primary store, exposed through the store-client
+ * interface the rest of the API already uses ({ execute, batch,
+ * executeMultiple }):
  *
- *   const client = await tursoClient();
+ *   const client = await dbClient();
  *   const rs = await client.execute({ sql, args });      // single statement
  *   const out = await client.batch([...]);               // sequential batch
  *   await client.executeMultiple(ddl);                   // bootstrap DDL
@@ -21,7 +21,7 @@
  *   - PRAGMA table_info(x)      -> information_schema query
  *   - INSERT OR IGNORE          -> INSERT ... ON CONFLICT DO NOTHING
  *
- * Result shape mirrors libsql: { rows, columns, changes, rowsAffected,
+ * Result shape: { rows, columns, changes, rowsAffected,
  * lastInsertRowid } (lastInsertRowid is always null: every ps_* id is an
  * app-generated uid).
  */
@@ -159,9 +159,9 @@ function bindPlaceholders(sql) {
   return { sql: out, count: n };
 }
 
-// PRAGMA table_info(name) -> information_schema rows with libsql column
+// PRAGMA table_info(name) -> information_schema rows with the column
 // names (cid, name, type, pk). The app only reads `name`; the rest is
-// provided for parity with the libsql result shape.
+// provided for parity with the result shape callers expect.
 function translatePragma(sql) {
   const m = sql.match(/^\s*PRAGMA\s+table_info\s*\(\s*["'`]?([a-zA-Z0-9_]+)["'`]?\s*\)\s*;?\s*$/i);
   if (!m) return null;
@@ -301,14 +301,14 @@ export function translateSql(sql) {
   return bindPlaceholders(out).sql;
 }
 
-// ---------- libsql-shaped client ----------
+// ---------- store client ----------
 
 export function isSupabaseConfigured() {
   return !!(cfg.SUPABASE_URL && cfg.SUPABASE_DB_URL);
 }
 
 function shapeResult(q) {
-  // libsql ResultSets expose BOTH `changes` and `rowsAffected` (same value);
+  // the client surface exposes BOTH `changes` and `rowsAffected` (same value);
   // the app's CAS path reads rowsAffected, so provide both.
   const changes = q.rowCount ? parseInt(q.rowCount, 10) || 0 : 0;
   return {
@@ -344,7 +344,7 @@ async function runOne(sql, args = []) {
   }
 }
 
-// libsql `executeMultiple` returns an array with the LAST statement's result
+// `executeMultiple` returns an array with the LAST statement's result
 // at the end plus a `results` array; the app only checks truthiness here.
 // When the script has no placeholders it goes out as ONE pg simple-protocol
 // round trip (node-pg executes a parameterless string query with all its
@@ -388,7 +388,7 @@ async function runMultiple(sql) {
   return { rows: last.rows, changes: last.changes, lastInsertRowid: last.lastInsertRowid, results };
 }
 
-export function createSupabaseLibsqlClient() {
+export function createSupabaseStoreClient() {
   return {
     __supabase: true,
     async execute(statement) {
@@ -397,7 +397,7 @@ export function createSupabaseLibsqlClient() {
       return runOne(statement.sql, statement.args);
     },
     async batch(statements) {
-      // libsql returns a plain ARRAY of result sets (callers do batchRs[0]);
+      // returns a plain ARRAY of result sets (callers do batchRs[0]);
       // a .results self-reference is kept for the off-chance of the other shape.
       const results = [];
       for (const st of statements || []) {

@@ -7,7 +7,7 @@
  */
 
 import { nowMs } from './helpers.js';
-import { isTursoConfigured, tursoUpsertUserFeeds } from './store-turso.js';
+import { isDbConfigured, upsertUserFeeds } from './store.js';
 
 // ---------- Hybrid Fan-out Feed (DesignGurus Instagram optimization) ----------
 export const FEED_FANOUT_THRESHOLD = 5000;
@@ -18,7 +18,7 @@ export async function getFollowerCount(userId, db) {
 }
 
 export async function fanoutPostToFollowers(post, db) {
-  if (!isTursoConfigured()) return;
+  if (!isDbConfigured()) return;
   const authorId = post.userId;
   const followerCount = await getFollowerCount(authorId, db);
   
@@ -38,5 +38,5 @@ export async function fanoutPostToFollowers(post, db) {
     createdAt: post.createdAt || nowMs()
   }));
   
-  await tursoUpsertUserFeeds(feedRows);
+  await upsertUserFeeds(feedRows);
 }

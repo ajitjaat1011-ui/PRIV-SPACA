@@ -15,7 +15,7 @@ import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { canAccessRoom, dmRoomFor, normalizeRoomId } from '../lib/rooms.js';
-import { fetchTursoMessages, isTursoConfigured, tursoClient, tursoHealNotificationColumns, tursoMarkRoomRead, tursoMarkRoomsRead, tursoRefreshDmIndexForOwners, tursoSetMessageReaction, tursoUpsertMessageReceipts, tursoUpsertMessages } from '../lib/store-turso.js';
+import { fetchMessages, isDbConfigured, dbClient, healNotificationColumns, markRoomRead, markRoomsRead, refreshDmIndexForOwners, setMessageReaction, upsertMessageReceipts, upsertMessages } from '../lib/store.js';
 
 // ---------- Messages ----------
 app.get('/api/messages', requireAuth, async (c) => {
@@ -28,7 +28,7 @@ app.get('/api/messages', requireAuth, async (c) => {
   // Database/user hydration and the indexed page query are independent.
   let [db, page] = await Promise.all([
     fetchDatabase(),
-    fetchTursoMessages(roomId, now, { beforeTimestamp, sinceTimestamp, limit }),
+    fetchMessages(roomId, now, { beforeTimestamp, sinceTimestamp, limit }),
   ]);
   const dbRoomMessages = () => {
     let rows = db.messages
@@ -141,7 +141,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
     db.messages.push(msg);
 
     const enriched = { ...msg, author: snap || { id: myId, displayName: 'Member', username: 'member' } };
-    const tursoNotifs = [];
+    const notifyRows = [];
     if (roomId.startsWith('dm:')) {
       const parts = roomId.slice(3).split(':');
       parts.filter(uid2 => uid2 !== myId).forEach(recip => {
@@ -149,18 +149,18 @@ app.post('/api/messages/send', requireAuth, async (c) => {
         // For E2E messages, server never sees plaintext → push preview is generic
         const previewText = isEncrypted ? '🔒 Encrypted message' : (ct || (ci ? '📷 Photo' : ''));
         const notif = pushNotification(db, recip, 'message', myId, { text: previewText.slice(0, 80), roomId });
-        if (notif) tursoNotifs.push(notif);
+        if (notif) notifyRows.push(notif);
       });
     } else {
       _broadcastEvent('new_message', { roomId, message: enriched }, myId);
     }
-    if (isTursoConfigured()) {
+    if (isDbConfigured()) {
       const stmts = [];
       stmts.push({
         sql: 'INSERT INTO ps_messages (id, room_id, user_id, created_at, deleted_at, updated_at, data_json) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET deleted_at=excluded.deleted_at, updated_at=excluded.updated_at, data_json=excluded.data_json',
         args: [msg.id, msg.roomId, msg.userId, Number(msg.createdAt||0), msg.deletedAt?Number(msg.deletedAt):null, nowMs(), JSON.stringify(msg)]
       });
-      for (const n of tursoNotifs) {
+      for (const n of notifyRows) {
         stmts.push({
           // updated_at is NOT NULL; omitting it aborted the whole batch, which
           // also rolled back the ps_dm_index upsert below (empty inbox preview).
@@ -170,7 +170,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
       }
       if (roomId.startsWith('dm:')) {
         const ownerIds = roomId.slice(3).split(':').filter(Boolean);
-        // Preview text mirrors fetchTursoDmIndex()/tursoRefreshDmIndexForOwners().
+        // Preview text mirrors fetchDmIndex()/refreshDmIndexForOwners().
         let previewText;
         if (isEncrypted) previewText = '🔒 Encrypted message';
         else if (msg.storyReply) previewText = 'Replied to a story';
@@ -179,7 +179,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
         for (const oid of ownerIds) {
           const peerId = oid === myId ? (ownerIds.find(x => x !== myId) || myId) : myId;
           // One row per side of the conversation. data_json MUST carry
-          // peerUserId - fetchTursoDmIndex() drops any row without it, which
+          // peerUserId - fetchDmIndex() drops any row without it, which
           // is why the inbox showed no preview and had nothing to sort by.
           // fromMe is per-owner: true for the sender, false for the recipient.
           const dmPreview = {
@@ -250,7 +250,7 @@ app.post('/api/messages/send', requireAuth, async (c) => {
       });
       const [persisted] = await Promise.all([
         saveDatabaseVerified(db, d => (d.messages || []).some(m => m.id === msg.id), 4, { skipSecondarySync: true }),
-        tursoClient().batch(stmts, 'write').catch(async (e) => {
+        dbClient().batch(stmts, 'write').catch(async (e) => {
           const emsg = (e && e.message) || '';
           console.warn('[send] batched write failed:', emsg);
           // A database created before post_id/comment_id existed rejects the
@@ -258,13 +258,13 @@ app.post('/api/messages/send', requireAuth, async (c) => {
           // ps_dm_index upsert that drives the inbox preview) down with it.
           // Patch the columns once, then retry the batch before falling back.
           if (/no column named (post_id|comment_id)/i.test(emsg)) {
-            const healed = await tursoHealNotificationColumns();
+            const healed = await healNotificationColumns();
             if (healed) {
-              try { return await tursoClient().batch(stmts, 'write'); }
+              try { return await dbClient().batch(stmts, 'write'); }
               catch (e2) { console.warn('[send] retry after heal failed:', e2 && e2.message); }
             }
           }
-          return tursoUpsertMessages([msg]).catch(() => {});
+          return upsertMessages([msg]).catch(() => {});
         })
       ]);
       if (isPersist() && !persisted) return c.json({ error: 'Message storage unavailable. Please retry.' }, 503);
@@ -293,7 +293,7 @@ app.post('/api/messages/reaction', requireAuth, async (c) => {
     message.reactions = message.reactions.filter(r => !(r && r.userId === myId && r.emoji === emoji));
     if (active) message.reactions.push({ userId: myId, emoji, createdAt: nowMs() });
     await saveDatabase(db, false, { skipSecondarySync: true });
-    if (isTursoConfigured()) await tursoSetMessageReaction(message.id, myId, emoji, active);
+    if (isDbConfigured()) await setMessageReaction(message.id, myId, emoji, active);
     const event = { roomId, messageId: message.id, userId: myId, emoji, active };
     if (roomId.startsWith('dm:')) {
       roomId.slice(3).split(':').filter(id => id && id !== myId).forEach(id => _pushEvent(id, 'message_reaction', event));
@@ -315,8 +315,8 @@ app.post('/api/messages/receipt', requireAuth, async (c) => {
     const rows = (db.messages || []).filter(m => ids.includes(m.id) && m.roomId === roomId && m.userId !== myId);
     if (!rows.length) return c.json({ ok: true, count: 0, state: stateName });
     const validIds = rows.map(m => m.id);
-    if (isTursoConfigured()) await tursoUpsertMessageReceipts(myId, validIds, stateName, at);
-    if (stateName === 'read' && isTursoConfigured()) await tursoMarkRoomRead(myId, roomId, at);
+    if (isDbConfigured()) await upsertMessageReceipts(myId, validIds, stateName, at);
+    if (stateName === 'read' && isDbConfigured()) await markRoomRead(myId, roomId, at);
     for (const authorId of new Set(rows.map(m => m.userId).filter(Boolean))) {
       _pushEvent(authorId, 'message_receipt', { roomId, messageIds: validIds, userId: myId, state: stateName, at });
     }
@@ -335,14 +335,14 @@ app.post('/api/messages/delete', requireAuth, async (c) => {
     if (m.deletedAt) return c.json({ ok: true, undoUntil: Number(m.deletedAt) + 30 * 24 * 3600 * 1000 });
     m.deletedAt = nowMs();
     await saveDatabase(db, false, { skipSecondarySync: true });
-    if (isTursoConfigured()) {
-      await tursoUpsertMessages([m]);
-      await tursoClient().execute({
+    if (isDbConfigured()) {
+      await upsertMessages([m]);
+      await dbClient().execute({
         sql: `UPDATE ps_conversation_state SET unread_count=MAX(0, unread_count - 1), updated_at=?
               WHERE room_id=? AND owner_user_id!=? AND last_read_at < ? AND unread_count > 0`,
         args: [nowMs(), m.roomId, m.userId, Number(m.createdAt || 0)],
       }).catch(() => {});
-      if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
+      if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await refreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
     }
     return c.json({ ok: true, undoUntil: m.deletedAt + 30 * 24 * 3600 * 1000 });
   } catch (e) { console.error('[delmsg]', e); throw wrapUnexpected(e, 'Delete failed. Please try again.'); }
@@ -358,14 +358,14 @@ app.post('/api/messages/restore', requireAuth, async (c) => {
     if (!m.deletedAt) return c.json({ ok: true });
     delete m.deletedAt;
     await saveDatabase(db, false, { skipSecondarySync: true });
-    if (isTursoConfigured()) {
-      await tursoUpsertMessages([m]);
-      await tursoClient().execute({
+    if (isDbConfigured()) {
+      await upsertMessages([m]);
+      await dbClient().execute({
         sql: `UPDATE ps_conversation_state SET unread_count=unread_count + 1, updated_at=?
               WHERE room_id=? AND owner_user_id!=? AND last_read_at < ?`,
         args: [nowMs(), m.roomId, m.userId, Number(m.createdAt || 0)],
       }).catch(() => {});
-      if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await tursoRefreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
+      if (typeof m.roomId === 'string' && m.roomId.startsWith('dm:')) await refreshDmIndexForOwners(db, m.roomId.slice(3).split(':').filter(Boolean));
     }
     return c.json({ ok: true });
   } catch (e) { console.error('[restoremsg]', e); throw wrapUnexpected(e, 'Restore failed. Please try again.'); }
@@ -443,7 +443,7 @@ app.post('/api/messages/read', requireAuth, async (c) => {
     // whose id contains their user id.
     if (!canAccessRoom(normalizeRoomId(roomId, myId), myId, null)) return c.json({ error: 'Forbidden' }, 403);
     const ts = Number(body.at) > 0 ? Number(body.at) : nowMs();
-    if (isTursoConfigured()) await tursoMarkRoomRead(myId, roomId, ts);
+    if (isDbConfigured()) await markRoomRead(myId, roomId, ts);
     return c.json({ ok: true, roomId, at: ts });
   } catch (e) { throw wrapUnexpected(e); }
 });
@@ -461,7 +461,7 @@ app.post('/api/messages/read-batch', requireAuth, async (c) => {
     if (!receipts.length) return c.json({ ok: true, count: 0 });
     const allowed = receipts.every(({ roomId }) => canAccessRoom(normalizeRoomId(roomId, myId), myId, null));
     if (!allowed) return c.json({ error: 'Forbidden' }, 403);
-    if (isTursoConfigured()) await tursoMarkRoomsRead(myId, receipts);
+    if (isDbConfigured()) await markRoomsRead(myId, receipts);
     return c.json({ ok: true, count: receipts.length, at: nowMs() });
   } catch (e) { throw wrapUnexpected(e); }
 });

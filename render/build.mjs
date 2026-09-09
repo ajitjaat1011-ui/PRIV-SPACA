@@ -13,8 +13,8 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
 const tmpApi = join(repoRoot, '.tmp-api-node');
-// CJS output: the dep tree (via @libsql/client -> ws) contains CJS modules
-// whose dynamic require() breaks under --format=esm in Node.
+// CJS output: the dep tree (pg and friends) contains CJS modules whose
+// dynamic require() breaks under --format=esm in Node.
 const outfile = join(here, 'dist', 'api.bundle.cjs');
 
 rmSync(tmpApi, { recursive: true, force: true });

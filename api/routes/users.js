@@ -17,7 +17,7 @@ import { cleanNoteMusic } from '../lib/media.js';
 import * as S from '../lib/schemas.js';
 import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
-import { isSupabaseConfigured } from '../lib/store-turso.js';
+import { isSupabaseConfigured } from '../lib/store.js';
 import { gotrueDeleteUser } from '../lib/auth-supabase.js';
 import { verifyPassword } from '../lib/password.js';
 import { pickBody } from '../lib/validate.js';
@@ -26,7 +26,7 @@ import { b64url, clearSessionCookie, invalidateUserAuthCaches } from '../lib/aut
 import { canAccessRoom, normalizeRoomId } from '../lib/rooms.js';
 import { readPresence, readTypingState, setTypingState, touchPresence } from '../lib/realtime-store.js';
 import { normalizeDb } from '../lib/schema.js';
-import { fetchTursoDmIndex, fetchTursoUnreadCounts, isTursoConfigured, tursoClient, tursoUpsertUser, tursoUpsertUserFeeds } from '../lib/store-turso.js';
+import { fetchDmIndex, fetchUnreadCounts, isDbConfigured, dbClient, upsertUser, upsertUserFeeds } from '../lib/store.js';
 
 // ---------- User update ----------
 app.post('/api/user/update', requireAuth, async (c) => {
@@ -61,8 +61,8 @@ app.post('/api/user/update', requireAuth, async (c) => {
       if (['everyone','close_friends','private'].includes(cv)) user.cardVisibility = cv;
     }
     if (typeof isPrivate === 'boolean') user.isPrivate = isPrivate;
-    if (isTursoConfigured()) {
-      try { await tursoUpsertUser(user); }
+    if (isDbConfigured()) {
+      try { await upsertUser(user); }
       catch (e) {
         if (/unique|constraint/i.test(String(e && e.message))) return c.json({ error: 'Username taken' }, 409);
         throw e;
@@ -86,7 +86,7 @@ app.post('/api/user/vip/redeem', requireAuth, async (c) => {
     user.verified = true;
     user.verifiedAt = user.verifiedAt || nowMs();
     await saveDatabase(db, false);
-    if (isTursoConfigured()) await tursoUpsertUser(user);
+    if (isDbConfigured()) await upsertUser(user);
     return c.json({ ok: true, user: sanitizeUser(user, true) });
   } catch (e) { console.error('[vip/redeem]', e); throw wrapUnexpected(e, 'VIP activation failed. Please try again.'); }
 });
@@ -118,7 +118,7 @@ app.post('/api/user/close-friends', requireAuth, async (c) => {
     else set.add(targetId);
     me.closeFriends = Array.from(set).slice(0, 500);
     await saveDatabase(db, false);
-    if (isTursoConfigured()) await tursoUpsertUser(me);
+    if (isDbConfigured()) await upsertUser(me);
     return c.json({ ids: me.closeFriends, added: me.closeFriends.includes(targetId) });
   } catch (e) { console.error('[close-friends]', e); throw wrapUnexpected(e, 'Update failed. Please try again.'); }
 });
@@ -126,19 +126,19 @@ app.post('/api/user/close-friends', requireAuth, async (c) => {
 // ---------- Users list ----------
 app.get('/api/users', requireAuth, async (c) => {
   const myId = c.get('userId');
-  // perf: fetchDatabase() already reads ps_users + ps_posts fresh from Turso
+  // perf: fetchDatabase() already reads ps_users + ps_posts fresh from the store
   // (via a single batched read alongside ps_kv) and populates db.users /
   // db.posts from those exact same structured tables — no need for a
-  // separate fetchTursoMirror() re-read (removed; see below). The DM-index
-  // fetch (fetchTursoDmIndex) only needs myId, not db, so it's fully
+  // separate fetchMirror() re-read (removed; see below). The DM-index
+  // fetch (fetchDmIndex) only needs myId, not db, so it's fully
   // independent of the db fetch — run both concurrently instead of
   // sequentially to avoid paying two round trips back-to-back.
   // unreadByRoom is independent of both other fetches, so it joins the same
   // Promise.all rather than adding a third round trip.
-  const [db, tursoLastByPeer, unreadByRoom] = await Promise.all([
+  const [db, storeLastByPeer, unreadByRoom] = await Promise.all([
     fetchDatabase(),
-    isTursoConfigured() ? fetchTursoDmIndex(myId) : Promise.resolve(null),
-    isTursoConfigured() ? fetchTursoUnreadCounts(myId) : Promise.resolve({}),
+    isDbConfigured() ? fetchDmIndex(myId) : Promise.resolve(null),
+    isDbConfigured() ? fetchUnreadCounts(myId) : Promise.resolve({}),
   ]);
   const dmRoomId = (peerId) => 'dm:' + [myId, peerId].sort().join(':');
   const sourceUsers = db.users || [];
@@ -153,8 +153,8 @@ app.get('/api/users', requireAuth, async (c) => {
   const myOutgoingRequests = new Set((me && Array.isArray(me.sentFollowRequests) ? me.sentFollowRequests : []));
   const myIncomingRequests = new Set((me && Array.isArray(me.followRequests) ? me.followRequests : []));
   let lastByPeer = {};
-  if (isTursoConfigured()) {
-    lastByPeer = tursoLastByPeer;
+  if (isDbConfigured()) {
+    lastByPeer = storeLastByPeer;
   } else {
     for (const m of (db.messages || [])) {
       if (typeof m.roomId !== 'string' || !m.roomId.startsWith('dm:')) continue;
@@ -172,7 +172,7 @@ app.get('/api/users', requireAuth, async (c) => {
       }
     }
   }
-  const presenceRows = isTursoConfigured() ? await readPresence(sourceUsers.map(u => u.id), now - 45_000) : [];
+  const presenceRows = isDbConfigured() ? await readPresence(sourceUsers.map(u => u.id), now - 45_000) : [];
   const presenceByUser = new Map(presenceRows.map(p => [p.userId, p.at]));
   const list = sourceUsers
     .filter(u => !myBlocked.has(u.id) && !blockedMe.has(u.id))
@@ -255,7 +255,7 @@ app.post('/api/user/recovery-codes', requireAuth, async (c) => {
   const recovery = await makeRecoveryCodes();
   me.recoveryCodeHashes = recovery.hashes;
   me.recoveryCodesGeneratedAt = nowMs();
-  if (isTursoConfigured()) await tursoUpsertUser(me);
+  if (isDbConfigured()) await upsertUser(me);
   if (!(await saveDatabase(db, false))) return c.json({ error: 'Storage temporarily unavailable' }, 503);
   return c.json({ recoveryCodes: recovery.codes });
 });
@@ -338,7 +338,7 @@ app.post('/api/user/delete', requireAuth, async (c) => {
   for (const room of Object.keys(db.typing || {})) delete db.typing[room][myId];
   const saved = await saveDatabase(db, false);
   if (!saved) return c.json({ error: 'Storage temporarily unavailable' }, 503);
-  if (isTursoConfigured()) {
+  if (isDbConfigured()) {
     const postIds = [...deletedPostIds];
     const statements = [
       { sql: 'DELETE FROM ps_users WHERE id = ?', args: [myId] },
@@ -376,9 +376,9 @@ app.post('/api/user/delete', requireAuth, async (c) => {
       statements.push({ sql: 'UPDATE ps_messages SET data_json = ?, updated_at = ? WHERE id = ?', args: [JSON.stringify(message), rewriteAt, message.id] });
     }
     for (let offset = 0; offset < statements.length; offset += 50) {
-      await tursoClient().batch(statements.slice(offset, offset + 50), 'write');
+      await dbClient().batch(statements.slice(offset, offset + 50), 'write');
     }
-    await Promise.all(db.users.filter(u => usersWithReferences.has(u.id)).map(u => tursoUpsertUser(u)));
+    await Promise.all(db.users.filter(u => usersWithReferences.has(u.id)).map(u => upsertUser(u)));
   }
   // v181 (Supabase): also delete the GoTrue auth user (best-effort — the
   // app-side PII is already gone; a leftover GoTrue row is unrecoverable
@@ -395,7 +395,7 @@ app.post('/api/user/delete', requireAuth, async (c) => {
 app.post('/api/user/heartbeat', requireAuth, async (c) => {
   const myId = c.get('userId');
   const at = nowMs();
-  if (isTursoConfigured()) await touchPresence(myId, at);
+  if (isDbConfigured()) await touchPresence(myId, at);
   return c.json({ ok: true, at });
 });
 
@@ -423,7 +423,7 @@ app.post('/api/user/typing', requireAuth, async (c) => {
   const roomId = normalizeRoomId(body.roomId, myId);
   const db = await fetchDatabase();
   if (!canAccessRoom(roomId, myId, db)) return c.json({ error: 'Forbidden' }, 403);
-  if (isTursoConfigured()) await setTypingState(roomId, myId, true, 5000);
+  if (isDbConfigured()) await setTypingState(roomId, myId, true, 5000);
   const payload = { roomId, userId: myId, user: sanitizeUser(db.users.find(u => u.id === myId)) };
   const recipients = roomId.startsWith('dm:')
     ? roomId.slice(3).split(':').filter(id => id && id !== myId)
@@ -438,7 +438,7 @@ app.get('/api/user/typing', requireAuth, async (c) => {
   if (!roomId) return c.json({ error: 'roomId required' }, 400);
   const db = await fetchDatabase();
   if (!canAccessRoom(roomId, myId, db)) return c.json({ error: 'Forbidden' }, 403);
-  const rows = isTursoConfigured() ? await readTypingState(roomId) : [];
+  const rows = isDbConfigured() ? await readTypingState(roomId) : [];
   const typing = rows.filter(row => row.userId !== myId)
     .map(row => {
       const u = db.users.find(x => x.id === row.userId);
@@ -470,11 +470,11 @@ app.post('/api/user/conversation', requireAuth, async (c) => {
     prefs.updatedAt = nowMs();
     me.conversationPrefs[peer.id] = prefs;
     await saveDatabase(db, false, { skipSecondarySync: true });
-    if (isTursoConfigured()) {
-      await tursoUpsertUser(me);
+    if (isDbConfigured()) {
+      await upsertUser(me);
       if (body.action === 'unread' && enabled) {
         const roomId = 'dm:' + [myId, peer.id].sort().join(':');
-        await tursoClient().execute({
+        await dbClient().execute({
           sql: `INSERT INTO ps_conversation_state (owner_user_id, room_id, unread_count, last_message_at, last_read_at, updated_at)
                 VALUES (?, ?, 1, 0, 0, ?)
                 ON CONFLICT(owner_user_id, room_id) DO UPDATE SET unread_count=MAX(1, ps_conversation_state.unread_count), updated_at=excluded.updated_at`,
@@ -507,9 +507,9 @@ app.post('/api/user/follow', requireAuth, async (c) => {
     if (!target.followRequests.includes(myId)) target.followRequests.push(myId);
     if (!me.sentFollowRequests.includes(targetId)) me.sentFollowRequests.push(targetId);
     await saveDatabase(db, false);
-    if (isTursoConfigured()) {
-      await tursoUpsertUser(me);
-      await tursoUpsertUser(target);
+    if (isDbConfigured()) {
+      await upsertUser(me);
+      await upsertUser(target);
     }
     _pushEvent(targetId, 'follow_request', { fromUserId: myId, fromSnapshot: sanitizeUser(me) });
     return c.json({ ok: true, requested: true, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers, followRequestIds: target.followRequests });
@@ -520,13 +520,13 @@ app.post('/api/user/follow', requireAuth, async (c) => {
   if (!target.followers.includes(myId)) target.followers.push(myId);
   pushNotification(db, targetId, 'follow', myId);
   await saveDatabase(db, false);
-  if (isTursoConfigured()) {
-    await tursoUpsertUser(me);
-    await tursoUpsertUser(target);
+  if (isDbConfigured()) {
+    await upsertUser(me);
+    await upsertUser(target);
     // Fan-out on follow: backfill the followed user's recent posts
     // into the follower's feed table so they see content immediately.
     try {
-      const tc = tursoClient();
+      const tc = dbClient();
       const recentPosts = await tc.execute({
         sql: `SELECT id, created_at FROM ps_posts WHERE user_id = ? AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT 50`,
         args: [targetId]
@@ -535,7 +535,7 @@ app.post('/api/user/follow', requireAuth, async (c) => {
         const feedRows = recentPosts.rows.map(r => ({
           userId: myId, postId: r.id, createdAt: Number(r.created_at) || nowMs()
         }));
-        await tursoUpsertUserFeeds(feedRows);
+        await upsertUserFeeds(feedRows);
       }
     } catch (_) { /* best-effort; don't fail the follow */ }
   }
@@ -557,9 +557,9 @@ app.post('/api/user/unfollow', requireAuth, async (c) => {
   me.following = (me.following || []).filter(id => id !== targetId);
   target.followers = (target.followers || []).filter(id => id !== c.get('userId'));
   await saveDatabase(db, false);
-  if (isTursoConfigured()) {
-    await tursoUpsertUser(me);
-    await tursoUpsertUser(target);
+  if (isDbConfigured()) {
+    await upsertUser(me);
+    await upsertUser(target);
   }
   return c.json({ ok: true, requested: false, cancelledRequest, following: me.following.length, followers: target.followers.length, followingIds: me.following, targetFollowerIds: target.followers });
 });
@@ -596,12 +596,12 @@ app.post('/api/user/follow-requests/respond', requireAuth, async (c) => {
     if (!requester.following.includes(me.id)) requester.following.push(me.id);
   }
   await saveDatabase(db, false);
-  if (isTursoConfigured()) {
-    await tursoUpsertUser(me);
-    await tursoUpsertUser(requester);
+  if (isDbConfigured()) {
+    await upsertUser(me);
+    await upsertUser(requester);
     if (action === 'accept') {
       try {
-        const tc = tursoClient();
+        const tc = dbClient();
         const recentPosts = await tc.execute({
           sql: `SELECT id, created_at FROM ps_posts WHERE user_id = ? AND (story IS NULL OR story = 0) ORDER BY created_at DESC LIMIT 50`,
           args: [me.id]
@@ -610,7 +610,7 @@ app.post('/api/user/follow-requests/respond', requireAuth, async (c) => {
           const feedRows = recentPosts.rows.map(r => ({
             userId: requesterId, postId: r.id, createdAt: Number(r.created_at) || nowMs()
           }));
-          await tursoUpsertUserFeeds(feedRows);
+          await upsertUserFeeds(feedRows);
         }
       } catch (_) {}
     }
@@ -640,9 +640,9 @@ app.post('/api/user/block', requireAuth, async (c) => {
   me.followers = (me.followers || []).filter(id => id !== targetId);
   db.notifications = (db.notifications || []).filter(n => !((n.userId === myId && n.fromUserId === targetId) || (n.userId === targetId && n.fromUserId === myId)));
   await saveDatabase(db, false);
-  if (isTursoConfigured()) {
-    await tursoUpsertUser(me);
-    await tursoUpsertUser(target);
+  if (isDbConfigured()) {
+    await upsertUser(me);
+    await upsertUser(target);
   }
   return c.json({ ok: true });
   } catch (e) { throw wrapUnexpected(e); }
@@ -656,7 +656,7 @@ app.post('/api/user/unblock', requireAuth, async (c) => {
   if (!me) return c.json({ error: 'Not found' }, 404);
   me.blocked = (me.blocked || []).filter(id => id !== targetId);
   await saveDatabase(db, false);
-  if (isTursoConfigured()) await tursoUpsertUser(me);
+  if (isDbConfigured()) await upsertUser(me);
   return c.json({ ok: true });
 });
 

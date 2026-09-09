@@ -24,8 +24,6 @@ export const cfg = {
   // or still the legacy default, so deploys without JWT_SECRET set fail closed.
   JWT_SECRET: '',
   GITHUB_PAT: '',
-  TURSO_DATABASE_URL: '',
-  TURSO_AUTH_TOKEN: '',
   GH_REPO: 'ajitjaat1011-ui/PRIV-SPACA',
   GH_BRANCH: 'data',
   VAPID_PUBLIC: 'BG5msm1YiW_5l5N2ZNAvz5CkzQDGchg99ZSpkXVhXb4mm70X8vPPZs_7lrsaDXtvPns7QloRkh40vY4J5O0pqlI',
@@ -115,8 +113,6 @@ export function loadConfig(env) {
   if (env.PS_BASE_PATH) cfg.PS_BASE_PATH = String(env.PS_BASE_PATH);
   if (env.PS_PUBLIC_BASE) cfg.PS_PUBLIC_BASE = String(env.PS_PUBLIC_BASE);
   if (env.GITHUB_PAT) cfg.GITHUB_PAT = env.GITHUB_PAT;
-  if (env.TURSO_DATABASE_URL) cfg.TURSO_DATABASE_URL = String(env.TURSO_DATABASE_URL).trim();
-  if (env.TURSO_AUTH_TOKEN) cfg.TURSO_AUTH_TOKEN = String(env.TURSO_AUTH_TOKEN).trim();
   if (env.GH_REPO) cfg.GH_REPO = env.GH_REPO;
   if (env.GH_BRANCH) cfg.GH_BRANCH = env.GH_BRANCH;
   if (env.VAPID_PUBLIC_KEY) cfg.VAPID_PUBLIC = env.VAPID_PUBLIC_KEY;

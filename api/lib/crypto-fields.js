@@ -6,9 +6,9 @@
  * THREAT MODEL — what this does and does not buy us.
  *
  * This protects against someone who obtains the DATABASE but not the Worker's
- * secrets: a leaked Turso token, a stolen backup, a support person browsing
+ * secrets: a leaked database credential, a stolen backup, a support person browsing
  * rows, a misconfigured replica. That is the realistic breach for this app,
- * because the Turso token is a long-lived bearer credential that has already
+ * because the database credential is a long-lived bearer credential that has already
  * been copy-pasted into handoff notes.
  *
  * It does NOT protect against an attacker who has the Worker's environment,

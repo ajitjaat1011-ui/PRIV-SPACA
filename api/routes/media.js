@@ -15,7 +15,7 @@ import { body as vbody } from '../lib/validate.js';
 import { requireAuth } from '../lib/middleware.js';
 import { wrapUnexpected } from '../lib/errors.js';
 import { omniFetch, withFaultDomain } from '../lib/omni-engine.js';
-import { isSupabaseConfigured, tursoClient } from '../lib/store-turso.js';
+import { isSupabaseConfigured, dbClient } from '../lib/store.js';
 
 // ---------- Supabase media (v181) ----------
 // In Supabase mode, media lives in the ps_media bytea table and is served
@@ -33,8 +33,8 @@ function supabaseMediaUrl(c, objectId) {
 }
 
 async function supabaseStoreMedia(c, { objectId, userId, mime, size, b64, kind }) {
-  const turso = tursoClient();
-  await turso.execute({
+  const tclient = dbClient();
+  await tclient.execute({
     sql: `INSERT INTO ps_media (object_id, user_id, mime, size, data, kind, created_at)
           VALUES (?, ?, ?, ?, decode(?, 'base64'), ?, ?)
           ON CONFLICT (object_id) DO UPDATE SET data = excluded.data, mime = excluded.mime, size = excluded.size, kind = excluded.kind`,
@@ -201,7 +201,7 @@ async function _supabaseMediaResponse(c, objectId) {
     return c.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
   }
   try {
-    const rs = await tursoClient().execute({ sql: 'SELECT data, mime, size FROM ps_media WHERE object_id = ? LIMIT 1', args: [objectId] });
+    const rs = await dbClient().execute({ sql: 'SELECT data, mime, size FROM ps_media WHERE object_id = ? LIMIT 1', args: [objectId] });
     const row = rs.rows && rs.rows[0];
     if (!row || !row.data) return c.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
     const bytes = row.data;

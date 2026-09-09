@@ -231,7 +231,7 @@ export function param(c, name, schema = id) {
  * Reject values that are objects/arrays where a scalar is expected.
  *
  * This is the NoSQL-operator-injection shape (`{"password": {"$ne": null}}`).
- * Our storage is SQLite via parameterised libSQL calls, so operator injection
+ * Our storage is Postgres via parameterised queries, so operator injection
  * is not directly exploitable, but a nested object arriving where a string is
  * expected still means the caller is probing — treat it as invalid input.
  */

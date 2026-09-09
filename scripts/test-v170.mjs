@@ -197,12 +197,12 @@ await test('SSE streams do not consume general critical capacity', async () => {
 
 await test('distributed session revocation uses durable user state instead of isolate cache', async () => {
   const middleware = await readFile(new URL('../api/lib/middleware.js', import.meta.url), 'utf8');
-  const store = await readFile(new URL('../api/lib/store-turso.js', import.meta.url), 'utf8');
-  const durableBranch = middleware.indexOf('if (isTursoConfigured())');
+  const store = await readFile(new URL('../api/lib/store.js', import.meta.url), 'utf8');
+  const durableBranch = middleware.indexOf('if (isDbConfigured())');
   const localCacheBranch = middleware.indexOf('const cached = _authUserCache.get(p.uid)');
   assert.ok(durableBranch > 0 && localCacheBranch > durableBranch, 'durable session check must precede local cache');
-  assert.ok(middleware.includes('await fetchTursoUserById(p.uid)'), 'auth must read the durable structured user');
-  const userLookup = store.slice(store.indexOf('export async function fetchTursoUserById'), store.indexOf('export async function fetchTursoNotifications'));
+  assert.ok(middleware.includes('await fetchUserById(p.uid)'), 'auth must read the durable structured user');
+  const userLookup = store.slice(store.indexOf('export async function fetchUserById'), store.indexOf('export async function fetchNotifications'));
   assert.ok(!userLookup.includes("catch(() => ({ rows: [] }))"), 'auth storage failures must not collapse into not-found');
 });
 

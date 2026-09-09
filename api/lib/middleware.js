@@ -10,7 +10,7 @@ import { cfg } from './config.js';
 import { _AUTH_CACHE_TTL_MS, _authUserCache, authFromRequest } from './auth.js';
 import { fetchPrimaryDatabase } from './db.js';
 import { isAdminUser } from './helpers.js';
-import { fetchTursoUserById, isTursoConfigured } from './store-turso.js';
+import { fetchUserById, isDbConfigured } from './store.js';
 
 export async function requireAdmin(c, next) {
   const auth = await requireAuth(c, async () => {});
@@ -60,12 +60,12 @@ export async function requireAuth(c, next) {
   // cannot be authoritative: another isolate may have processed logout or a
   // password reset, and a stale Map would either accept the revoked cookie or
   // reject the freshly issued one for its full TTL. Read the small structured
-  // user row on every Turso-backed authenticated request and fail closed when
+  // user row on every store-backed authenticated request and fail closed when
   // that durable check is unavailable.
-  if (isTursoConfigured()) {
+  if (isDbConfigured()) {
     let durableUser;
     try {
-      durableUser = await fetchTursoUserById(p.uid);
+      durableUser = await fetchUserById(p.uid);
     } catch (error) {
       console.warn('[requireAuth] durable session check failed:', error && error.message);
       return c.json({ error: 'Authentication temporarily unavailable. Please retry.' }, 503);
@@ -82,8 +82,8 @@ export async function requireAuth(c, next) {
     if (!p.gotrue && Number(p.sv || 0) !== Number(durableUser.tokenVersion || 0)) {
       // A reset response can reach the client just before a different database
       // replica observes its new tokenVersion. Retry within this request's
-      // libSQL session before rejecting; a genuinely revoked token still fails.
-      try { durableUser = await fetchTursoUserById(p.uid) || durableUser; }
+      // store session before rejecting; a genuinely revoked token still fails.
+      try { durableUser = await fetchUserById(p.uid) || durableUser; }
       catch (_) { return c.json({ error: 'Authentication temporarily unavailable. Please retry.' }, 503); }
       if (Number(p.sv || 0) !== Number(durableUser.tokenVersion || 0)) {
         return c.json({ error: 'Session expired. Please sign in again.' }, 401);

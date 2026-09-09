@@ -74,7 +74,7 @@ function responseDetail(response) {
 }
 
 /** Anything that must never appear in a response body. */
-const LEAK_RE = /ECONNREFUSED|SQLITE|libsql|node_modules|\/home\/user|\.js:\d+|at \w+ \(|ReferenceError|TypeError|eyJhbGciOiJFZERTQS|password_hash|passwordHash|pinHash|recoveryCodeHashes/i;
+const LEAK_RE = /ECONNREFUSED|node_modules|\/home\/user|\.js:\d+|at \w+ \(|ReferenceError|TypeError|eyJhbGciOiJFZERTQS|password_hash|passwordHash|pinHash|recoveryCodeHashes/i;
 
 async function main() {
   console.log(`\nPRIV SPACA — v170 live security suite\ntarget: ${BASE}\n`);

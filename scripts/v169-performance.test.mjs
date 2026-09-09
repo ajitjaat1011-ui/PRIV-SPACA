@@ -6,7 +6,7 @@ import { blockedHostname, safePublicUrl, parsePreview } from '../api/routes/link
 const appSource = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const sw = fs.readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
 const style = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-const store = fs.readFileSync(new URL('../api/lib/store-turso.js', import.meta.url), 'utf8');
+const store = fs.readFileSync(new URL('../api/lib/store.js', import.meta.url), 'utf8');
 
 // Secure server-side preview parsing and SSRF boundaries.
 for (const host of ['localhost', '127.0.0.1', '10.2.3.4', '172.16.2.3', '192.168.1.2', '::1', 'fc00::1', '169.254.169.254']) {
