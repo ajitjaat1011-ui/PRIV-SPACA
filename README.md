@@ -96,6 +96,16 @@ the service worker and reloads forever. `scripts/build.mjs --bump` keeps
 `app.js`, `sw.js` and `index.html` in sync, and `npm run check` fails the build
 if they ever drift. See [`docs/security-operations.md`](docs/security-operations.md) for the full release, backup/restore, rotation and incident runbook.
 
+Release tokens may be numeric (`priv-spaca-v181`) or dotted (`priv-spaca-v1.0`,
+`priv-spaca-v93.4`); markers are compared as exact strings, and cache names
+track the release line (`priv-spaca-static-v1.0`). The **?v= asset counters**
+(style/app/auth/boot/vendor) are independent integers on the v1.0 line and are
+bumped +1 on every release because `_headers` serves `*.min.css`/`*.min.js`
+with `max-age=1y, immutable` — new bytes under an old ?v= would poison caches
+for a year. `scripts/build.mjs` handles release + counters together; every
+shell `?v=` in `sw.js` must equal the URL `index.html`/`app.js` actually
+requests (enforced by `npm run check` and `scripts/test-v170.mjs`).
+
 ## Environment variables
 
 Set these as **encrypted Cloudflare Pages secrets**, never in `wrangler.toml`.

@@ -28,10 +28,13 @@ npm run build
 git diff --check
 ```
 
-Run the live security suite against a local secret-configured test server, then against the immutable Pages deployment. The suite creates and permanently deletes its isolated account:
+Run the live security suite against a local secret-configured test server, then against the immutable Pages deployment. The suite creates and permanently deletes its isolated account. It reads the client version and expected ?v= asset keys from the local repo, so it tracks whichever release line is checked out (`PS_APP_VERSION` overrides the version header if you must impersonate a specific client):
 
 ```bash
-PS_APP_VERSION=priv-spaca-v170 node scripts/security-suite.mjs https://DEPLOYMENT.priv-spaca.pages.dev
+# local: dev server must run with JWT_SECRET and FIELD_KEY set
+node scripts/security-suite.mjs http://127.0.0.1:8787
+# deployed immutable URL
+node scripts/security-suite.mjs https://DEPLOYMENT.priv-spaca.pages.dev
 ```
 
 Deploy manually and record the immutable URL and commit:

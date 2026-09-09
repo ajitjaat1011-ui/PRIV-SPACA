@@ -24,6 +24,12 @@ const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
 
+// api/lib/store-supabase.js imports node-pg via a static Deno-style
+// 'npm:pg@8.11.3' specifier (required by the Supabase edge runtime). Plain
+// Node cannot resolve npm: URLs, so register the dev loader before the API
+// module graph loads. Same mechanism the unit suites use.
+await import('./node-register-npm.mjs');
+
 const app = (await import('../api/cf-worker.js')).default;
 
 const MIME = {

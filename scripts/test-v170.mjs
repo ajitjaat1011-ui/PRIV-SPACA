@@ -76,25 +76,36 @@ function fakeContext(cookie = '') {
 
 console.log('\nPRIV SPACA — v170 security, persistence and PWA regression suite\n');
 
-await test('APP_VERSION, SW_VERSION and immutable assets are synchronized at v170', async () => {
+await test('APP_VERSION, SW_VERSION and immutable assets are synchronized', async () => {
   const [app, sw, index] = await Promise.all([
     readFile(new URL('../app.js', import.meta.url), 'utf8'),
     readFile(new URL('../sw.js', import.meta.url), 'utf8'),
     readFile(new URL('../index.html', import.meta.url), 'utf8'),
   ]);
-  assert.match(app, /const APP_VERSION = 'priv-spaca-v170';/);
-  assert.match(sw, /const SW_VERSION = 'priv-spaca-v170';/);
-  assert.match(sw, /priv-spaca-static-v170/);
-  assert.match(sw, /priv-spaca-runtime-v170/);
-  // Asset counters continue from v169's ?v=187/192 values to avoid colliding
-  // with year-long immutable browser entries from historical releases.
-  for (const asset of ['style.min.css?v=188', 'app.min.js?v=195', 'boot-guard.min.js?v=170']) {
-    assert.ok(index.includes(asset), `index missing ${asset}`);
-    assert.ok(sw.includes(`'/${asset}'`), `service worker missing ${asset}`);
+  const ver = (s) => s.match(/const (?:APP|SW)_VERSION = 'priv-spaca-v([\d.]+)'/)?.[1];
+  const appV = ver(app), swV = ver(sw);
+  assert.ok(appV && swV, 'APP_VERSION / SW_VERSION must both be readable');
+  assert.equal(appV, swV, 'APP_VERSION must equal SW_VERSION (reload-loop guard)');
+  assert.ok(sw.includes(`priv-spaca-static-v${swV}`), `static cache must sit on release line v${swV}`);
+  assert.ok(sw.includes(`priv-spaca-runtime-v${swV}`), `runtime cache must sit on release line v${swV}`);
+  // Asset counters: every ?v= the shell/index/app.js actually requests must be
+  // identical between the page and the service worker so immutable (?v=)
+  // browser entries and the offline pre-cache never diverge.
+  const vOf = (s, asset) => (s.match(new RegExp(asset.replace(/\./g, '\\.') + '\\?v=([\\w.]+)')) || [])[1];
+  for (const asset of ['style.min.css', 'app.min.js', 'boot-guard.min.js']) {
+    const a = vOf(index, asset), b = vOf(sw, asset);
+    assert.ok(a && b, `asset ${asset} must carry a ?v= in index.html and sw.js`);
+    assert.equal(a, b, `${asset} ?v= must match between index.html (v${a}) and sw.js (v${b})`);
   }
+  const appAuth = vOf(app, 'auth.react.min.js');
+  const swAuth = vOf(sw, 'auth.react.min.js');
+  assert.ok(appAuth && appAuth === swAuth, `auth.react.min.js ?v= must match between app.js (v${appAuth}) and sw.js (v${swAuth})`);
   assert.ok(!index.includes('auth.react.min.js'), 'auth bundle must not block authenticated startup');
-  assert.ok(app.includes("script.src = '/auth.react.min.js?v=195'"), 'app must lazy-load current auth bundle');
-  assert.ok(sw.includes("'/auth.react.min.js?v=195'"), 'service worker must retain offline auth bundle');
+  // Offline shell completeness: every vendor/library asset the page loads at
+  // runtime must be pre-cached by the service worker.
+  for (const entry of ['icons-v2.js', 'vendor/local-fonts.css', 'vendor/lucide.min.js', 'vendor/motion.min.js', 'vendor/heic2any.min.js']) {
+    assert.ok(sw.includes(`SW_BASE + '/${entry}?v=`), `service worker must pre-cache ${entry}`);
+  }
   assert.equal(index.split(/\r?\n/).length, 1, 'index.html must remain one line');
 });
 

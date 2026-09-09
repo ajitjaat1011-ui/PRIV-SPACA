@@ -129,7 +129,10 @@ function mergeArrayThreeWay(remote, base, local) {
   const r = new Map((Array.isArray(remote) ? remote : []).map(v => [arrayItemKey(v), v]));
   const b = new Map((Array.isArray(base) ? base : []).map(v => [arrayItemKey(v), v]));
   const l = new Map((Array.isArray(local) ? local : []).map(v => [arrayItemKey(v), v]));
-  const ordered = [...r.keys(), ...l.keys().filter(k => !r.has(k))];
+  // Map#keys() returns an iterator — it has no .filter(). Build the merge
+  // order as: every remote key (remote order), then local-only keys
+  // (local order). A Set dedupes without altering that order.
+  const ordered = [...new Set([...r.keys(), ...l.keys()])];
   const out = [];
   for (const key of ordered) {
     const hasR = r.has(key), hasB = b.has(key), hasL = l.has(key);

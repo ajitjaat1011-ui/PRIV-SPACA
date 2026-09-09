@@ -5,11 +5,11 @@
  *  - Images / fonts   -> cache-first (offline-friendly avatars and posts)
  *  - /api/*           -> NEVER cached (live data only)
  */
-const SW_VERSION = 'priv-spaca-v181';
-const STATIC_CACHE = 'priv-spaca-static-v10';
-const RUNTIME_CACHE = 'priv-spaca-runtime-v10';
+const SW_VERSION = 'priv-spaca-v1.0';
+const STATIC_CACHE = 'priv-spaca-static-v1.0';
+const RUNTIME_CACHE = 'priv-spaca-runtime-v1.0';
 
-// v181: base directory this worker is served from. '' at a domain root
+// v1.0: base directory this worker is served from. '' at a domain root
 // (Cloudflare Pages), '/functions/v1/app' on Supabase. Derived from the
 // worker's own URL so the same file works on both hosts.
 const SW_BASE = (() => {
@@ -19,16 +19,24 @@ const SW_BASE = (() => {
   } catch (_) { return ''; }
 })();
 
+// APP_SHELL ?v= values MUST match the URLs index.html/app.js actually
+// request (style.min.css?v=10, boot-guard.min.js?v=10, vendor ?v=10,
+// auth.react.min.js?v=10 lazy from app.js, heic2any ?v=0.0.4 lazy from
+// app.js, app.min.js?v=11 and icons-v2.js?v=11 from index.html). A shell
+// entry pointing at a different ?v than the page requests means the page
+// copy is never pre-cached (offline gap), and stale entries linger.
 const APP_SHELL = [
   SW_BASE + '/',
   SW_BASE + '/index.html',
-  SW_BASE + '/style.min.css?v=199',
-  SW_BASE + '/app.min.js?v=206',
-  SW_BASE + '/auth.react.min.js?v=206',
-  SW_BASE + '/boot-guard.min.js?v=170',
-  SW_BASE + '/vendor/local-fonts.css?v=1',
-  SW_BASE + '/vendor/lucide.min.js?v=1',
-  SW_BASE + '/vendor/motion.min.js?v=1',
+  SW_BASE + '/style.min.css?v=10',
+  SW_BASE + '/app.min.js?v=11',
+  SW_BASE + '/boot-guard.min.js?v=10',
+  SW_BASE + '/icons-v2.js?v=11',
+  SW_BASE + '/auth.react.min.js?v=10',
+  SW_BASE + '/vendor/local-fonts.css?v=10',
+  SW_BASE + '/vendor/lucide.min.js?v=10',
+  SW_BASE + '/vendor/motion.min.js?v=10',
+  SW_BASE + '/vendor/heic2any.min.js?v=0.0.4',
   SW_BASE + '/manifest.json',
   SW_BASE + '/favicon.ico',
   SW_BASE + '/favicon-16x16.png',

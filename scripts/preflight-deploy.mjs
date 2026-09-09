@@ -41,8 +41,8 @@ const appJs = read('app.js');
 const swJs = read('sw.js');
 const html = read('index.html');
 
-const appV = appJs.match(/const APP_VERSION = 'priv-spaca-v(\d+)'/)?.[1];
-const swV = swJs.match(/const SW_VERSION = 'priv-spaca-v(\d+)'/)?.[1];
+const appV = appJs.match(/const APP_VERSION = 'priv-spaca-v([\d.]+)'/)?.[1];
+const swV = swJs.match(/const SW_VERSION = 'priv-spaca-v([\d.]+)'/)?.[1];
 if (!appV || !swV || appV !== swV)
   fail(`APP_VERSION (v${appV}) !== SW_VERSION (v${swV}) — run: node scripts/build.mjs --bump`);
 

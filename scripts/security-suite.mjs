@@ -1,15 +1,34 @@
 /**
  * PRIV SPACA — live security regression suite.
  *
- *   PS_APP_VERSION=priv-spaca-v170 node scripts/security-suite.mjs [baseUrl]
+ *   node scripts/security-suite.mjs [baseUrl]
  *
  * The suite creates an isolated account, exercises cookie auth/recovery and
  * authorization paths, then permanently deletes the account and its fixtures.
+ *
+ * The client version header (X-App-Version) and the expected ?v= asset keys
+ * are read from the local repo (app.js / index.html), so the suite tracks
+ * whichever release line is checked out — PS_APP_VERSION overrides the
+ * header when you need to impersonate a specific client.
  */
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const REPO_APP = readFileSync(fileURLToPath(new URL('../app.js', import.meta.url)), 'utf8');
+const REPO_INDEX = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
+const REPO_VERSION = (REPO_APP.match(/const APP_VERSION = 'priv-spaca-v([\d.]+)'/) || [])[1];
 
 const BASE = (process.argv[2] || 'http://127.0.0.1:8787').replace(/\/$/, '');
 const IS_REMOTE = !/127\.0\.0\.1|localhost/.test(BASE);
-const APP_VERSION = process.env.PS_APP_VERSION || 'priv-spaca-v170';
+const APP_VERSION = process.env.PS_APP_VERSION || (REPO_VERSION ? `priv-spaca-v${REPO_VERSION}` : 'priv-spaca-v1.0');
+const assetV = (name) => (REPO_INDEX.match(new RegExp(name.replace(/\./g, '\\.') + '\\?v=([\\w.]+)')) || [])[1];
+const SHELL_CSS = assetV('style.min.css');
+const SHELL_JS = assetV('app.min.js');
+if (!SHELL_CSS || !SHELL_JS) {
+  console.error('security-suite: could not read ?v= asset keys from index.html');
+  process.exit(1);
+}
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -84,7 +103,8 @@ async function main() {
   check('headers present on error responses', (errH.headers.get('content-security-policy') || '').includes("default-src 'self'"));
   const shellResponse = await fetch(BASE + '/', { redirect: 'follow' });
   const shellHtml = await shellResponse.text();
-  check('static shell references v170 release assets', shellHtml.includes('style.min.css?v=188') && shellHtml.includes('app.min.js?v=195') && !shellHtml.includes('auth.react.min.js'));
+  check(`static shell references current release assets (css?v=${SHELL_CSS}, js?v=${SHELL_JS})`,
+    shellHtml.includes(`style.min.css?v=${SHELL_CSS}`) && shellHtml.includes(`app.min.js?v=${SHELL_JS}`) && !shellHtml.includes('auth.react.min.js'));
   if (IS_REMOTE) {
     check('static shell has CSP', (shellResponse.headers.get('content-security-policy') || '').includes("default-src 'self'"));
     check('static shell has HSTS', /max-age=63072000/.test(shellResponse.headers.get('strict-transport-security') || ''));
