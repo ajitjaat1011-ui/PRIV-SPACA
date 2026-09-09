@@ -22,7 +22,7 @@ import { requireAdmin, requireAuth } from '../lib/middleware.js';
 import { AUTH_GENERIC_ERROR, authFailureDelay, authRateLimit, authSubjectRateLimit, checkAccountLock, clearLoginFails, recordLoginFail } from '../lib/ratelimit.js';
 import { fetchTursoUserById, isTursoConfigured, isTursoPrimary, tursoClient, tursoEnsure, tursoUpsertUser } from '../lib/store-turso.js';
 import { isSupabaseConfigured } from '../lib/store-turso.js';
-import { gotrueAdminSetPassword, gotrueDeleteUser, gotrueLogin, gotrueLogout, gotrueRefresh, gotrueSetUserMetadata, gotrueSignup } from '../lib/auth-supabase.js';
+import { gotrueAdminSetPassword, gotrueAdminSignup, gotrueDeleteUser, gotrueLogin, gotrueLogout, gotrueRefresh } from '../lib/auth-supabase.js';
 import { consumeWebAuthnChallenge, putWebAuthnChallenge } from '../lib/realtime-store.js';
 import { randomChallenge, verifyAuthenticationResponse, verifyRegistrationResponse } from '../lib/webauthn.js';
 
@@ -235,20 +235,17 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     let gotrueUserId = null;
     if (isSupabaseConfigured()) {
       try {
-        const gs = await gotrueSignup({ email: emailLower, password });
+        // Admin create with email_confirm:true (see gotrueAdminSignup):
+        // instant, fully-confirmed identities with no confirmation-email
+        // dependency and no GoTrue email-send rate limiting. The chosen
+        // username/displayName ride along in user_metadata so they survive
+        // even if the app record is later re-provisioned from GoTrue.
+        const gs = await gotrueAdminSignup({
+          email: emailLower, password,
+          username, displayName: cleanDN || username,
+        });
         gotrueUserId = gs.id;
-        gotrueSession = gs.session || null;
-        // Keep the chosen username/displayName on the GoTrue user so the
-        // first login can provision the app record when signup was answered
-        // with a 202 (email confirmation still pending). Best-effort: a
-        // metadata failure must never block signup.
-        try {
-          await gotrueSetUserMetadata(gotrueUserId, { username, displayName: cleanDN || username });
-        } catch (_) {}
-        if (!gotrueSession) {
-          // Email confirmation is still on in the project settings.
-          return c.json({ error: 'A confirmation email was sent. Check your inbox, then sign in.' }, 202);
-        }
+        gotrueSession = await gotrueLogin({ email: emailLower, password });
       } catch (e) {
         const detail = String(e && e.message) + ' ' + JSON.stringify((e && e.raw) || {});
         if (/already|registered|exists|duplicate/i.test(detail)) {

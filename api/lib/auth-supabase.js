@@ -43,6 +43,42 @@ export async function gotrueSignup({ email, password }) {
   return d;
 }
 
+/**
+ * Sign up via the ADMIN API with the account pre-confirmed. Returns the
+ * created GoTrue user ({ id, email, user_metadata, ... }).
+ *
+ * Why admin and not the public /signup endpoint: this app owns account
+ * security (PBKDF2 hashes, PIN + offline recovery codes — no email flows),
+ * so an email-verification round-trip is pure friction. The public endpoint
+ * is also unusable on projects with email confirmations enabled when no
+ * SMTP sender is configured — GoTrue rate-limits the confirmation sends
+ * (over_email_send_rate_limit) and signups 429/503. Admin create with
+ * email_confirm:true mints a fully confirmed identity with no email send
+ * and no confirmation rate limit. Callers then trade the password for a
+ * real session via gotrueLogin(). A duplicate email surfaces as a 4xx with
+ * 'already registered' in the body.
+ */
+export async function gotrueAdminSignup({ email, password, username, displayName }) {
+  const r = await fetch(base() + '/auth/v1/admin/users', {
+    method: 'POST',
+    headers: svc(),
+    body: JSON.stringify({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { username: username || null, displayName: displayName || username || null },
+    }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(d.msg || d.error_description || d.error || 'signup failed');
+    e.status = r.status;
+    e.raw = d;
+    throw e;
+  }
+  return d; // { id, email, user_metadata, ... } (no session — call gotrueLogin)
+}
+
 export async function gotrueLogin({ email, password }) {
   const r = await fetch(base() + '/auth/v1/token?grant_type=password', {
     method: 'POST',
