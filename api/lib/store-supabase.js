@@ -212,14 +212,74 @@ function translateWhereOne(sql) {
 // demands the column be aggregated or grouped ("column ... must appear in
 // the GROUP BY clause or be used in an aggregate function"). The one query
 // with this shape reads COALESCE(r.last_read_at, ?) per m.room_id, where
-// MAX(r.last_read_at) is the exact single-value aggregate; only that shape
-// is rewritten.
+// MAX(r.last_read_at) is the exact single-value aggregate; only the SELECT
+// list is rewritten — the same COALESCE(alias.col, ?) also appears in the
+// WHERE clause, where MAX() would be invalid SQL.
 function translateGroupedCoalesce(sql) {
   if (!/\bGROUP\s+BY\b/i.test(sql)) return null;
+  const fromM = /\bFROM\b/i.exec(sql);
+  const head = fromM ? sql.slice(0, fromM.index) : sql;
   const probe = /COALESCE\(\s*[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*,\s*\?\s*\)/i;
-  if (!probe.test(sql)) return null;
-  return sql.replace(/COALESCE\(\s*([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s*,\s*\?\s*\)/gi,
+  if (!probe.test(head)) return null;
+  const rewritten = head.replace(/COALESCE\(\s*([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s*,\s*\?\s*\)/gi,
     'COALESCE(MAX($1), ?)');
+  return rewritten + (fromM ? sql.slice(fromM.index) : '');
+}
+
+// SQLite's INTEGER is 64-bit; Postgres INTEGER is 32-bit and rejects the ms
+// epoch values the app writes everywhere ("value ... is out of range for type
+// integer"). Widen every INTEGER column declared in CREATE TABLE DDL to
+// BIGINT, and append ALTER TABLE statements so a table that already exists
+// (created by an older build with INTEGER columns) is widened in place.
+// Same-type ALTERs on a freshly created BIGINT table are no-ops, so running
+// the widened script repeatedly is safe. Statements outside CREATE TABLE
+// bodies (indexes, etc.) are passed through untouched.
+export function widenDdlForPg(script) {
+  if (!/CREATE\s+TABLE\b/i.test(script)) return script;
+  let out = '';
+  let i = 0;
+  const len = script.length;
+  while (i < len) {
+    const st = script.indexOf('CREATE TABLE', i);
+    if (st === -1) { out += script.slice(i); break; }
+    out += script.slice(i, st);
+    const parenStart = script.indexOf('(', st);
+    let depth = 0;
+    let end = -1;
+    for (let j = parenStart; j < len; j++) {
+      if (script[j] === '(') depth++;
+      else if (script[j] === ')') { depth--; if (depth === 0) { end = j; break; } }
+    }
+    if (end === -1) { out += script.slice(st); break; }
+    let body = script.slice(st, end + 1);
+    let tail = '';
+    let k = end + 1;
+    while (k < len && (script[k] === ';' || /\s/.test(script[k]))) { tail += script[k]; k++; }
+    i = k;
+    const tname = /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)/i.exec(body);
+    if (!tname) { out += body + tail; continue; }
+    const cols = [];
+    const cre = /[,(]\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+INTEGER\b/g;
+    let cm;
+    while ((cm = cre.exec(body))) cols.push(cm[1]);
+    if (!cols.length) { out += body + tail; continue; }
+    body = body.replace(/\bINTEGER\b/g, 'BIGINT');
+    const alters = ';\nALTER TABLE ' + tname[1] +
+      ' ALTER COLUMN ' + cols.map(c => c + ' TYPE BIGINT').join(', ALTER COLUMN ') + ';';
+    out += body + tail + alters;
+  }
+  return out;
+}
+
+// Postgres types a bare ? inside `CASE WHEN ... THEN ? ELSE 0 END` from the
+// integer literal 0, BEFORE the surrounding INSERT..SELECT column assignment
+// can widen it to bigint — so the ms timestamps the app binds there die with
+// "value ... is out of range for type integer". Anchor the placeholder to
+// bigint (the app's epoch columns are BIGINT). Only the THEN-?/ELSE-int
+// shape is rewritten; comparison predicates (id = ?) are untouched.
+function translateCaseLiteral(sql) {
+  if (!/\bTHEN\s+\?\s+ELSE\s+-?\d+\s+END\b/i.test(sql)) return null;
+  return sql.replace(/\bTHEN\s+\?(\s+ELSE\s+-?\d+\s+END)\b/gi, 'THEN ?::BIGINT$1');
 }
 
 export function translateSql(sql) {
@@ -227,6 +287,7 @@ export function translateSql(sql) {
   if (pragma) return pragma;
   const orIgnore = translateInsertOrIgnore(sql);
   if (orIgnore) return bindPlaceholders(orIgnore).sql;
+  if (/^\s*CREATE\s+TABLE\b/i.test(sql)) return bindPlaceholders(widenDdlForPg(sql)).sql;
   let out = translateInstr(sql);
   out = out !== null ? out : sql;
   const scalarMax = translateScalarMax(out);
@@ -235,6 +296,8 @@ export function translateSql(sql) {
   out = whereOne !== null ? whereOne : out;
   const grouped = translateGroupedCoalesce(out);
   out = grouped !== null ? grouped : out;
+  const caseLit = translateCaseLiteral(out);
+  out = caseLit !== null ? caseLit : out;
   return bindPlaceholders(out).sql;
 }
 
@@ -293,8 +356,9 @@ async function runMultiple(sql) {
   if (!trimmed.includes('?')) {
     const { client } = await acquirePg();
     let broke = false;
+    const ddl = widenDdlForPg(trimmed);
     try {
-      const q = await client.query(trimmed);
+      const q = await client.query(ddl);
       const last = shapeResult(q);
       return { rows: last.rows, changes: last.changes, lastInsertRowid: last.lastInsertRowid, results: [last] };
     } catch (e) {
@@ -302,7 +366,7 @@ async function runMultiple(sql) {
         broke = true;
         const retry = await acquirePg();
         try {
-          const q = await retry.client.query(trimmed);
+          const q = await retry.client.query(ddl);
           const last = shapeResult(q);
           return { rows: last.rows, changes: last.changes, lastInsertRowid: last.lastInsertRowid, results: [last] };
         } catch (e2) {

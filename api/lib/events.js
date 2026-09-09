@@ -19,6 +19,14 @@ export const _eventQueues = new Map();
 
 export const _eventSubscribers = new Map();
 
+// ps_events persistence is serialized per kind: a group broadcast fans out to
+// one INSERT per known user, and letting them all fire concurrently swamps
+// the database fault-domain bulkhead (each INSERT holds a fault-domain
+// entry) — on the Postgres transport that starves concurrent request-path
+// reads (saveDatabase 503s during message send). One promise chain per kind
+// keeps every row, in order, with bounded concurrency.
+const _persistTails = new Map();
+
 // `opts.persist === false` keeps the event in-memory / SSE only and skips the
 // ps_events row. Used by POST /api/rtc/signal, which writes its OWN canonical
 // row: writing both produced TWO ps_events rows for the same WebRTC signal in
@@ -46,10 +54,16 @@ export function _pushEvent(userId, kind, data, opts = {}) {
   }
   if (opts.persist === false) return evt;
   if (isTursoPrimary()) {
-    supervisedTask(null, tursoEnsure().then(() => tursoClient().execute({
+    const insert = () => tursoEnsure().then(() => tursoClient().execute({
       sql: 'INSERT INTO ps_events (id, user_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
       args: [evt.id, userId, kind, JSON.stringify(evt), evt.ts],
-    })), `event.persist.${kind}`);
+    }));
+    // Serialize per kind (see _persistTails above); the previous tail is
+    // always settled (caught), so `prev.then(insert)` never stalls.
+    const prev = _persistTails.get(kind) || Promise.resolve();
+    const tail = prev.then(insert, insert).catch(() => {});
+    _persistTails.set(kind, tail);
+    supervisedTask(null, tail, `event.persist.${kind}`);
   } // Neon events path removed
   return evt;
 }
