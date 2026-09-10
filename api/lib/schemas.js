@@ -62,6 +62,7 @@ export const UserUpdateBody = o({
   username: opt(string().check(maxLength(64))),
   bio: opt(string().check(maxLength(2000))),
   photoUrl: opt(string().check(maxLength(8 * 1024 * 1024))),
+  coverUrl: opt(string().check(maxLength(8 * 1024 * 1024))),
   dateOfBirth: nullish(string().check(maxLength(32))),
   cardVisibility: opt(string().check(maxLength(32))),
   isPrivate: opt(any()),

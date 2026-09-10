@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v1.1';
+const APP_VERSION = 'priv-spaca-v1.2';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -987,7 +987,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=11';
+    script.src = '/auth.react.min.js?v=12';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -1044,11 +1044,28 @@ function showApp() {
   }
 }
 
+function applyProfileCover() {
+  const layer = $id('#profileCover');
+  if (!layer) return;
+  const url = State.user && State.user.coverUrl;
+  const ok = !!url && isSafeUrlForCss(url) && !_brokenPhotoUrls.has(url);
+  layer.classList.toggle('hidden', !ok);
+  layer.style.backgroundImage = ok ? `url('${String(url).replace(/'/g, '%27')}')` : '';
+  const rm = $id('#profileCoverRemove');
+  if (rm) rm.classList.toggle('hidden', !ok);
+  if (ok) {
+    const probe = new Image();
+    probe.onerror = () => { _brokenPhotoUrls.add(url); try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {} applyProfileCover(); };
+    probe.src = url;
+  }
+}
+
 function hydrateMeChips() {
   if (!State.user) return;
   if ($id('#feedMeName')) $id('#feedMeName').textContent = (State.user.displayName || State.user.username).toUpperCase();
   if ($id('#feedMeAvatar')) renderAvatar($id('#feedMeAvatar'), State.user);
   if ($id('#profileAvatarPreview')) renderAvatar($id('#profileAvatarPreview'), State.user);
+  applyProfileCover();
   const profileTitle = $id('#profileTitleUsername');
   if (profileTitle) profileTitle.innerHTML = displayNameWithProfileBadges(State.user, State.user.username || State.user.displayName || 'me', 'title');
   const profileUserLine = $id('#profileUsername');
@@ -9116,6 +9133,43 @@ function bindProfile() {
     } catch (err) { status.textContent = ''; toast('Upload failed: ' + (err.message || ''), 'error'); }
   });
 
+  // Cover photo (profile background) — default gradient stays until a photo is set.
+  const coverBtn = $id('#profileCoverBtn');
+  if (coverBtn) coverBtn.addEventListener('click', () => $id('#profileCoverInput').click());
+  const coverEditBtn = $id('#profileCoverEditBtn');
+  if (coverEditBtn) coverEditBtn.addEventListener('click', () => $id('#profileCoverInput').click());
+  const coverInput = $id('#profileCoverInput');
+  if (coverInput) coverInput.addEventListener('change', async (e) => {
+    let f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    if (!isImageFile(f)) { toast('Only images', 'error'); return; }
+    if (f.size > MAX_UPLOAD_BYTES) { toast('Max 15MB', 'error'); return; }
+    const status = $id('#profileCoverStatus');
+    if (status) status.textContent = 'Uploading 0%';
+    try {
+      if (isHeicFile(f)) { if (status) status.textContent = 'Converting…'; f = await convertHeicIfNeeded(f); }
+      const res = await uploadPermanentImage(f, { kind: 'cover', maxDim: 1600, quality: 0.82, onProgress: (p) => { if (status) status.textContent = 'Uploading ' + p + '%'; } });
+      const data = await api('/user/update', { method: 'POST', body: { coverUrl: res.url } });
+      State.user = data.user;
+      persistUser();
+      _brokenPhotoUrls.delete(res.url);
+      try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {}
+      applyProfileCover();
+      if (status) status.textContent = 'Cover updated ✓';
+      toast('Cover photo updated', 'success');
+    } catch (err) { if (status) status.textContent = ''; toast('Upload failed: ' + (err.message || ''), 'error'); }
+  });
+  const coverRm = $id('#profileCoverRemove');
+  if (coverRm) coverRm.addEventListener('click', async () => {
+    try {
+      const data = await api('/user/update', { method: 'POST', body: { coverUrl: '' } });
+      State.user = data.user;
+      persistUser();
+      applyProfileCover();
+      toast('Cover removed', 'success');
+    } catch (err) { toast('Could not remove cover: ' + (err.message || ''), 'error'); }
+  });
+
   $id('#profileForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -10114,6 +10168,13 @@ function renderOtherProfile(data) {
   $id('#upStatFollowers').textContent = String(u.followers || 0);
   $id('#upStatFollowing').textContent = String(u.following || 0);
   renderAvatar($id('#upAvatar'), u);
+  const upCover = $id('#upCover');
+  if (upCover) {
+    const cu = u.coverUrl;
+    const ok = !!cu && isSafeUrlForCss(cu) && !_brokenPhotoUrls.has(cu);
+    upCover.classList.toggle('hidden', !ok);
+    upCover.style.backgroundImage = ok ? `url('${String(cu).replace(/'/g, '%27')}')` : '';
+  }
   const privateNotice = ensurePrivateProfileNotice();
   if (privateNotice) {
     privateNotice.innerHTML = `<span class="private-profile-lock"><i data-lucide="lock"></i></span><strong>This profile is private</strong><span>Follow ${escapeHtml(u.username || 'this user')} to see their posts, followers, stories and profile card.</span>`;

@@ -32,7 +32,7 @@ import { fetchDmIndex, fetchUnreadCounts, isDbConfigured, dbClient, upsertUser, 
 app.post('/api/user/update', requireAuth, async (c) => {
   try {
     const body = await vbody(c, S.UserUpdateBody);
-    const { displayName, username, bio, photoUrl, dateOfBirth, cardVisibility, isPrivate } = body;
+    const { displayName, username, bio, photoUrl, coverUrl, dateOfBirth, cardVisibility, isPrivate } = body;
     const db = await fetchDatabase();
     const user = db.users.find(u => u.id === c.get('userId'));
     if (!user) return c.json({ error: 'Not found' }, 404);
@@ -51,6 +51,10 @@ app.post('/api/user/update', requireAuth, async (c) => {
     if (typeof photoUrl === 'string') {
       const cleanPhoto = photoUrl.trim();
       if (cleanPhoto === '' || isSafeImageUrl(cleanPhoto)) user.photoUrl = cleanPhoto;
+    }
+    if (typeof coverUrl === 'string') {
+      const cleanCover = coverUrl.trim();
+      if (cleanCover === '' || isSafeImageUrl(cleanCover)) user.coverUrl = cleanCover;
     }
     if (typeof dateOfBirth === 'string') {
       const dob = dateOfBirth.trim();

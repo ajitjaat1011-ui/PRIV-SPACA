@@ -173,7 +173,7 @@ export function canViewerSeeStory(post, viewerId, db) {
 export function sanitizeUser(u, includePrivate = false) {
   if (!u) return null;
   const out = { id: u.id, username: u.username, displayName: u.displayName,
-           bio: u.bio || '', photoUrl: u.photoUrl || '', createdAt: u.createdAt,
+           bio: u.bio || '', photoUrl: u.photoUrl || '', coverUrl: u.coverUrl || '', createdAt: u.createdAt,
            publicKey: u.publicKey || null, verified: !!u.verified, isOwner: isAdminUser(u), isPrivate: !!u.isPrivate, note: activeNote(u) };
   if (includePrivate) {
     out.email = typeof u.email === 'string' ? u.email : '';

@@ -167,7 +167,7 @@ async function provisionAppUserFromGoTrue(gu, password, idLower) {
   const passwordHash = await hashPassword(password);
   const newUser = {
     id: String(gu.id), email, username: candidate, displayName,
-    bio: '', photoUrl: '', passwordHash, pinHash: '',
+    bio: '', photoUrl: '', coverUrl: '', passwordHash, pinHash: '',
     recoveryCodeHashes: [], tokenVersion: 0,
     followers: [], following: [], blocked: [], closeFriends: [], isPrivate: false,
     termsAccepted: true, termsVersion: '1.0',
@@ -264,7 +264,7 @@ app.post('/api/auth/signup', authRateLimit, async (c) => {
     const recovery = await createRecoveryCodes();
     const newUser = {
       id: gotrueUserId || uid('usr'), email: emailLower, username, displayName: cleanDN,
-      bio: '', photoUrl: '', passwordHash, pinHash, recoveryCodeHashes: recovery.hashes, tokenVersion: 0,
+      bio: '', photoUrl: '', coverUrl: '', passwordHash, pinHash, recoveryCodeHashes: recovery.hashes, tokenVersion: 0,
       followers: [], following: [], blocked: [], closeFriends: [], isPrivate: false,
       termsAccepted: true, termsVersion: String(termsVersion || '1.0'),
       termsAcceptedAt: nowMs(), createdAt: nowMs(), verified: false,
