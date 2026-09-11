@@ -10043,3 +10043,30 @@ button.story-sheet-handle{display:block;border:0;padding:0;cursor:pointer}
 .aura-actions .ig-action-btn.primary:active{ transform:scale(.97); }
 .aura-head-compact .aura-cover{ height:96px; }
 .aura-row-compact{ margin-top:-36px; }
+
+/* ============ Aura cover-photo controls (restored — were dropped with the orb removal) ============ */
+.profile-cover{ position:absolute; inset:0; z-index:0; background-size:cover; background-position:center; background-repeat:no-repeat; pointer-events:none; }
+.profile-cover-btn{
+  position:absolute; top:10px; right:10px; z-index:4;
+  width:34px; height:34px; border-radius:50%;
+  border:1px solid rgba(255,255,255,.45);
+  background:rgba(18,26,46,.46); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  box-shadow:0 8px 20px rgba(0,0,0,.28); transition:background .18s,transform .12s;
+}
+.profile-cover-btn:hover{ background:rgba(18,26,46,.68); }
+.profile-cover-btn:active{ transform:scale(.92); }
+.profile-cover-btn i,.profile-cover-btn svg{ width:15px; height:15px; }
+.profile-cover-remove{
+  position:absolute; top:10px; right:50px; z-index:4;
+  height:34px; padding:0 12px; border-radius:999px;
+  border:1px solid rgba(255,255,255,.45);
+  background:rgba(18,26,46,.46); color:#fff;
+  font:inherit; font-size:11.5px; font-weight:750;
+  display:flex; align-items:center; gap:5px; cursor:pointer;
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  box-shadow:0 8px 20px rgba(0,0,0,.28); transition:background .18s;
+}
+.profile-cover-remove:hover{ background:rgba(255,92,108,.85); border-color:rgba(255,255,255,.6); }
+.profile-cover-remove i,.profile-cover-remove svg{ width:13px; height:13px; }
