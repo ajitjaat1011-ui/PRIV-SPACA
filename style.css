@@ -7068,18 +7068,7 @@ body{
    ============================================================ */
 
 /* ===== Profile — Polaroid Stack (v113 · design 09) ===== */
-.profile-wrap{
-  background-image:radial-gradient(rgba(130,150,190,.16) 1px, transparent 1.3px);
-  background-size:18px 18px;
-}
-[data-theme="dark"] .profile-wrap{
-  background-image:radial-gradient(rgba(190,205,240,.09) 1px, transparent 1.3px);
-}
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .profile-wrap{
-    background-image:radial-gradient(rgba(190,205,240,.09) 1px, transparent 1.3px);
-  }
-}
+/* v1.7: dot-grid removed — profile background is the clean Aura gradient */
 .ig-profile-head{
   display:block!important;
   position:relative;
