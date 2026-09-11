@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v1.7';
+const APP_VERSION = 'priv-spaca-v1.8';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -987,7 +987,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=17';
+    script.src = '/auth.react.min.js?v=18';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -1049,10 +1049,18 @@ function applyProfileCover() {
   if (!layer) return;
   const url = State.user && State.user.coverUrl;
   const ok = !!url && isSafeUrlForCss(url) && !_brokenPhotoUrls.has(url);
+  const cssUrl = ok ? `url('${String(url).replace(/'/g, '%27')}')` : '';
   layer.classList.toggle('hidden', !ok);
-  layer.style.backgroundImage = ok ? `url('${String(url).replace(/'/g, '%27')}')` : '';
+  layer.style.backgroundImage = cssUrl;
   const rm = $id('#profileCoverRemove');
   if (rm) rm.classList.toggle('hidden', !ok);
+  const editRm = $id('#profileEditCoverRemove');
+  if (editRm) editRm.classList.toggle('hidden', !ok);
+  const preview = $id('#profileEditCoverPreview');
+  if (preview) {
+    preview.classList.toggle('has-photo', ok);
+    preview.style.backgroundImage = cssUrl;
+  }
   if (ok) {
     const probe = new Image();
     probe.onerror = () => { _brokenPhotoUrls.add(url); try { sessionStorage.setItem('ps_brokenPhotos', JSON.stringify([..._brokenPhotoUrls].slice(-100))); } catch (_) {} applyProfileCover(); };
@@ -9179,7 +9187,7 @@ function bindProfile() {
     } catch (err) { if (status) status.textContent = ''; toast('Upload failed: ' + (err.message || ''), 'error'); }
   });
   const coverRm = $id('#profileCoverRemove');
-  if (coverRm) coverRm.addEventListener('click', async () => {
+  const removeCover = async () => {
     try {
       const data = await api('/user/update', { method: 'POST', body: { coverUrl: '' } });
       State.user = data.user;
@@ -9187,7 +9195,10 @@ function bindProfile() {
       applyProfileCover();
       toast('Cover removed', 'success');
     } catch (err) { toast('Could not remove cover: ' + (err.message || ''), 'error'); }
-  });
+  };
+  if (coverRm) coverRm.addEventListener('click', removeCover);
+  const editCoverRm = $id('#profileEditCoverRemove');
+  if (editCoverRm) editCoverRm.addEventListener('click', removeCover);
 
   $id('#profileForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -10314,8 +10325,9 @@ function renderOtherProfile(data) {
   } else if (!data.posts || data.posts.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'ig-grid-empty';
-    empty.innerHTML = '<i data-lucide="camera" style="width:36px;height:36px;color:var(--muted-2);display:block;margin:0 auto 8px"></i>No posts yet';
+    empty.innerHTML = '<div class="grid-empty-card"><div class="grid-empty-icon"><i data-lucide="camera"></i></div><div class="grid-empty-title">No posts yet</div><div class="grid-empty-sub">When they share, posts will appear here.</div></div>';
     grid.appendChild(empty);
+    refreshIcons();
   } else {
     data.posts.forEach(p => grid.appendChild(buildGridCell(p)));
   }
@@ -10728,10 +10740,15 @@ async function renderOwnProfile(force = false) {
     if (!postsToShow || postsToShow.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'ig-grid-empty';
-      empty.innerHTML = _profileTab === 'saved'
-        ? '<i data-lucide="bookmark" style="width:36px;height:36px;color:var(--muted-2);display:block;margin:0 auto 8px"></i>Posts you save appear here'
-        : '<i data-lucide="camera" style="width:36px;height:36px;color:var(--muted-2);display:block;margin:0 auto 8px"></i>Share your first post';
+      if (_profileTab === 'saved') {
+        empty.innerHTML = '<div class="grid-empty-card"><div class="grid-empty-icon"><i data-lucide="bookmark"></i></div><div class="grid-empty-title">Posts you save appear here</div><div class="grid-empty-sub">Tap the bookmark on any post to keep it here.</div></div>';
+      } else {
+        empty.innerHTML = '<div class="grid-empty-card"><div class="grid-empty-icon"><i data-lucide="camera"></i></div><div class="grid-empty-title">Share your first post</div><div class="grid-empty-sub">Photos and videos you share will appear here.</div><button type="button" class="grid-empty-cta" id="gridEmptyCreateBtn"><i data-lucide="plus"></i> Create post</button></div>';
+        const cta = empty.querySelector('#gridEmptyCreateBtn');
+        if (cta) cta.addEventListener('click', openPostComposer);
+      }
       grid.appendChild(empty);
+      refreshIcons();
     } else {
       postsToShow.forEach(p => grid.appendChild(buildGridCell(p)));
     }

@@ -10059,3 +10059,59 @@ button.story-sheet-handle{display:block;border:0;padding:0;cursor:pointer}
 }
 .profile-cover-remove:hover{ background:rgba(255,92,108,.85); border-color:rgba(255,255,255,.6); }
 .profile-cover-remove i,.profile-cover-remove svg{ width:13px; height:13px; }
+
+/* ============ v1.8 — Aura: cover controls in Edit Profile + feed-styled empty state ============ */
+.profile-cover-edit{ display:flex; flex-direction:column; gap:10px; }
+.profile-edit-cover-preview{
+  position:relative; height:96px; border-radius:14px; overflow:hidden;
+  background:linear-gradient(120deg,#82B6FF 0%,#5B9BFA 44%,#F291BE 100%);
+  display:flex; align-items:center; justify-content:center;
+  background-size:cover; background-position:center;
+}
+[data-theme="dark"] .profile-edit-cover-preview{ background:linear-gradient(120deg,#1E3A66 0%,#274B8A 44%,#5C2F54 100%); }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .profile-edit-cover-preview{ background:linear-gradient(120deg,#1E3A66 0%,#274B8A 44%,#5C2F54 100%); }
+}
+.profile-edit-cover-preview.has-photo{ /* photo is applied inline via style.backgroundImage */ }
+.pecp-chip{
+  padding:5px 12px; border-radius:999px; font-size:11px; font-weight:800; letter-spacing:.3px;
+  background:rgba(18,26,46,.42); color:#fff;
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+  box-shadow:0 4px 14px rgba(0,0,0,.18);
+}
+.profile-cover-edit-actions{ display:flex; gap:8px; }
+.profile-cover-edit-actions .ig-action-btn{ flex:0 1 auto; }
+.profile-cover-edit-actions .ig-action-btn i,.profile-cover-edit-actions .ig-action-btn svg{ width:15px; height:15px; }
+
+/* Feed-styled empty state for the posts grid */
+.ig-grid-empty{ padding:6px 12px 20px; }
+.grid-empty-card{
+  border:1.5px dashed var(--line-2);
+  background:linear-gradient(160deg,rgba(var(--accent-rgb),.05),rgba(242,145,190,.05));
+  border-radius:20px; padding:38px 22px;
+  display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px;
+}
+.grid-empty-icon{
+  width:64px; height:64px; border-radius:20px;
+  display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(135deg,#82B6FF 0%,#5B9BFA 48%,#F291BE 100%);
+  color:#fff; box-shadow:0 12px 26px -10px rgba(91,155,250,.5);
+}
+.grid-empty-icon i,.grid-empty-icon svg{ width:30px; height:30px; stroke-width:1.8; }
+.grid-empty-title{ font-size:16px; font-weight:800; color:var(--text); letter-spacing:-.2px; }
+.grid-empty-sub{ font-size:13px; color:var(--muted); font-weight:500; line-height:1.5; max-width:280px; }
+.grid-empty-cta{
+  margin-top:10px; display:inline-flex; align-items:center; gap:7px;
+  background:linear-gradient(135deg,#82B6FF 0%,#5B9BFA 48%,#F291BE 100%);
+  color:#fff; border:0; border-radius:999px; padding:11px 22px;
+  font:inherit; font-size:14px; font-weight:800; cursor:pointer;
+  box-shadow:0 10px 22px -8px rgba(91,155,250,.55), inset 0 1px 0 rgba(255,255,255,.35);
+  transition:transform .12s, filter .15s;
+}
+.grid-empty-cta:hover{ filter:brightness(1.05); }
+.grid-empty-cta:active{ transform:scale(.96); }
+.grid-empty-cta i,.grid-empty-cta svg{ width:17px; height:17px; }
+[data-theme="dark"] .grid-empty-card{ background:linear-gradient(160deg,rgba(143,188,255,.07),rgba(242,160,198,.06)); }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .grid-empty-card{ background:linear-gradient(160deg,rgba(143,188,255,.07),rgba(242,160,198,.06)); }
+}
