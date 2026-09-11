@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v1.2';
+const APP_VERSION = 'priv-spaca-v1.4';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -987,7 +987,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=12';
+    script.src = '/auth.react.min.js?v=14';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -1060,12 +1060,31 @@ function applyProfileCover() {
   }
 }
 
+function renderProfileChips(u) {
+  const row = $id('#profileChips');
+  if (!row) return;
+  const usr = u || State.user || {};
+  const chips = [];
+  if (usr.verified) chips.push('<span class="aura-chip verified">✔ Verified</span>');
+  const note = activeNote(usr);
+  if (note && note.text) chips.push('<span class="aura-chip">🌙 ' + escapeHtml(note.text.slice(0, 24)) + '</span>');
+  if (usr.dateOfBirth) chips.push('<span class="aura-chip">🎂 ' + escapeHtml(formatProfileDob(usr.dateOfBirth)) + '</span>');
+  const cf = Array.isArray(State.user && State.user.closeFriends) ? State.user.closeFriends.length : 0;
+  if (cf > 0) chips.push('<span class="aura-chip">★ ' + cf + ' close friends</span>');
+  if (!chips.length) { row.classList.add('hidden'); row.innerHTML = ''; return; }
+  row.innerHTML = chips.join('');
+  row.classList.remove('hidden');
+}
+
 function hydrateMeChips() {
   if (!State.user) return;
   if ($id('#feedMeName')) $id('#feedMeName').textContent = (State.user.displayName || State.user.username).toUpperCase();
   if ($id('#feedMeAvatar')) renderAvatar($id('#feedMeAvatar'), State.user);
   if ($id('#profileAvatarPreview')) renderAvatar($id('#profileAvatarPreview'), State.user);
   applyProfileCover();
+  renderProfileChips(State.user);
+  const ph = $id('#profileHandle');
+  if (ph) ph.textContent = '@' + (State.user.username || State.user.displayName || 'me');
   const profileTitle = $id('#profileTitleUsername');
   if (profileTitle) profileTitle.innerHTML = displayNameWithProfileBadges(State.user, State.user.username || State.user.displayName || 'me', 'title');
   const profileUserLine = $id('#profileUsername');
@@ -10642,6 +10661,9 @@ async function renderOwnProfile(force = false) {
   if (titleU) titleU.innerHTML = displayNameWithProfileBadges(State.user, cachedUsername, 'title');
   if ($id('#profileDisplayName')) $id('#profileDisplayName').innerHTML = displayNameWithOwnerBadge(State.user, State.user.displayName || '', 'inline');
   syncPolaroidCaption(State.user.displayName || State.user.username || '');
+  const handleEl0 = $id('#profileHandle');
+  if (handleEl0) handleEl0.textContent = '@' + cachedUsername;
+  renderProfileChips(State.user);
   if ($id('#profileUsername')) $id('#profileUsername').innerHTML = displayNameWithOwnerBadge(State.user, '@' + (State.user.username || cachedUsername), 'inline');
   // Render from the fresh profile endpoint first; relationship/feed refreshes run after,
   // so the grid does not feel slow or blank while /users and /posts load.
@@ -10680,6 +10702,9 @@ async function renderOwnProfile(force = false) {
     }
     const bioEl = $id('#profileBio');
     if (bioEl) bioEl.textContent = u.bio || '';
+    const handleEl = $id('#profileHandle');
+    if (handleEl) handleEl.textContent = '@' + realUsername;
+    renderProfileChips(u);
     const avatarEl = $id('#profileAvatarPreview');
     if (avatarEl) renderAvatar(avatarEl, u);
     renderDiscoverPeople();
