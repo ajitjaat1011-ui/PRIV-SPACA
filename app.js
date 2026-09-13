@@ -48,7 +48,7 @@ const State = {
 // SECURITY/PWA FIX: APP_VERSION must match SW_VERSION in sw.js exactly,
 // otherwise SelfHeal.bootHeal() detects a mismatch on every page load
 // and wipes caches + forces reload. The build script bumps both together.
-const APP_VERSION = 'priv-spaca-v1.9';
+const APP_VERSION = 'priv-spaca-v1.10';
 const HEAL_MAX_ATTEMPTS = 2;
 const HEAL_PROBE_TIMEOUT_MS = 4000;
 const HEAL_STORAGE_PREFIXES = ['ps_', 'priv-spaca'];
@@ -987,7 +987,7 @@ function ensureReactAuthBundle() {
   if (_reactAuthBundlePromise) return _reactAuthBundlePromise;
   _reactAuthBundlePromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/auth.react.min.js?v=19';
+    script.src = '/auth.react.min.js?v=20';
     script.async = true;
     script.onload = () => window.__PSAuthReact ? resolve(window.__PSAuthReact) : reject(new Error('Auth module did not initialize'));
     script.onerror = () => reject(new Error('Auth module failed to load'));
@@ -13737,4 +13737,35 @@ function _initAdvancedEngines() {
 }
 
 
+})();
+
+/* ===== Auto-update watcher (ships with Aurora v2+) =====
+   Probes sw.js (no-store). If the deployed SW_VERSION differs from this
+   bundle's APP_VERSION, promote the waiting worker and reload once so
+   open/installed clients converge to the new release automatically. */
+(function(){
+  function probe(){
+    try{
+      if(!('serviceWorker' in navigator) || !navigator.onLine) return;
+      fetch('sw.js?ping=' + Date.now(), {cache:'no-store'})
+        .then(function(r){ return r.ok ? r.text() : ''; })
+        .then(function(t){
+          var m = t.match(/SW_VERSION\s*=\s*'([^']+)'/);
+          if(!m) return;
+          var live = m[1];
+          var cur = (typeof APP_VERSION !== 'undefined') ? APP_VERSION : live;
+          if(live !== cur){
+            navigator.serviceWorker.getRegistration().then(function(reg){
+              return reg ? reg.update() : null;
+            }).then(function(){
+              setTimeout(function(){ location.reload(); }, 400);
+            }).catch(function(){});
+          }
+        })
+        .catch(function(){});
+    }catch(e){}
+  }
+  setTimeout(probe, 8000);
+  setInterval(probe, 45000);
+  document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible') probe(); });
 })();
