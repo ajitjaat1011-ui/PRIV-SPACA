@@ -10115,3 +10115,206 @@ button.story-sheet-handle{display:block;border:0;padding:0;cursor:pointer}
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]) .grid-empty-card{ background:linear-gradient(160deg,rgba(143,188,255,.07),rgba(242,160,198,.06)); }
 }
+
+/* ==========================================================================
+   AURORA REDESIGN v2.0 — pastel sky gradients, frosted glass, gradient CTAs
+   (bottom navbar intentionally preserved — see NAVBAR PRESERVE block)
+   ========================================================================== */
+
+/* ---- 1. tokens: aurora light ---- */
+:root, [data-theme="light"]{
+  --bg:#EDF2FF;
+  --bg-2:#FFFFFF;
+  --bg-soft:#F5F2FF;
+  --surface:rgba(255,255,255,.78);
+  --surface-2:rgba(255,255,255,.58);
+  --border:rgba(148,170,255,.24);
+  --line:rgba(148,170,255,.16);
+  --line-2:rgba(148,170,255,.24);
+  --text:#101A3C;
+  --text-2:#3D4C78;
+  --muted:#7C89AE;
+  --muted-2:#AEB8D6;
+  --shadow-xs:0 1px 2px rgba(96,120,255,.06);
+  --shadow-sm:0 4px 16px rgba(96,120,255,.10);
+  --shadow:0 14px 36px rgba(96,120,255,.14);
+  --shadow-lg:0 28px 72px rgba(120,90,255,.22);
+  --radius:22px;
+  --radius-sm:16px;
+  --radius-xs:12px;
+  --accent:#2F8BFF;
+  --accent-2:#7C5CFF;
+  --accent-rgb:47,139,255;
+  --accent-grad:linear-gradient(90deg,#38BDF8 0%,#818CF8 45%,#F472B6 100%);
+  --accent-soft:rgba(47,139,255,.12);
+  --accent-softer:rgba(47,139,255,.06);
+  --pink:#F472B6;
+  --pink-2:#EC4899;
+  --pink-rgb:244,114,182;
+  --pink-grad:linear-gradient(135deg,#A5B8FF 0%,#C9B8FF 35%,#FFC9E3 70%,#F472B6 100%);
+  --dual-grad:linear-gradient(90deg,#38BDF8 0%,#818CF8 48%,#F472B6 100%);
+  --bubble-radius:20px;
+  --bubble-mine-bg:linear-gradient(135deg,#38BDF8 0%,#818CF8 55%,#F472B6 120%);
+  --liquid-icon-bg:rgba(255,255,255,.72);
+  --liquid-icon-border:rgba(129,140,248,.28);
+  --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.9),0 8px 22px rgba(96,120,255,.16);
+}
+/* ---- 2. tokens: midnight aurora (dark) ---- */
+[data-theme="dark"]{
+  --bg:#0A0F2C;
+  --bg-2:#101736;
+  --bg-soft:#151E42;
+  --surface:rgba(19,27,60,.78);
+  --surface-2:rgba(26,35,74,.58);
+  --border:rgba(129,140,248,.28);
+  --line:rgba(129,140,248,.18);
+  --line-2:rgba(129,140,248,.28);
+  --text:#EDF1FF;
+  --text-2:#C0CBEF;
+  --muted:#8A97C4;
+  --muted-2:#5D6A99;
+  --shadow-xs:0 1px 2px rgba(0,0,0,.4);
+  --shadow-sm:0 4px 16px rgba(0,0,0,.4);
+  --shadow:0 14px 36px rgba(0,0,0,.5);
+  --shadow-lg:0 28px 72px rgba(0,0,0,.6);
+  --accent:#6EA8FF;
+  --accent-2:#8F7BFF;
+  --accent-rgb:110,168,255;
+  --accent-grad:linear-gradient(90deg,#38BDF8 0%,#818CF8 45%,#F472B6 100%);
+  --pink:#F472B6;
+  --pink-2:#EC4899;
+  --pink-rgb:244,114,182;
+  --pink-grad:linear-gradient(135deg,#8FA8FF 0%,#B8A8FF 35%,#F9B8DA 70%,#F472B6 100%);
+  --dual-grad:linear-gradient(90deg,#38BDF8 0%,#818CF8 48%,#F472B6 100%);
+  --bubble-mine-bg:linear-gradient(135deg,#38BDF8 0%,#818CF8 55%,#F472B6 120%);
+  --liquid-icon-bg:rgba(255,255,255,.08);
+  --liquid-icon-border:rgba(129,140,248,.30);
+  --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.10),0 8px 22px rgba(0,0,0,.35);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0A0F2C; --bg-2:#101736; --bg-soft:#151E42;
+    --surface:rgba(19,27,60,.78); --surface-2:rgba(26,35,74,.58);
+    --border:rgba(129,140,248,.28); --line:rgba(129,140,248,.18); --line-2:rgba(129,140,248,.28);
+    --text:#EDF1FF; --text-2:#C0CBEF; --muted:#8A97C4; --muted-2:#5D6A99;
+    --accent:#6EA8FF; --accent-2:#8F7BFF; --accent-rgb:110,168,255;
+    --accent-grad:linear-gradient(90deg,#38BDF8 0%,#818CF8 45%,#F472B6 100%);
+    --pink:#F472B6; --pink-2:#EC4899; --pink-rgb:244,114,182;
+    --dual-grad:linear-gradient(90deg,#38BDF8 0%,#818CF8 48%,#F472B6 100%);
+    --bubble-mine-bg:linear-gradient(135deg,#38BDF8 0%,#818CF8 55%,#F472B6 120%);
+    --liquid-icon-bg:rgba(255,255,255,.08);
+    --liquid-icon-border:rgba(129,140,248,.30);
+  }
+}
+
+/* ---- 3. aurora backdrop ---- */
+body::after{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(58% 42% at 10% 6%, rgba(129,140,248,.30), transparent 62%),
+    radial-gradient(48% 38% at 90% 10%, rgba(244,114,182,.24), transparent 62%),
+    radial-gradient(55% 44% at 82% 90%, rgba(56,189,248,.22), transparent 62%),
+    radial-gradient(42% 38% at 14% 86%, rgba(196,181,253,.28), transparent 62%);
+}
+[data-theme="dark"] body::after{
+  background:
+    radial-gradient(58% 42% at 10% 6%, rgba(129,140,248,.20), transparent 62%),
+    radial-gradient(48% 38% at 90% 10%, rgba(244,114,182,.14), transparent 62%),
+    radial-gradient(55% 44% at 82% 90%, rgba(56,189,248,.14), transparent 62%),
+    radial-gradient(42% 38% at 14% 86%, rgba(196,181,253,.16), transparent 62%);
+}
+#ambientCanvas{opacity:.45!important}
+
+/* ---- 4. frosted glass surfaces ---- */
+.topbar{
+  background:var(--surface);backdrop-filter:blur(22px) saturate(1.5);-webkit-backdrop-filter:blur(22px) saturate(1.5);
+  border-bottom:1px solid var(--line);box-shadow:var(--shadow-xs);
+}
+.rooms-pane,.chat-pane,.post-card,.sheet-card,.modal-card,.chat-search,.inbox-segment,#composer,.req-banner,.notes-rail,.chat-header,.auth-card,.requests-head{
+  background:var(--surface);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);
+  border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);
+}
+.post-card{border-radius:24px;overflow:hidden}
+.post-card img,.post-card video{border-radius:18px}
+
+/* ---- 5. gradient CTAs & pills ---- */
+.btn-primary,.send-btn,.story-pub-btn.primary{
+  background:var(--dual-grad)!important;border:none!important;color:#fff!important;
+  border-radius:999px!important;box-shadow:0 10px 24px -6px rgba(129,140,248,.55)!important;
+  font-weight:700;letter-spacing:.2px;
+}
+.ghost-btn{color:var(--text-2)}
+.inbox-seg-btn,.story-pill,.dur-pill,.story-font-pill{
+  border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--text-2);font-weight:600;
+}
+.inbox-seg-btn.active,.story-pill.active,.dur-pill.active,.story-font-pill.active{
+  background:var(--accent);border-color:transparent;color:#fff;box-shadow:0 6px 18px -4px rgba(47,139,255,.55);
+}
+.room-item,.members-list li{border-radius:16px}
+.room-item.active,.members-list li.active{background:var(--accent-soft)}
+
+/* ---- 6. inputs ---- */
+:is(input[type="text"],input[type="search"],input[type="email"],input[type="password"],input[type="url"],input:not([type]),textarea){
+  background:var(--surface-2);border:1px solid var(--line);border-radius:14px;color:var(--text);
+}
+:is(input[type="text"],input[type="search"],input[type="email"],input[type="password"],input[type="url"],input:not([type]),textarea):focus{
+  outline:none;border-color:rgba(47,139,255,.5);box-shadow:0 0 0 4px rgba(47,139,255,.14);
+}
+
+/* ---- 7. story rings & avatars ---- */
+.story-ring{
+  background:linear-gradient(45deg,#F472B6 0%,#A855F7 45%,#FB923C 85%)!important;
+  border:none!important;padding:2.5px!important;
+}
+.story-ring .avatar,.story-ring>span>img,.story-ring img{border:2.5px solid var(--bg-2)!important}
+.avatar{border-radius:50%}
+
+/* ---- 8. type & splash ---- */
+.ig-t1{font-weight:800;letter-spacing:-.4px;color:var(--text)}
+.ig-t2{color:var(--muted)}
+.splash{background:transparent}
+.splash-name{
+  background:var(--dual-grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:800;letter-spacing:.5px;
+}
+.toast{backdrop-filter:blur(16px);border:1px solid var(--line);box-shadow:var(--shadow)}
+
+/* ---- 9. bubbles ---- */
+.bubble{border-radius:var(--bubble-radius)}
+
+/* ---- 10. slim scrollbars ---- */
+*::-webkit-scrollbar{width:5px;height:5px}
+*::-webkit-scrollbar-thumb{background:rgba(129,140,248,.35);border-radius:99px}
+*::-webkit-scrollbar-track{background:transparent}
+
+/* ---- NAVBAR PRESERVE: pin original porcelain tokens on the bottom nav ---- */
+.bottom-nav-wrap{
+  --bg:#FBFDFF;--bg-2:#FFFFFF;--bg-soft:#F2F7FD;--surface:#FFFFFF;--surface-2:#F5F9FE;
+  --border:#E3EAF5;--line:#EDF2F9;--line-2:#E3EAF5;--text:#26324E;--text-2:#4F5E80;
+  --muted:#8592B2;--muted-2:#B4BDD2;--accent:#5B9BFA;--accent-2:#3F7FE8;--accent-rgb:91,155,250;
+  --accent-grad:linear-gradient(135deg,#82B6FF 0%,#5B9BFA 100%);
+  --accent-soft:rgba(91,155,250,.12);--accent-softer:rgba(91,155,250,.06);
+  --pink:#F291BE;--pink-2:#E76FA8;--pink-rgb:242,145,190;
+  --shadow-xs:0 1px 2px rgba(56,80,130,.05);--shadow-sm:0 2px 10px rgba(56,80,130,.07);
+  --shadow:0 10px 28px rgba(56,80,130,.10);--shadow-lg:0 24px 64px rgba(56,80,130,.18);
+  --liquid-icon-bg:rgba(255,255,255,.80);--liquid-icon-border:rgba(91,155,250,.20);
+  --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.9),0 8px 20px rgba(56,80,130,.10);
+}
+[data-theme="dark"] .bottom-nav-wrap{
+  --bg:#0D1424;--bg-2:#111A2E;--bg-soft:#16203A;--surface:#131D33;--surface-2:#182440;
+  --border:#263553;--line:#202D4A;--line-2:#263553;--text:#ECF1FB;--text-2:#B7C4DD;
+  --muted:#7E8FB3;--muted-2:#56658A;--accent:#7FB0FF;--accent-2:#5B9BFA;--accent-rgb:127,176,255;
+  --accent-grad:linear-gradient(135deg,#8FBCFF 0%,#5B9BFA 100%);
+  --pink:#F2A0C6;--pink-2:#E76FA8;--pink-rgb:242,160,198;
+  --liquid-icon-bg:rgba(255,255,255,.075);--liquid-icon-border:rgba(255,255,255,.12);
+  --liquid-icon-shadow:inset 0 1px 1px rgba(255,255,255,.08),0 8px 20px rgba(0,0,0,.24);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .bottom-nav-wrap{
+    --bg:#0D1424;--bg-2:#111A2E;--bg-soft:#16203A;--surface:#131D33;--surface-2:#182440;
+    --border:#263553;--line:#202D4A;--line-2:#263553;--text:#ECF1FB;--text-2:#B7C4DD;
+    --muted:#7E8FB3;--muted-2:#56658A;--accent:#7FB0FF;--accent-2:#5B9BFA;--accent-rgb:127,176,255;
+    --accent-grad:linear-gradient(135deg,#8FBCFF 0%,#5B9BFA 100%);
+    --liquid-icon-bg:rgba(255,255,255,.075);--liquid-icon-border:rgba(255,255,255,.12);
+  }
+}
+/* ===== /AURORA REDESIGN ===== */
